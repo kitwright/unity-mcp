@@ -192,18 +192,29 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Drop unsaved changes in the currently open scenes. Takes precedence over save_first.", Required = false)] bool discard_unsaved = false,
             [ToolParam("Save modified open scenes before switching (default). A scene never saved to disk still fails, because saving it needs a modal file picker.", Required = false)] bool save_first = true)
         {
+            var fullPath = System.IO.Path.Combine(save_path, name + ".unity").Replace('\\', '/');
+            PathSafety.ResolveProjectPath(fullPath);
+
+            // Saving over an existing scene asset keeps its GUID, so the build list and every
+            // SceneAsset reference would silently resolve to the new empty scene. Refuse before
+            // NewScene runs, so a refusal leaves the open scene alone.
+            if (System.IO.File.Exists(fullPath))
+                return ToolResultFormatter.Error("SCENE_EXISTS", new { path = fullPath },
+                    "create_new_scene never overwrites. Open it with open_scene, or pick another name.");
+
             var blocked = UnsavedChangesError(discard_unsaved, save_first);
             if (blocked != null)
                 return blocked;
 
+            var folder = System.IO.Path.GetDirectoryName(fullPath)?.Replace('\\', '/');
+            if (!string.IsNullOrEmpty(folder) && !AssetDatabase.IsValidFolder(folder))
+                AssetFunctions.CreateFolderRecursive(folder);
+
             var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
 
-            if (!System.IO.Directory.Exists(save_path))
-                System.IO.Directory.CreateDirectory(save_path);
-
-            var fullPath = $"{save_path}{name}.unity";
-            EditorSceneManager.SaveScene(scene, fullPath);
-            return $"Created and saved new scene: {fullPath}";
+            return EditorSceneManager.SaveScene(scene, fullPath)
+                ? $"Created and saved new scene: {fullPath}"
+                : ToolResultFormatter.Error("SCENE_SAVE_FAILED", new { path = fullPath });
         }
 
         [Description("Get information about every loaded scene (the active scene plus any additively loaded ones), " +
@@ -306,14 +317,6 @@ namespace KitWright.Editor.Tools.Builtins
             float previousScale = UnityEngine.Time.timeScale;
             UnityEngine.Time.timeScale = scale;
             return $"Time.timeScale changed from {previousScale:F2} to {scale:F2}";
-        }
-
-        [Description("Get the current time scale and time information")]
-        [ReadOnlyTool]
-        public static string GetTimeScale()
-        {
-            return $"Time.timeScale={UnityEngine.Time.timeScale:F2}, Time.time={UnityEngine.Time.time:F2}, " +
-                   $"Time.deltaTime={UnityEngine.Time.deltaTime:F4}, Time.fixedDeltaTime={UnityEngine.Time.fixedDeltaTime:F4}";
         }
 
         private static void AppendHierarchy(System.Text.StringBuilder sb, Transform t, int depth, int maxDepth)

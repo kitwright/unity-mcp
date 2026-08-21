@@ -1,5 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+// com.unity.modules.terrain is optional; without it these tools disappear instead of breaking the build.
+#if KITWRIGHT_TERRAIN
 using System.Collections.Generic;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
@@ -255,3 +257,4 @@ namespace KitWright.Editor.Tools.Builtins
         }
     }
 }
+#endif

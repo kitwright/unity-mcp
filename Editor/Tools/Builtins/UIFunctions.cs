@@ -393,12 +393,16 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static string DescribeNonGraphicRaycastReceiver(GameObject go)
         {
+#if KITWRIGHT_PHYSICS
             var collider = go.GetComponent<Collider>();
             if (collider != null)
                 return collider.GetType().Name;
+#endif
+#if KITWRIGHT_PHYSICS2D
             var collider2D = go.GetComponent<Collider2D>();
             if (collider2D != null)
                 return collider2D.GetType().Name;
+#endif
             return "<none>";
         }
 

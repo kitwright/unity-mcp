@@ -73,7 +73,6 @@ namespace KitWright.Editor.Tools.Builtins
                      "Treat this as required after any external code or asset change. " +
                      "Call it after modifying .cs, .asmdef, .shader, prefabs, scenes, ScriptableObjects, or other Assets files, and before running tests, entering Play Mode, executing follow-up tools, or assuming Unity has imported the latest state. " +
                      "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery.")]
-        [ReadOnlyTool]
         public static async Task<string> RequestRecompile(
             [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
         {
@@ -172,7 +171,9 @@ namespace KitWright.Editor.Tools.Builtins
             if (compilationService.IsCompiling)
                 return "Currently compiling... Please wait and try again.";
 
-            return compilationService.GetCompilationErrors(max_entries, include_warnings);
+            return EditorRefreshPipeline.AnnotatePendingScriptChanges(
+                EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false),
+                compilationService.GetCompilationErrors(max_entries, include_warnings));
         }
 
         [Description("Get the latest domain reload recovery event, if any. Useful after Unity recompiles scripts and an MCP request gets interrupted.")]
@@ -251,7 +252,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (!CompilationFunctions.HasPendingExternalSync())
                 return;
 
-            if (!EditorApplication.isCompiling)
+            if (!ShouldWaitForCompilation())
             {
                 CompleteRecovery();
                 return;
@@ -260,9 +261,16 @@ namespace KitWright.Editor.Tools.Builtins
             EditorApplication.update += WaitUntilCompilationEnds;
         }
 
+        /// <summary>Recovery gate, extracted so it is testable: while a compile is in flight the
+        /// outcome is not known yet, so recovery info must wait instead of being written early.</summary>
+        internal static bool ShouldWaitForCompilation()
+        {
+            return CompilationService.IsActuallyCompiling;
+        }
+
         private static void WaitUntilCompilationEnds()
         {
-            if (EditorApplication.isCompiling)
+            if (ShouldWaitForCompilation())
                 return;
 
             EditorApplication.update -= WaitUntilCompilationEnds;

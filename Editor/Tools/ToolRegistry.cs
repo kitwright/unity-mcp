@@ -54,12 +54,16 @@ namespace KitWright.Editor.Tools
 
         public static void ScanAssemblies()
         {
-            _methodCache = new Dictionary<string, MethodInfo>(StringComparer.OrdinalIgnoreCase);
-            _customToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            ScanAssemblies(AppDomain.CurrentDomain.GetAssemblies());
+        }
+
+        internal static void ScanAssemblies(IEnumerable<Assembly> assemblies)
+        {
+            var methodCache = new Dictionary<string, MethodInfo>(StringComparer.OrdinalIgnoreCase);
+            var customToolNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             try
             {
-                var assemblies = AppDomain.CurrentDomain.GetAssemblies();
                 foreach (var assembly in assemblies)
                 {
                     if (assembly.IsDynamic) continue;
@@ -68,31 +72,38 @@ namespace KitWright.Editor.Tools
                     {
                         foreach (var type in assembly.GetTypes())
                         {
-                            if (type.GetCustomAttribute<ToolProviderAttribute>() == null)
-                                continue;
-
-                            var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
-                            foreach (var method in methods)
+                            try
                             {
-                                var snakeName = ToSnakeCase(method.Name);
-
-                                if (BlockedTools.Contains(snakeName))
+                                if (type.GetCustomAttribute<ToolProviderAttribute>() == null)
                                     continue;
 
-                                if (!_methodCache.ContainsKey(snakeName))
+                                var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
+                                foreach (var method in methods)
                                 {
-                                    _methodCache[snakeName] = method;
-                                    if (!IsPackageAssembly(assembly))
-                                        _customToolNames.Add(snakeName);
+                                    var snakeName = ToSnakeCase(method.Name);
+
+                                    if (BlockedTools.Contains(snakeName))
+                                        continue;
+
+                                    if (!methodCache.ContainsKey(snakeName))
+                                    {
+                                        methodCache[snakeName] = method;
+                                        if (!IsPackageAssembly(assembly))
+                                            customToolNames.Add(snakeName);
+                                    }
+                                    else
+                                    {
+                                        Debug.LogWarning($"[KitWright] Duplicate tool function name: {snakeName}");
+                                    }
                                 }
-                                else
-                                {
-                                    Debug.LogWarning($"[KitWright] Duplicate tool function name: {snakeName}");
-                                }
+                            }
+                            catch (Exception)
+                            {
+                                // One unloadable type must not cost us the rest of the assembly
                             }
                         }
                     }
-                    catch (ReflectionTypeLoadException)
+                    catch (Exception)
                     {
                         // Skip assemblies that can't be loaded
                     }
@@ -102,6 +113,9 @@ namespace KitWright.Editor.Tools
             {
                 Debug.LogError($"[KitWright] Error scanning assemblies for tool functions: {ex.Message}");
             }
+
+            _methodCache = methodCache;
+            _customToolNames = customToolNames;
         }
 
         /// <summary>
@@ -143,6 +157,30 @@ namespace KitWright.Editor.Tools
         public static bool IsReadOnly(MethodInfo method)
         {
             return method.GetCustomAttribute<ReadOnlyToolAttribute>() != null;
+        }
+
+        /// <summary>Default per-request budget, matching the plain HTTP transport's historical cap.</summary>
+        public const int DefaultToolTimeoutSeconds = 180;
+
+        /// <summary>
+        /// Seconds a transport should wait for a JSON-RPC request before calling it a timeout:
+        /// tools/call gets its tool's budget, everything else the fallback. A build or a bake keeps
+        /// running on the pinned editor thread after the transport gives up, so answering
+        /// "Request timeout" makes the agent retry and queue a second one behind the first.
+        /// </summary>
+        public static int TimeoutSecondsForRequest(
+            string rpcMethod, IDictionary<string, object> parameters, int fallback = DefaultToolTimeoutSeconds)
+        {
+            if (!string.Equals(rpcMethod, "tools/call", StringComparison.Ordinal))
+                return fallback;
+
+            object name = null;
+            parameters?.TryGetValue("name", out name);
+            if (string.IsNullOrEmpty(name as string))
+                return fallback;
+
+            var budget = GetMethod((string)name)?.GetCustomAttribute<LongRunningToolAttribute>()?.Seconds ?? 0;
+            return budget > fallback ? budget : fallback;
         }
 
         public static bool RunsOffEditorThread(string snakeCaseName)

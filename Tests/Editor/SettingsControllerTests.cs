@@ -24,6 +24,7 @@ namespace KitWright.Editor
                 Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
                 Assert.IsFalse(controller.PluginDebugLoggingEnabled);
                 Assert.IsTrue(controller.MCPBrokerModeEnabled);
+                Assert.IsFalse(controller.RequireClientApprovalEnabled);
                 Assert.AreEqual(string.Empty, controller.MCPBrokerMonoPath);
                 StringAssert.Contains("\"executeCodeSafetyChecksEnabled\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeSafetyChecksConfigured\": true", ReadSettingsJson(projectPath));
@@ -62,6 +63,7 @@ namespace KitWright.Editor
                 Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
                 Assert.IsFalse(controller.PluginDebugLoggingEnabled);
                 Assert.IsTrue(controller.MCPBrokerModeEnabled);
+                Assert.IsFalse(controller.RequireClientApprovalEnabled);
                 Assert.AreEqual(string.Empty, controller.MCPBrokerMonoPath);
                 StringAssert.Contains("\"executeCodeSafetyChecksEnabled\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeSafetyChecksConfigured\": true", ReadSettingsJson(projectPath));

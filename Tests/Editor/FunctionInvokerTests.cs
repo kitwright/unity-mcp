@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using KitWright.Editor.Api.Models;
 using KitWright.Editor.Tools;
 using NUnit.Framework;
@@ -37,6 +38,49 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("\"success\":false", result);
             StringAssert.Contains("\"code\":\"MISSING_PARAM\"", result);
             StringAssert.Contains("\"param\":\"x\"", result);
+        }
+
+        [Test]
+        public void Invoke_RejectsUnknownParameterInsteadOfRunningOnDefaults()
+        {
+            var result = new FunctionInvoker().Invoke(new FunctionCall
+            {
+                FunctionName = "get_hierarchy",
+                Parameters = new Dictionary<string, string> { ["dpeth"] = "2" }
+            });
+
+            StringAssert.Contains("\"code\":\"UNKNOWN_PARAM\"", result);
+            StringAssert.Contains("\"param\":\"dpeth\"", result);
+            StringAssert.Contains("depth", result, "The error must list the names the tool does accept.");
+        }
+
+        [Test]
+        public void Invoke_RejectsUnknownParameterBeforeReportingAMissingOne()
+        {
+            var result = new FunctionInvoker().Invoke(new FunctionCall
+            {
+                FunctionName = "simulate_mouse_click",
+                Parameters = new Dictionary<string, string> { ["ex"] = "1", ["y"] = "2" }
+            });
+
+            StringAssert.Contains("\"code\":\"UNKNOWN_PARAM\"", result);
+        }
+
+        [Test]
+        public void FindGameObjects_AmbiguousComponentNameIsReportedNotReturnedAsNoMatches()
+        {
+            var result = new FunctionInvoker().Invoke(new FunctionCall
+            {
+                FunctionName = "find_game_objects",
+                Parameters = new Dictionary<string, string>
+                {
+                    ["query"] = "TypeResolverProbeDuplicate",
+                    ["find_method"] = "by_component"
+                }
+            });
+
+            StringAssert.Contains("\"code\":\"AMBIGUOUS_TYPE\"", result);
+            StringAssert.Contains("TypeResolverLeft.TypeResolverProbeDuplicate", result);
         }
 
         [Test]
@@ -185,6 +229,54 @@ namespace KitWright.Editor.Tests
             finally
             {
                 ToolRegistry.Unregister(toolName);
+            }
+        }
+
+        // A third-party attribute may derive from ToolProviderAttribute and fail to construct
+        // (stale DLL, missing base assembly). Reading it must not cost us the rest of the scan.
+        [AttributeUsage(AttributeTargets.Class)]
+        private sealed class ExplodingToolProviderAttribute : ToolProviderAttribute
+        {
+            public ExplodingToolProviderAttribute() { throw new InvalidOperationException("bad metadata"); }
+        }
+
+        [ExplodingToolProvider]
+        private static class BoomProvider { }
+
+        [Test]
+        public void ToolRegistry_SkipsTypesWhoseToolProviderAttributeThrows()
+        {
+            Assert.Catch(
+                () => typeof(BoomProvider).GetCustomAttribute<ToolProviderAttribute>(),
+                "Raw attribute reads on this type throw; the registry must not do a raw read.");
+
+            // BoomProvider lives in this assembly, so a raw read anywhere in the scan throws here.
+            Assert.DoesNotThrow(() => ToolRegistry.ScanAssemblies());
+        }
+
+        private sealed class ThrowingAssembly : Assembly
+        {
+            public override bool IsDynamic => false;
+            public override Type[] GetTypes() => throw new TypeLoadException("unresolvable dependency");
+        }
+
+        [Test]
+        public void ScanAssemblies_BrokenAssemblyDoesNotDropBuiltins()
+        {
+            try
+            {
+                ToolRegistry.ScanAssemblies(new Assembly[]
+                {
+                    new ThrowingAssembly(),
+                    typeof(FunctionInvoker).Assembly
+                });
+
+                Assert.IsTrue(ToolRegistry.MethodCache.ContainsKey("create_script"),
+                    "One unloadable assembly must not remove the builtin tools scanned after it.");
+            }
+            finally
+            {
+                ToolRegistry.ScanAssemblies();
             }
         }
     }

@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using KitWright.Editor.Services;
 using KitWright.Editor.Settings;
 using UnityEditor;
 using KitWright.Editor.DI;
@@ -129,7 +130,7 @@ namespace KitWright.Editor.MCP.Server
                 return;
             }
 
-            if (EditorApplication.isCompiling)
+            if (ShouldWaitForCompilationBeforeRestart())
                 return;
 
             if (RestartDeadlineExpired())
@@ -186,6 +187,14 @@ namespace KitWright.Editor.MCP.Server
             {
                 _restartInProgress = false;
             }
+        }
+
+        /// <summary>Restart gate of <see cref="RestartWhenEditorIsReady"/>, extracted so it is testable:
+        /// a compile in flight means another domain reload is coming, so binding the port now would
+        /// only orphan the listener.</summary>
+        internal static bool ShouldWaitForCompilationBeforeRestart()
+        {
+            return CompilationService.IsActuallyCompiling;
         }
 
         private static bool RestartDeadlineExpired()

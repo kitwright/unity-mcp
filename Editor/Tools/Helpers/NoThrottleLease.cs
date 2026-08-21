@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
 using System.Reflection;
+using KitWright.Editor.Services;
 using UnityEditor;
 
 namespace KitWright.Editor.Tools.Helpers
@@ -71,10 +72,17 @@ namespace KitWright.Editor.Tools.Helpers
             }
             if (DateTime.UtcNow.Ticks < GetDeadlineTicks())
                 return;
-            if (EditorApplication.isCompiling || EditorApplication.isUpdating)
+            if (ShouldHoldLease())
                 return;
             Restore();
             Unhook();
+        }
+
+        /// <summary>Expiry gate of <see cref="TryExpire"/>, extracted so it is testable: a lease that
+        /// expires mid-compile/import hands throttling back while the work is still running.</summary>
+        internal static bool ShouldHoldLease()
+        {
+            return CompilationService.IsActuallyCompiling || EditorApplication.isUpdating;
         }
 
         /// <summary>Restores a lease that outlived its editor session (crash or quit mid-operation).

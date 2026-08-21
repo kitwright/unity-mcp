@@ -23,7 +23,10 @@ namespace KitWright.Editor.MCP.Server
     /// </summary>
     internal class MCPServerService : IDisposable
     {
-        private const int ToolCallTimeoutMs = 30000;
+        // The effective ceiling for one tool call: high enough to honour the longest timeout a tool
+        // advertises and can reach (CompilationFunctions' 120s cap), still under the transport's own
+        // 180s give-up (HttpMCPTransport) and the broker's 300s, so our error wins and names the cause.
+        internal const int ToolCallTimeoutMs = 170_000;
 
         private readonly SettingsController _settings;
         private readonly EditorThreadHelper _threadHelper;
@@ -427,30 +430,41 @@ namespace KitWright.Editor.MCP.Server
                     return;
                 }
 
-                var editorThreadTask = _threadHelper.ExecuteAsyncOnEditorThreadAsync(
-                    async () =>
-                    {
-                        var redeliveryResponse = TryCreateBrokerRedeliveryResponse(request);
-                        if (redeliveryResponse != null)
-                            return redeliveryResponse;
-
-                        return await requestHandler.HandleRequestAsync(request, default);
-                    });
-
-                var completed = await Task.WhenAny(editorThreadTask, Task.Delay(ToolCallTimeoutMs));
-                if (completed != editorThreadTask)
+                using (var callCts = new CancellationTokenSource())
                 {
-                    // Editor thread job keeps running (a sync method.Invoke can't be aborted mid-flight);
-                    // this only stops the client from hanging on a request that will never return in time.
-                    sendResponse(new MCPResponse
-                    {
-                        Id = request?.Id,
-                        Error = new MCPError { Code = -32001, Message = $"Tool call timed out after {ToolCallTimeoutMs}ms." }
-                    });
-                    return;
-                }
+                    var editorThreadTask = _threadHelper.ExecuteAsyncOnEditorThreadAsync(
+                        async () =>
+                        {
+                            var redeliveryResponse = TryCreateBrokerRedeliveryResponse(request);
+                            if (redeliveryResponse != null)
+                                return redeliveryResponse;
 
-                sendResponse(editorThreadTask.Result);
+                            return await requestHandler.HandleRequestAsync(request, default);
+                        },
+                        callCts.Token);
+
+                    // This layer sits inside both transports, so a [LongRunningTool] budget only
+                    // means anything if the ceiling here widens with it.
+                    var ceilingMs = ToolRegistry.TimeoutSecondsForRequest(
+                        request?.Method, request?.Params, ToolCallTimeoutMs / 1000) * 1000;
+
+                    var completed = await Task.WhenAny(editorThreadTask, Task.Delay(ceilingMs));
+                    if (completed != editorThreadTask)
+                    {
+                        // Cancelling drops a work item still waiting in the queue; one already mid-flight
+                        // keeps running (a sync method.Invoke can't be aborted), but the client stops
+                        // hanging on a request that will never return in time.
+                        callCts.Cancel();
+                        sendResponse(new MCPResponse
+                        {
+                            Id = request?.Id,
+                            Error = new MCPError { Code = -32001, Message = $"Tool call timed out after {ceilingMs}ms." }
+                        });
+                        return;
+                    }
+
+                    sendResponse(editorThreadTask.Result);
+                }
             }
             catch (Exception ex)
             {
@@ -851,7 +865,7 @@ namespace KitWright.Editor.MCP.Server
 
         private static void WaitForCompilationThen(Action onReady)
         {
-            if (!EditorApplication.isCompiling)
+            if (!CompilationService.IsActuallyCompiling)
             {
                 EditorApplication.delayCall += () => onReady();
                 return;
@@ -859,7 +873,7 @@ namespace KitWright.Editor.MCP.Server
 
             void CheckCompilation()
             {
-                if (EditorApplication.isCompiling)
+                if (CompilationService.IsActuallyCompiling)
                     return;
 
                 EditorApplication.update -= CheckCompilation;

@@ -1,6 +1,8 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Threading;
+using System.Threading.Tasks;
 using KitWright.Editor.Threading;
 using NUnit.Framework;
 using UnityEngine;
@@ -64,6 +66,54 @@ namespace KitWright.Editor.Tests
 
             Assert.Less(EditorThreadHelper.SinceLastPump.TotalSeconds, 5,
                 "The editor is pumping while this test runs, so the watchdog must see it as healthy.");
+        }
+
+        [Test]
+        public void QueuedWork_RunsOnTheNextPump()
+        {
+            Assert.IsTrue(PumpOnce(cancelBeforePump: false),
+                "A live work item must still run, or the abandon check is passing vacuously.");
+        }
+
+        [Test]
+        public void QueuedWork_IsDroppedWhenItsCallerAlreadyGaveUp()
+        {
+            Assert.IsFalse(PumpOnce(cancelBeforePump: true),
+                "A call whose deadline passed must never mutate the project after the fact.");
+        }
+
+        private static bool PumpOnce(bool cancelBeforePump)
+        {
+            var ran = false;
+
+            using (var helper = new EditorThreadHelper())
+            using (var cts = new CancellationTokenSource())
+            {
+                // Queued from a worker thread so it lands in the queue instead of running inline.
+                // Wait for the CALL to return, not the task it returns: that one only completes once
+                // ProcessQueues runs the item, and this thread is the one that has to pump it.
+                using (var handoff = new ManualResetEventSlim())
+                {
+                    Task.Run(() =>
+                    {
+                        helper.ExecuteAsyncOnEditorThreadAsync(() =>
+                        {
+                            ran = true;
+                            return Task.FromResult(true);
+                        }, cts.Token);
+                        handoff.Set();
+                    });
+
+                    Assert.IsTrue(handoff.Wait(TimeSpan.FromSeconds(5)), "The work item was never queued.");
+                }
+
+                if (cancelBeforePump)
+                    cts.Cancel();
+
+                helper.ProcessQueues();
+            }
+
+            return ran;
         }
     }
 }

@@ -14,6 +14,7 @@ namespace KitWright.Editor.Tools.Builtins
     {
         [Description("Build a standalone/player build with Unity's BuildPipeline. Runs synchronously and blocks until the build finishes, then returns the result summary (size, errors, warnings, output path). " +
                      "By default builds the enabled scenes from Build Settings to the active build target. This can take a long time for large projects.")]
+        [LongRunningTool(1800)]
         public static object BuildPlayer(
             [ToolParam("Target platform: windows64, windows32, osx, linux64, android, ios, webgl, uwp, tvos. Empty = active build target.", Required = false)] string target = null,
             [ToolParam("Output path (relative to project root or absolute). Empty = 'Builds/<target>/<product>.<ext>'.", Required = false)] string output_path = null,

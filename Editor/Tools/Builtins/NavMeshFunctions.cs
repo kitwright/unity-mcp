@@ -1,5 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+// com.unity.modules.ai is optional; without it these tools disappear instead of breaking the build.
+#if KITWRIGHT_AI
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -12,8 +14,13 @@ namespace KitWright.Editor.Tools.Builtins
     internal static class NavMeshFunctions
     {
         [Description("Bake the NavMesh for the current scene using the legacy scene NavMesh settings. Objects must be flagged Navigation Static for surfaces to be included.")]
+        [LongRunningTool(900)]
         public static object BakeNavMesh()
         {
+            if (EditorApplication.isPlaying)
+                return Response.Error("BAKE_REQUIRES_EDIT_MODE",
+                    new { hint = "NavMesh baking only runs in Edit Mode. Call exit_play_mode first, then retry bake_nav_mesh." });
+
 #pragma warning disable CS0618 // No drop-in replacement for editor NavMesh baking
             UnityEditor.AI.NavMeshBuilder.BuildNavMesh();
 #pragma warning restore CS0618
@@ -111,3 +118,4 @@ namespace KitWright.Editor.Tools.Builtins
         }
     }
 }
+#endif

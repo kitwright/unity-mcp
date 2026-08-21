@@ -1,5 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+// com.unity.modules.animation is optional; without it these tools disappear instead of breaking the build.
+#if KITWRIGHT_ANIMATION
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using System.IO;
 using KitWright.Editor.Tools.Helpers;
@@ -292,3 +294,4 @@ namespace KitWright.Editor.Tools.Builtins
         }
     }
 }
+#endif

@@ -96,7 +96,8 @@ namespace KitWright.Editor.Tools.Builtins
 
             try
             {
-                var result = CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks);
+                var result = RunInSingleUndoGroup(UndoGroupName(code),
+                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks));
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result));
                 return result;
             }
@@ -289,6 +290,40 @@ namespace KitWright.Editor.Tools.Builtins
             return s.Substring(0, max) + "…";
         }
 
+        // One snippet has to be one Ctrl+Z: a snippet that touches ten objects otherwise registers ten
+        // undo entries, so the first undo leaves the project reverted by a tenth. Incrementing first keeps
+        // unrelated earlier edits out of the group, and no undo record means no entry, so a read-only
+        // snippet still leaves nothing behind.
+        internal static object RunInSingleUndoGroup(string groupName, Func<object> execute)
+        {
+            Undo.IncrementCurrentGroup();
+            var group = Undo.GetCurrentGroup();
+            try
+            {
+                return execute();
+            }
+            finally
+            {
+                // RecordObject entries are finalized at end of frame, so without the flush every
+                // component mutation the snippet made lands in a group created after the collapse.
+                Undo.FlushUndoRecordObjects();
+                Undo.SetCurrentGroupName(groupName);
+                Undo.CollapseUndoOperations(group);
+            }
+        }
+
+        internal static string UndoGroupName(string code)
+        {
+            var match = Regex.Match(code ?? string.Empty, @"class\s+(\w+)");
+            if (match.Success)
+                return "execute_code: " + match.Groups[1].Value;
+
+            var firstLine = (code ?? string.Empty).Split('\n')
+                .Select(line => line.Trim())
+                .FirstOrDefault(line => line.Length > 0);
+            return "execute_code: " + Preview(firstLine, 60);
+        }
+
         private static object CompileAndExecute(string code, string className, bool safetyChecks)
         {
             var compilation = ScriptCompilerPipeline.Compile(code);
@@ -413,15 +448,43 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            return Response.Success("Command executed.", new
+            var message = DescribeCommandOutcome(ctx.Logs, out var loggedErrors, out var firstError);
+            return Response.Success(message, new
             {
                 compiler = compilerName,
+                logged_error_count = loggedErrors,
+                first_logged_error = firstError,
                 logs = ctx.Logs,
                 created = ctx.CreatedInstanceIds,
                 modified = ctx.ModifiedInstanceIds,
                 destroyed = ctx.DestroyedInstanceIds,
                 returnValue = ctx.ReturnValue
             });
+        }
+
+        // A snippet that only logs errors still ran, so success stays true — but the message has to
+        // say so up front, or the caller reads "Command executed." and assumes a clean run.
+        internal static string DescribeCommandOutcome(
+            IReadOnlyList<ExecutionContext.LogEntry> logs, out int errorCount, out string firstError)
+        {
+            errorCount = 0;
+            firstError = null;
+
+            if (logs != null)
+            {
+                foreach (var entry in logs)
+                {
+                    if (entry == null || entry.Level != "error")
+                        continue;
+                    errorCount++;
+                    if (firstError == null)
+                        firstError = entry.Message;
+                }
+            }
+
+            return errorCount == 0
+                ? "Command executed."
+                : $"[{errorCount} logged error{(errorCount == 1 ? "" : "s")}] Command executed. First error: {firstError}";
         }
 
         private static string[] GetTypeNames(Assembly assembly)

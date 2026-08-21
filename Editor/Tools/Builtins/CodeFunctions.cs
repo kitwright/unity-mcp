@@ -23,14 +23,19 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Path to save (e.g. 'Assets/Scripts/')", Required = false)]
             string save_path = "Assets/Scripts/")
         {
-            if (!Directory.Exists(save_path))
-                Directory.CreateDirectory(save_path);
+            var assetPath = Path.Combine(save_path, $"{name}.cs");
+            var fullPath = PathSafety.ResolveProjectPath(assetPath);
 
-            var fullPath = Path.Combine(save_path, $"{name}.cs");
-            File.WriteAllText(fullPath, content);
+            if (File.Exists(fullPath))
+                return ToolResultFormatter.Error("SCRIPT_EXISTS", new { path = assetPath },
+                    "create_script never overwrites: a file is already there and you may not have read it. " +
+                    "Use edit_script (with expected_sha256) to replace it, or patch_script for a smaller change.");
+
+            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
+            AtomicFile.WriteAllText(fullPath, content);
             AssetDatabase.Refresh();
 
-            return $"Created script '{name}.cs' at {fullPath}";
+            return $"Created script '{name}.cs' at {assetPath}";
         }
 
         [Description("Get the SHA256 hash of a script file's current contents. " +
@@ -80,10 +85,10 @@ namespace KitWright.Editor.Tools.Builtins
             var staleError = CheckPrecondition(path, original, expected_sha256);
             if (staleError != null) return staleError;
 
-            var braceError = CheckBraceRegression(path, original, content);
-            if (braceError != null) return braceError;
+            var syntaxError = CheckSyntaxRegression(path, original, content);
+            if (syntaxError != null) return syntaxError;
 
-            File.WriteAllText(fullPath, content);
+            AtomicFile.WriteAllText(fullPath, content);
             AssetDatabase.Refresh();
 
             return $"Updated script at {path} (sha256: {ComputeSha256(content)})";
@@ -136,10 +141,10 @@ namespace KitWright.Editor.Tools.Builtins
                              content.Substring(firstIndex + old_text.Length);
             }
 
-            var braceError = CheckBraceRegression(path, content, newContent);
-            if (braceError != null) return braceError;
+            var syntaxError = CheckSyntaxRegression(path, content, newContent);
+            if (syntaxError != null) return syntaxError;
 
-            File.WriteAllText(fullPath, newContent);
+            AtomicFile.WriteAllText(fullPath, newContent);
             AssetDatabase.Refresh();
 
             string replacedInfo = replace_all
@@ -194,16 +199,10 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error(outcome.ErrorCode,
                     new { path, message = outcome.Message, candidates = outcome.Candidates });
 
-            var problem = CSharpSyntaxCheck.FindProblem(outcome.Source);
-            if (problem != null && CSharpSyntaxCheck.FindProblem(original) == null)
-                return ToolResultFormatter.Error("INVALID_RESULT", new
-                {
-                    path,
-                    problem,
-                    hint = "The edit left the file structurally broken, so nothing was written. Re-read the file and resend."
-                });
+            var syntaxError = CheckSyntaxRegression(path, original, outcome.Source);
+            if (syntaxError != null) return syntaxError;
 
-            File.WriteAllText(fullPath, outcome.Source);
+            AtomicFile.WriteAllText(fullPath, outcome.Source);
             AssetDatabase.Refresh();
 
             return $"Applied {parsed.Count} member edit(s) to {path} (sha256: {ComputeSha256(outcome.Source)})";
@@ -281,22 +280,21 @@ namespace KitWright.Editor.Tools.Builtins
             });
         }
 
-        // Only reject when the edit turns a balanced file into an unbalanced one, so files that
-        // were already unbalanced (e.g. mid-refactor) can still be fixed with further edits.
-        private static string CheckBraceRegression(string path, string originalContent, string newContent)
+        // Only reject when the edit introduces a problem the original did not have, so files that
+        // were already broken (e.g. mid-refactor) can still be fixed with further edits.
+        private static string CheckSyntaxRegression(string path, string originalContent, string newContent)
         {
-            if (!TryGetBraceImbalance(originalContent, out _) && TryGetBraceImbalance(newContent, out var line))
-            {
-                int startLine = Math.Max(1, line - 5);
-                return ToolResultFormatter.Error("UNBALANCED_BRACES", new
-                {
-                    path,
-                    line,
-                    hint = $"This edit makes braces unbalanced around line {line}. Re-read lines {startLine}-{line + 5} and resend a corrected edit."
-                });
-            }
+            var problem = CSharpSyntaxCheck.FindProblem(newContent);
+            if (problem == null || CSharpSyntaxCheck.FindProblem(originalContent) != null)
+                return null;
 
-            return null;
+            return ToolResultFormatter.Error("SYNTAX_REGRESSION", new
+            {
+                path,
+                problem,
+                hint = "This edit leaves the file structurally broken, so nothing was written. " +
+                       "Re-read the file around the reported line and resend a corrected edit."
+            });
         }
 
         internal static string ComputeSha256(string contents)
@@ -306,94 +304,6 @@ namespace KitWright.Editor.Tools.Builtins
                 var hash = sha.ComputeHash(Encoding.UTF8.GetBytes(contents ?? string.Empty));
                 return BitConverter.ToString(hash).Replace("-", string.Empty).ToLowerInvariant();
             }
-        }
-
-        // Counts { } outside strings/chars/comments. Returns true when unbalanced;
-        // line = where the count first goes negative, or the last line for a missing close.
-        internal static bool TryGetBraceImbalance(string text, out int line)
-        {
-            line = 0;
-            if (string.IsNullOrEmpty(text))
-                return false;
-
-            int depth = 0, currentLine = 1;
-            bool inString = false, inVerbatim = false, inChar = false, inSingleComment = false, inMultiComment = false;
-
-            for (int i = 0; i < text.Length; i++)
-            {
-                char c = text[i];
-                char next = i + 1 < text.Length ? text[i + 1] : '\0';
-
-                if (c == '\n')
-                {
-                    currentLine++;
-                    inSingleComment = false;
-                    continue;
-                }
-
-                if (inSingleComment) continue;
-                if (inMultiComment)
-                {
-                    if (c == '*' && next == '/') { inMultiComment = false; i++; }
-                    continue;
-                }
-                if (inString)
-                {
-                    if (inVerbatim)
-                    {
-                        if (c == '"' && next == '"') { i++; continue; }
-                        if (c == '"') { inString = false; inVerbatim = false; }
-                    }
-                    else
-                    {
-                        if (c == '\\') { i++; continue; }
-                        if (c == '"') inString = false;
-                    }
-                    continue;
-                }
-                if (inChar)
-                {
-                    if (c == '\\') { i++; continue; }
-                    if (c == '\'') inChar = false;
-                    continue;
-                }
-
-                switch (c)
-                {
-                    case '/':
-                        if (next == '/') inSingleComment = true;
-                        else if (next == '*') { inMultiComment = true; i++; }
-                        break;
-                    case '@':
-                        if (next == '"') { inString = true; inVerbatim = true; i++; }
-                        break;
-                    case '"':
-                        inString = true;
-                        break;
-                    case '\'':
-                        inChar = true;
-                        break;
-                    case '{':
-                        depth++;
-                        break;
-                    case '}':
-                        depth--;
-                        if (depth < 0)
-                        {
-                            line = currentLine;
-                            return true;
-                        }
-                        break;
-                }
-            }
-
-            if (depth > 0)
-            {
-                line = currentLine;
-                return true;
-            }
-
-            return false;
         }
 
     }

@@ -1,4 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
+
+// com.unity.modules.audio is optional; without it these tools disappear instead of breaking the build.
+#if KITWRIGHT_AUDIO
 using System;
 using System.Reflection;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
@@ -169,3 +172,4 @@ namespace KitWright.Editor.Tools.Builtins
         }
     }
 }
+#endif

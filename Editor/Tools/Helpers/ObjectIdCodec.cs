@@ -87,8 +87,11 @@ namespace KitWright.Editor.Tools.Helpers
             // Callers should fall back to assetPath when this returns null.
             return null;
 #else
+            // A 64-bit value (a YAML fileID, or an id cached from another Unity version) truncates
+            // into a live int instance id and would resolve to an unrelated object. Refuse it.
             return long.TryParse(objectId, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id)
-                ? EditorUtility.InstanceIDToObject(unchecked((int)id))
+                   && id >= int.MinValue && id <= int.MaxValue
+                ? EditorUtility.InstanceIDToObject((int)id)
                 : null;
 #endif
         }

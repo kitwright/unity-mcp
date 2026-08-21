@@ -8,7 +8,9 @@ using System.Threading.Tasks;
 using KitWright.Editor.Tools.Builtins;
 using KitWright.Editor.Tools.Scripting;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 using UnityEngine.TestTools;
 
 namespace KitWright.Editor.Tests
@@ -226,6 +228,57 @@ public class CommandSyntax : IKitWrightCommand
                 });
         }
 
+        // Drives the tool's undo helper directly: compiling a real snippet here would pay a compile
+        // per assert and needs a quiet editor, while the grouping is what this test is about.
+        [Test]
+        public void UndoGroup_CollapsesSnippetMutationsIntoOneNamedStep()
+        {
+            GameObject first = null;
+            GameObject second = null;
+            var wasDirty = SceneManager.GetActiveScene().isDirty;
+            try
+            {
+                var result = ScriptExecutionFunctions.RunInSingleUndoGroup("execute_code: Probe", () =>
+                {
+                    first = new GameObject("KitWrightUndoProbeA");
+                    Undo.RegisterCreatedObjectUndo(first, "execute_code: create");
+                    second = new GameObject("KitWrightUndoProbeB");
+                    Undo.RegisterCreatedObjectUndo(second, "execute_code: create");
+                    return "ok";
+                });
+
+                Assert.AreEqual("ok", result);
+                // The group name is the regression guard. Undo.PerformUndo is deliberately not
+                // asserted: undo execution is unproven headless, and a no-op there would fail this
+                // test for a reason that has nothing to do with the grouping.
+                Assert.AreEqual("execute_code: Probe", Undo.GetCurrentGroupName());
+            }
+            finally
+            {
+                if (first != null) UnityEngine.Object.DestroyImmediate(first);
+                if (second != null) UnityEngine.Object.DestroyImmediate(second);
+                if (!wasDirty)
+                    HierarchyFunctionsTests.ClearSceneDirtiness(SceneManager.GetActiveScene());
+            }
+        }
+
+        [Test]
+        public void UndoGroup_ThrowingSnippetStillCollapses()
+        {
+            Assert.Throws<InvalidOperationException>(() =>
+                ScriptExecutionFunctions.RunInSingleUndoGroup("execute_code: Boom",
+                    () => throw new InvalidOperationException("boom")));
+
+            Assert.AreEqual("execute_code: Boom", Undo.GetCurrentGroupName());
+        }
+
+        [TestCase("public class Snippet : IKitWrightCommand { }", "execute_code: Snippet")]
+        [TestCase("\n  return 1 + 2;\n", "execute_code: return 1 + 2;")]
+        public void UndoGroupName_NamesTheStepAfterTheSnippet(string code, string expected)
+        {
+            Assert.AreEqual(expected, ScriptExecutionFunctions.UndoGroupName(code));
+        }
+
         // Paths are built with Path.Combine rather than written literally: a backslash is an
         // ordinary filename character on Linux, so a hardcoded Windows path makes the filter see
         // one long name and the test pass only on Windows.
@@ -248,6 +301,23 @@ public class CommandSyntax : IKitWrightCommand
 
             var withoutNetstandard = new[] { Lib("mscorlib.dll"), Lib("UnityEngine.dll") };
             Assert.AreEqual(withoutNetstandard, ScriptCompilerReferences.FilterForCodeDom(withoutNetstandard));
+        }
+
+        [Test]
+        public void CodeDomErrors_SkipMcsPhantomBomEntryButKeepRealDiagnostics()
+        {
+            var errors = new[]
+            {
+                new FakeCompilerError { ErrorNumber = "", ErrorText = "\uFEFF" },
+                new FakeCompilerError { ErrorNumber = null, ErrorText = "  \t\r\n" },
+                new FakeCompilerError { ErrorNumber = "CS0103", ErrorText = "The name 'x' does not exist", Line = 7 }
+            };
+
+            var result = CodeDomScriptCompiler.GetCodeDomErrors(errors);
+
+            Assert.AreEqual(1, result.Count);
+            Assert.AreEqual("CS0103", result[0].code);
+            Assert.AreEqual(7, result[0].line);
         }
 
         [Test]
@@ -347,6 +417,17 @@ public class CommandSyntax : IKitWrightCommand
             }
             sb.Append("}");
             return sb.ToString();
+        }
+
+        // GetCodeDomErrors reads its members reflectively by name, so a duck-typed fake exercises the
+        // real filter without needing System.CodeDom or a compiler run.
+        private sealed class FakeCompilerError
+        {
+            public bool IsWarning { get; set; }
+            public int Line { get; set; }
+            public int Column { get; set; }
+            public string ErrorNumber { get; set; }
+            public string ErrorText { get; set; }
         }
 
         private sealed class FakeUnavailableCompiler : IScriptCompiler

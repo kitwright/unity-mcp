@@ -39,8 +39,6 @@ namespace KitWright.Editor.MCP.Server
             "simulate_key_combo",
             "simulate_mouse_click",
             "simulate_mouse_drag",
-            "simulate_editor_window_click",
-            "simulate_editor_window_key",
             "get_scene_info",
             "get_hierarchy",
             "get_console_logs",
@@ -48,23 +46,28 @@ namespace KitWright.Editor.MCP.Server
             "analyze_scene_complexity",
             "capture_game_view",
             "capture_scene_view",
-            "capture_simulator_view",
             "capture_editor_window",
             "raycast_at_point",
             "wait_for_compilation",
             "request_recompile",
             "get_compilation_errors",
             "get_reload_recovery_status",
-            "get_code_patching_status",
             "enter_play_mode",
             "exit_play_mode",
-            "get_time_scale",
+            "save_scene",
             "get_editor_state",
             "get_selection",
             "set_selection",
             "get_prefab_stage",
             "find_game_objects",
             "list_components",
+            "get_game_object_info",
+            "create_game_object",
+            "create_primitive",
+            "delete_game_object",
+            "add_component",
+            "set_transform",
+            "set_parent",
             "get_component_properties",
             "set_component_property",
             "set_component_properties",
@@ -89,6 +92,8 @@ namespace KitWright.Editor.MCP.Server
         public static IReadOnlyList<string> AllProfiles => ProfileOrder;
 
         public static IReadOnlyCollection<string> DefaultCoreTools => CoreTools;
+
+        public static IReadOnlyCollection<string> DefaultMinimalTools => MinimalTools;
 
         public static MCPToolExportProfile Parse(string value)
         {

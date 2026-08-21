@@ -133,6 +133,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static void AppendPhysicsClickResult(StringBuilder results, Vector2 viewportPosition)
         {
+#if KITWRIGHT_PHYSICS
             var mainCamera = Camera.main;
             if (mainCamera == null)
             {
@@ -152,6 +153,9 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 results.AppendLine("  Physics raycast: no 3D object hit");
             }
+#else
+            results.AppendLine("  Physics raycast: skipped (com.unity.modules.physics is not installed)");
+#endif
         }
 
         private static PointerEventData CreatePointerData(EventSystem eventSystem, Vector2 position, PointerEventData.InputButton inputButton)

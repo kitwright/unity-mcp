@@ -12,6 +12,7 @@ namespace KitWright.Editor.MCP.Server
         private readonly SettingsController _settings;
         private readonly MCPServerService _server;
         private Label _statusLabel;
+        private Label _alertLabel;
         private Label _versionLabel;
 
         public HeaderStatusPanel(SettingsController settings, MCPServerService server)
@@ -50,6 +51,19 @@ namespace KitWright.Editor.MCP.Server
             _statusLabel.style.fontSize = 14;
             if (statusHost != null)
             {
+                // Everything that explains a broken connection -- the transport line, the port it
+                // actually bound -- lives inside the foldout, so collapsing it hides the problem
+                // while the row still reads as healthy. This line rides the header instead.
+                _alertLabel = new Label();
+                _alertLabel.style.fontSize = 12;
+                _alertLabel.style.unityTextAlign = TextAnchor.MiddleLeft;
+                _alertLabel.style.marginRight = 8;
+                _alertLabel.style.flexShrink = 1;
+                _alertLabel.style.color = new Color(1f, 0.75f, 0.3f);
+                _alertLabel.style.display = DisplayStyle.None;
+                _alertLabel.Ellipsize();
+                statusHost.Add(_alertLabel);
+
                 _statusLabel.style.fontSize = 13;
                 _statusLabel.style.unityTextAlign = TextAnchor.MiddleRight;
                 _statusLabel.style.marginRight = 0;
@@ -84,6 +98,65 @@ namespace KitWright.Editor.MCP.Server
             RefreshStatus();
         }
 
+        // Only states the user has to act on: a transport that is not carrying traffic, and a port
+        // that is not the configured one -- clients written for the configured port reach nothing
+        // and the failure looks like a dead server rather than a moved one.
+        private void RefreshAlert()
+        {
+            if (_alertLabel == null)
+                return;
+
+            var message = DescribeProblem();
+            _alertLabel.text = message ?? string.Empty;
+            _alertLabel.tooltip = message;
+            _alertLabel.style.display = string.IsNullOrEmpty(message) ? DisplayStyle.None : DisplayStyle.Flex;
+        }
+
+        private string DescribeProblem()
+        {
+            if (_server == null)
+                return null;
+
+            var brokerMode = _settings != null && _settings.MCPBrokerModeEnabled;
+            return DescribeProblem(
+                _server.IsRunning,
+                _server.IsTransitioning,
+                brokerMode,
+                brokerMode && MCPBrokerProcessManager.IsRunning(out _, out _),
+                MCPBrokerProcessManager.LastError,
+                _settings?.MCPServerPort ?? 0,
+                _server.Port);
+        }
+
+        // Kept free of the editor state it describes so the wording and the precedence between the
+        // two problems can be tested without a running server, the way ResolveIsCompiling is.
+        internal static string DescribeProblem(
+            bool isRunning,
+            bool isTransitioning,
+            bool brokerMode,
+            bool brokerRunning,
+            string brokerError,
+            int configuredPort,
+            int boundPort)
+        {
+            // Stopped and Connecting already read on the right; repeating them here is noise.
+            if (!isRunning || isTransitioning)
+                return null;
+
+            // A broker that is not up outranks a moved port: nothing is being served at all.
+            if (brokerMode && !brokerRunning)
+            {
+                return string.IsNullOrEmpty(brokerError)
+                    ? "⚠ Broker not running"
+                    : "⚠ Broker not running - " + brokerError;
+            }
+
+            if (configuredPort > 0 && boundPort != configuredPort)
+                return "⚠ Port " + configuredPort + " was in use - serving on " + boundPort;
+
+            return null;
+        }
+
         public void RefreshVersion()
         {
             if (_versionLabel != null)
@@ -92,6 +165,8 @@ namespace KitWright.Editor.MCP.Server
 
         public void RefreshStatus()
         {
+            RefreshAlert();
+
             if (_statusLabel == null)
                 return;
 

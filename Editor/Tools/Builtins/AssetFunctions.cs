@@ -113,15 +113,15 @@ namespace KitWright.Editor.Tools.Builtins
             return sb.ToString();
         }
 
-        [Description("Delete an asset")]
+        [Description("Delete an asset by moving it to the OS trash (Recycle Bin). Not an Editor undo step, but the file can be restored by hand from the trash.")]
         public static string DeleteAsset(
-            [ToolParam("Path to the asset")] string path)
+            [ToolParam("Path to the asset. The file is moved to the OS trash, so it can be recovered by hand.")] string path)
         {
             if (!File.Exists(path) && !Directory.Exists(path))
                 return ToolResultFormatter.Error("ASSET_NOT_FOUND", new { path });
 
-            bool deleted = AssetDatabase.DeleteAsset(path);
-            return deleted ? $"Deleted asset: {path}" : ToolResultFormatter.Error("ASSET_DELETE_FAILED", new { path });
+            bool deleted = AssetDatabase.MoveAssetToTrash(path);
+            return deleted ? $"Moved asset to OS trash: {path}" : ToolResultFormatter.Error("ASSET_DELETE_FAILED", new { path });
         }
 
         [Description("Rename an asset")]
@@ -186,7 +186,7 @@ namespace KitWright.Editor.Tools.Builtins
                 : ToolResultFormatter.Error("FOLDER_CREATE_FAILED", new { path });
         }
 
-        private static void CreateFolderRecursive(string folder)
+        internal static void CreateFolderRecursive(string folder)
         {
             folder = folder.Replace('\\', '/');
             var parts = folder.Split('/');

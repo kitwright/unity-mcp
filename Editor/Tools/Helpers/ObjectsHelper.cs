@@ -10,6 +10,38 @@ using UnityEngine.SceneManagement;
 
 namespace KitWright.Editor.Tools.Helpers
 {
+    // Distinct type so the invoker can answer an ambiguous single-target resolve as an error
+    // instead of acting on an arbitrary one of the matches.
+    internal sealed class AmbiguousTargetException : Exception
+    {
+        public string Target { get; }
+        public int MatchCount { get; }
+        public List<object> Candidates { get; }
+
+        public AmbiguousTargetException(string target, int matchCount, List<object> candidates)
+            : base($"'{target}' matched {matchCount} GameObjects; refusing to act on an arbitrary one.")
+        {
+            Target = target;
+            MatchCount = matchCount;
+            Candidates = candidates;
+        }
+    }
+
+    // Raised because the locator returns a list of GameObjects: there is no empty list that means
+    // "ambiguous" rather than "found nothing", and the caller acts on the latter.
+    internal sealed class AmbiguousTypeException : Exception
+    {
+        public string TypeName { get; }
+        public string[] Candidates { get; }
+
+        public AmbiguousTypeException(string typeName, string[] candidates)
+            : base($"'{typeName}' matches {candidates.Length} loaded types; refusing to search for an arbitrary one.")
+        {
+            TypeName = typeName;
+            Candidates = candidates;
+        }
+    }
+
     /// <summary>
     /// Unified GameObject locator. All KitWright tools should resolve scene objects through here
     /// instead of calling <c>GameObject.Find</c> directly — that way name/path/id/tag/layer/component
@@ -26,7 +58,8 @@ namespace KitWright.Editor.Tools.Helpers
         public const string MethodByIdOrNameOrPath = "by_id_or_name_or_path";
 
         /// <summary>
-        /// Find a single GameObject. If multiple match and findAll is false, returns the first.
+        /// Find a single GameObject. Throws <see cref="AmbiguousTargetException"/> when more than
+        /// one object matches, so a destructive tool never picks an arbitrary one.
         /// </summary>
         public static GameObject FindObject(string target, string searchMethod = null,
             bool searchInactive = false, bool searchInChildren = false, GameObject root = null)
@@ -47,7 +80,8 @@ namespace KitWright.Editor.Tools.Helpers
         }
 
         /// <summary>
-        /// Core finder. <paramref name="findAll"/> false returns at most one element (the first match).
+        /// Core finder. <paramref name="findAll"/> false returns at most one element, and throws
+        /// <see cref="AmbiguousTargetException"/> rather than choosing between several matches.
         /// When the active prefab stage is open it is searched in addition to the active scene.
         /// </summary>
         public static List<GameObject> FindObjects(string target, string searchMethod = null,
@@ -180,7 +214,13 @@ namespace KitWright.Editor.Tools.Helpers
                 case MethodByComponent:
                 {
                     var compType = TypeResolver.ResolveComponent(target);
-                    if (compType != null)
+                    if (compType == null)
+                    {
+                        var candidates = TypeResolver.AmbiguousCandidates(target);
+                        if (candidates != null)
+                            throw new AmbiguousTypeException(target, candidates);
+                    }
+                    else
                     {
                         foreach (var go in EnumerateSearchPool(rootObj, searchInactive))
                         {
@@ -208,7 +248,14 @@ namespace KitWright.Editor.Tools.Helpers
 
             var distinct = results.Distinct().ToList();
             if (!findAll && distinct.Count > 1)
-                return new List<GameObject> { distinct[0] };
+                throw new AmbiguousTargetException(target, distinct.Count,
+                    distinct.Take(MaxCandidates)
+                        .Select(go => (object)new
+                        {
+                            id = ObjectIdCodec.GetSerializableId(go),
+                            path = GetGameObjectPath(go)
+                        })
+                        .ToList());
 
             return distinct;
         }
@@ -286,22 +333,24 @@ namespace KitWright.Editor.Tools.Helpers
         public static object NotFound(string paramName, string value, string findMethod = null)
         {
             var candidates = SuggestTargets(value);
+            var idOccupant = DescribeIdOccupant(value);
             return Response.Error(NotFoundCode,
-                NotFoundData(paramName, value, findMethod, candidates),
-                NotFoundHint(value, candidates.Count));
+                NotFoundData(paramName, value, findMethod, candidates, idOccupant),
+                NotFoundHint(value, candidates.Count, idOccupant));
         }
 
         /// <summary>Same as <see cref="NotFound"/> for call sites that must return a JSON string.</summary>
         public static string NotFoundText(string paramName, string value, string findMethod = null)
         {
             var candidates = SuggestTargets(value);
+            var idOccupant = DescribeIdOccupant(value);
             return ToolResultFormatter.Error(NotFoundCode,
-                NotFoundData(paramName, value, findMethod, candidates),
-                NotFoundHint(value, candidates.Count));
+                NotFoundData(paramName, value, findMethod, candidates, idOccupant),
+                NotFoundHint(value, candidates.Count, idOccupant));
         }
 
         private static Dictionary<string, object> NotFoundData(string paramName, string value,
-            string findMethod, List<string> candidates)
+            string findMethod, List<string> candidates, string idOccupant)
         {
             var data = new Dictionary<string, object>
             {
@@ -309,13 +358,38 @@ namespace KitWright.Editor.Tools.Helpers
             };
             if (!string.IsNullOrEmpty(findMethod))
                 data["find_method"] = findMethod;
+            if (!string.IsNullOrEmpty(idOccupant))
+                data["id_refers_to"] = idOccupant;
             if (candidates.Count > 0)
                 data["candidates"] = candidates;
             return data;
         }
 
-        private static string NotFoundHint(string value, int candidateCount)
+        /// <summary>
+        /// What the id actually resolves to right now, or null when the value is not a live id.
+        /// Ids are reassigned across domain reloads and scene loads, so a cached id can land on an
+        /// unrelated object; naming the current occupant is what makes that visible to the caller.
+        /// </summary>
+        private static string DescribeIdOccupant(string value)
         {
+            var obj = ObjectIdCodec.ToObject(value);
+            if (obj == null)
+                return null;
+
+            var go = obj as GameObject ?? (obj as Component)?.gameObject;
+            var path = go != null ? GetGameObjectPath(go) : null;
+            return string.IsNullOrEmpty(path) || path == obj.name
+                ? $"{obj.GetType().Name} '{obj.name}'"
+                : $"{obj.GetType().Name} '{obj.name}' at {path}";
+        }
+
+        private static string NotFoundHint(string value, int candidateCount, string idOccupant)
+        {
+            if (!string.IsNullOrEmpty(idOccupant))
+                return $"That id resolves to {idOccupant}, which is not the GameObject this call asked for. " +
+                       "Instance ids are reassigned on every domain reload (script compile, entering play mode), " +
+                       "so re-read get_hierarchy or find_game_objects for current ids.";
+
             // Instance ids are reassigned by every domain reload, so a stale id is the one failure
             // an agent cannot diagnose from the name alone.
             if (!string.IsNullOrEmpty(value) && long.TryParse(value, out _))

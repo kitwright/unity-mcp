@@ -24,6 +24,41 @@
       "name": "com.unity.render-pipelines.universal",
       "expression": "",
       "define": "KITWRIGHT_URP"
+    },
+    {
+      "name": "com.unity.modules.physics",
+      "expression": "",
+      "define": "KITWRIGHT_PHYSICS"
+    },
+    {
+      "name": "com.unity.modules.physics2d",
+      "expression": "",
+      "define": "KITWRIGHT_PHYSICS2D"
+    },
+    {
+      "name": "com.unity.modules.ai",
+      "expression": "",
+      "define": "KITWRIGHT_AI"
+    },
+    {
+      "name": "com.unity.modules.terrain",
+      "expression": "",
+      "define": "KITWRIGHT_TERRAIN"
+    },
+    {
+      "name": "com.unity.modules.particlesystem",
+      "expression": "",
+      "define": "KITWRIGHT_PARTICLES"
+    },
+    {
+      "name": "com.unity.modules.audio",
+      "expression": "",
+      "define": "KITWRIGHT_AUDIO"
+    },
+    {
+      "name": "com.unity.modules.animation",
+      "expression": "",
+      "define": "KITWRIGHT_ANIMATION"
     }
   ],
   "optionalUnityReferences": [

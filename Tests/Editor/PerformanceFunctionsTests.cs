@@ -52,13 +52,18 @@ namespace KitWright.Editor.Tests
                 Assert.That(snapshot, Does.Contain("- GameObjects: 2 total, 2 active"));
                 Assert.That(snapshot, Does.Contain("- Renderers: 1"));
                 Assert.That(snapshot, Does.Contain("- Triangles: 12"));
+#if KITWRIGHT_PHYSICS
+                // CreatePrimitive only attaches a BoxCollider when the physics module is present.
                 Assert.That(snapshot, Does.Contain("- Colliders: 1"));
+#endif
 
                 var analysis = PerformanceFunctions.AnalyzeSceneComplexity(top_n: 5, include_inactive: true);
                 Assert.That(analysis, Does.Contain("Scene(s): " + activeScene.name + ", " + additiveScene.name));
                 Assert.That(analysis, Does.Contain("Objects: 2 total, 2 active"));
                 Assert.That(analysis, Does.Contain("Renderers: 1, Triangles: 12"));
+#if KITWRIGHT_PHYSICS
                 Assert.That(analysis, Does.Contain("Physics: 1 colliders"));
+#endif
                 Assert.That(analysis, Does.Contain("PerformanceAdditiveCube_" + suffix));
             }
             finally

@@ -36,7 +36,6 @@ wrapper packing, and opt-in publishing flags for GitHub, NuGet, and the MCP Regi
 
 ## 4. Docs and API Surface
 
-- [ ] `python scripts/generate_tools_doc.py --check` passes (TOOLS.md and the README tool tables match the exported tools)
 - [ ] Custom tool examples use `[ToolProvider]`
 - [ ] Any newly added tool has a clear `[Description]` and `[ToolParam]` metadata
 - [ ] Any user-visible behavior change is documented

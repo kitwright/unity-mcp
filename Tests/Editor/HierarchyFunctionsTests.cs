@@ -1,7 +1,9 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Builtins;
 using KitWright.Editor.Tools.Helpers;
 using NUnit.Framework;
@@ -229,6 +231,54 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void ResolveById_ReportsTheResolvedIdentityAndRefusesOutOfRangeIds()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var scene = SceneManager.GetActiveScene();
+            var wasDirty = scene.isDirty;
+            GameObject target = null;
+
+            try
+            {
+                target = new GameObject("IdOccupant_" + suffix);
+                var collider = target.AddComponent<BoxCollider>();
+                var goId = ObjectIdCodec.GetSerializableId(target);
+                var componentId = ObjectIdCodec.GetSerializableId(collider);
+
+                // A resolve that succeeds names what it resolved, so acting on the wrong object is
+                // visible in the response rather than silent.
+                Assert.AreSame(target, ObjectsHelper.FindObject(goId, ObjectsHelper.MethodById));
+                Assert.That(HierarchyFunctions.GetHierarchy(root_name: goId, depth: 1, include_components: false),
+                    Does.Contain(target.name));
+
+                // The id is live but is not the GameObject asked for: report the current occupant
+                // instead of a bare not-found, which is what makes a reassigned id diagnosable.
+                var byComponentId = HierarchyFunctions.GetHierarchy(root_name: componentId);
+                StringAssert.Contains("GAME_OBJECT_NOT_FOUND", byComponentId);
+                StringAssert.Contains("BoxCollider", byComponentId);
+                StringAssert.Contains(target.name, byComponentId);
+
+#if !UNITY_6000_3_OR_NEWER
+                // Only the int-based id path can truncate: a 64-bit id (YAML fileID, or one cached
+                // from another Unity version) must not narrow onto a live object. EntityId is 64-bit,
+                // so on 6000.3+ this value is a legitimately unrelated id and asserting it resolves
+                // to nothing would only be asserting that Unity has not handed it out yet.
+                var truncating = ((long)target.GetInstanceID() + 4294967296L)
+                    .ToString(System.Globalization.CultureInfo.InvariantCulture);
+                Assert.IsNull(ObjectIdCodec.ToObject(truncating),
+                    "An out-of-range id must not resolve to whatever its low 32 bits point at.");
+                Assert.IsNull(ObjectsHelper.FindObject(truncating, ObjectsHelper.MethodById));
+#endif
+            }
+            finally
+            {
+                if (target != null) UnityEngine.Object.DestroyImmediate(target);
+                if (!wasDirty && scene.IsValid())
+                    ClearSceneDirtiness(scene);
+            }
+        }
+
+        [Test]
         public void GetHierarchy_ExcludeInactive_DoesNotShowInactiveObjects()
         {
             var suffix = Guid.NewGuid().ToString("N");
@@ -423,6 +473,74 @@ namespace KitWright.Editor.Tests
             finally
             {
                 if (parent != null) UnityEngine.Object.DestroyImmediate(parent);
+                if (!wasDirty && scene.IsValid())
+                    ClearSceneDirtiness(scene);
+            }
+        }
+
+        [Test]
+        public void SingleTargetResolve_TwoObjectsShareAName_ErrorsInsteadOfPickingOne()
+        {
+            var name = "__KitWrightAmbiguous_" + Guid.NewGuid().ToString("N");
+            var scene = SceneManager.GetActiveScene();
+            var wasDirty = scene.isDirty;
+            GameObject first = null;
+            GameObject second = null;
+
+            try
+            {
+                first = new GameObject(name);
+                second = new GameObject(name);
+
+                Assert.AreEqual(2, ObjectsHelper.FindObjects(name, findAll: true).Count,
+                    "Both objects must be in the search pool for the ambiguity to be real.");
+
+                var ambiguous = Assert.Throws<AmbiguousTargetException>(
+                    () => ObjectsHelper.FindObject(name));
+                Assert.AreEqual(2, ambiguous.Candidates.Count,
+                    "The error must name every candidate so the caller can re-target by id.");
+
+                var deleted = new FunctionInvoker().Invoke(new FunctionCall
+                {
+                    FunctionName = "delete_game_object",
+                    Parameters = new Dictionary<string, string> { ["target"] = name }
+                });
+
+                StringAssert.Contains("\"code\":\"AMBIGUOUS_TARGET\"", deleted);
+                Assert.IsFalse(first == null, "Neither match may be destroyed on an ambiguous delete.");
+                Assert.IsFalse(second == null, "Neither match may be destroyed on an ambiguous delete.");
+            }
+            finally
+            {
+                if (first != null) UnityEngine.Object.DestroyImmediate(first);
+                if (second != null) UnityEngine.Object.DestroyImmediate(second);
+                if (!wasDirty && scene.IsValid())
+                    ClearSceneDirtiness(scene);
+            }
+        }
+
+        [Test]
+        public void FindGameObjects_MaxCap_ReportsThePreCapTotalAndTheShownCount()
+        {
+            var name = "__KitWrightCapped_" + Guid.NewGuid().ToString("N");
+            var scene = SceneManager.GetActiveScene();
+            var wasDirty = scene.isDirty;
+            GameObject first = null;
+            GameObject second = null;
+
+            try
+            {
+                first = new GameObject(name);
+                second = new GameObject(name);
+
+                var capped = GameObjectFunctions.FindGameObjects(name, max: "1").ToString();
+
+                StringAssert.Contains("Found 2 object(s), showing 1", capped);
+            }
+            finally
+            {
+                if (first != null) UnityEngine.Object.DestroyImmediate(first);
+                if (second != null) UnityEngine.Object.DestroyImmediate(second);
                 if (!wasDirty && scene.IsValid())
                     ClearSceneDirtiness(scene);
             }

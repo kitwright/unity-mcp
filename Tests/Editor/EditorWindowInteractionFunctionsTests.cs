@@ -2,7 +2,6 @@
 
 using System.Linq;
 using System.Reflection;
-using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
@@ -11,13 +10,6 @@ namespace KitWright.Editor.Tests
 {
     public sealed class EditorWindowInteractionFunctionsTests
     {
-        [Test]
-        public void CoreToolProfile_IncludesEditorWindowInteraction()
-        {
-            Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Contains("simulate_editor_window_click"));
-            Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Contains("simulate_editor_window_key"));
-        }
-
         [Test]
         public void SimulateEditorWindowClick_ExposesWindowAndPixelParameters()
         {
@@ -33,10 +25,10 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void EditorWindowInteractionTools_AreReadOnly()
+        public void EditorWindowInteractionTools_AreNotReadOnly()
         {
-            Assert.IsTrue(ToolRegistry.IsReadOnly(typeof(EditorWindowInteractionFunctions).GetMethod("SimulateEditorWindowClick")));
-            Assert.IsTrue(ToolRegistry.IsReadOnly(typeof(EditorWindowInteractionFunctions).GetMethod("SimulateEditorWindowKey")));
+            Assert.IsFalse(ToolRegistry.IsReadOnly(typeof(EditorWindowInteractionFunctions).GetMethod("SimulateEditorWindowClick")));
+            Assert.IsFalse(ToolRegistry.IsReadOnly(typeof(EditorWindowInteractionFunctions).GetMethod("SimulateEditorWindowKey")));
         }
     }
 }

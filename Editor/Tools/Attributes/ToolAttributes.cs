@@ -39,4 +39,18 @@ namespace KitWright.Editor.Tools
     /// modal dialog owns the editor loop and nothing queued can run.
     [AttributeUsage(AttributeTargets.Method)]
     internal sealed class OffEditorThreadAttribute : Attribute { }
+
+    /// A tool that legitimately blocks the editor for minutes (a player build, a NavMesh bake).
+    /// The transports widen their per-request timeout to this budget instead of answering
+    /// "Request timeout" while the work is still running and the main thread is pinned.
+    [AttributeUsage(AttributeTargets.Method)]
+    internal sealed class LongRunningToolAttribute : Attribute
+    {
+        public int Seconds { get; }
+
+        public LongRunningToolAttribute(int seconds)
+        {
+            Seconds = seconds;
+        }
+    }
 }

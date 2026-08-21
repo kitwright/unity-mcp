@@ -631,10 +631,12 @@ namespace KitWright.Editor.Tools.Scripting
                 return ScriptCompilationResult.Unavailable(Name, _typeLoadError);
 
             var provider = Activator.CreateInstance(_providerType);
+            var outputPath = Path.Combine(Path.GetTempPath(), $"kitwright-codedom-{Guid.NewGuid():N}.dll");
             try
             {
                 var parameters = Activator.CreateInstance(_paramsType);
-                _paramsType.GetProperty("GenerateInMemory")?.SetValue(parameters, true, null);
+                _paramsType.GetProperty("GenerateInMemory")?.SetValue(parameters, false, null);
+                _paramsType.GetProperty("OutputAssembly")?.SetValue(parameters, outputPath, null);
                 _paramsType.GetProperty("GenerateExecutable")?.SetValue(parameters, false, null);
                 _paramsType.GetProperty("TreatWarningsAsErrors")?.SetValue(parameters, false, null);
 
@@ -652,39 +654,57 @@ namespace KitWright.Editor.Tools.Scripting
 
                 var resultsType = results.GetType();
                 var errors = resultsType.GetProperty("Errors")?.GetValue(results, null);
-                var hasErrors = (bool)(errors?.GetType().GetProperty("HasErrors")?.GetValue(errors, null) ?? false);
+                var realErrors = GetCodeDomErrors(errors);
+                if (realErrors.Count > 0)
+                    return ScriptCompilationResult.CompilationFailed(Name, realErrors, "CodeDom reported compilation errors.");
 
-                if (hasErrors)
-                    return ScriptCompilationResult.CompilationFailed(Name, GetCodeDomErrors(errors), "CodeDom reported compilation errors.");
-
-                var compiledAssembly = resultsType.GetProperty("CompiledAssembly")?.GetValue(results, null) as Assembly;
-                return compiledAssembly == null
-                    ? ScriptCompilationResult.Unavailable(Name, "CodeDom did not return a compiled assembly.")
-                    : ScriptCompilationResult.Success(Name, compiledAssembly);
+                // Mono leaves CompiledAssembly null whenever Errors is non-empty, and the phantom BOM
+                // diagnostic alone is enough to trigger that, so load the DLL we asked for from disk.
+                return File.Exists(outputPath)
+                    ? ScriptCompilationResult.Success(Name, Assembly.Load(File.ReadAllBytes(outputPath)))
+                    : ScriptCompilationResult.Unavailable(Name, "CodeDom reported success but produced no assembly.");
             }
             finally
             {
                 if (provider is IDisposable disposable)
                     disposable.Dispose();
+
+                try { if (File.Exists(outputPath)) File.Delete(outputPath); }
+                catch { }
             }
         }
 
-        private static List<ScriptCompilationError> GetCodeDomErrors(object errors)
+        // mcs prints a stray BOM line on stdout that Mono's CodeDom can't parse, so it fabricates a
+        // bogus error (no error number, text is just the BOM) even though mcs exits 0 and wrote the DLL.
+        // Adapted from CoplayDev/unity-mcp, MCPForUnity/Editor/Tools/ExecuteCode.cs (MIT).
+        internal static bool IsPhantomDiagnostic(string errorNumber, string errorText)
+            => string.IsNullOrEmpty(errorNumber) &&
+               string.IsNullOrEmpty((errorText ?? string.Empty).Trim('\uFEFF', ' ', '\t', '\r', '\n'));
+
+        internal static List<ScriptCompilationError> GetCodeDomErrors(object errors)
         {
             var errorList = new List<ScriptCompilationError>();
-            foreach (var error in (IEnumerable)errors)
+            if (!(errors is IEnumerable entries))
+                return errorList;
+
+            foreach (var error in entries)
             {
                 var errorType = error.GetType();
                 var isWarning = (bool)(errorType.GetProperty("IsWarning")?.GetValue(error, null) ?? false);
                 if (isWarning)
                     continue;
 
+                var code = errorType.GetProperty("ErrorNumber")?.GetValue(error, null)?.ToString();
+                var text = errorType.GetProperty("ErrorText")?.GetValue(error, null)?.ToString();
+                if (IsPhantomDiagnostic(code, text))
+                    continue;
+
                 errorList.Add(new ScriptCompilationError
                 {
                     line = (int)(errorType.GetProperty("Line")?.GetValue(error, null) ?? 0),
                     column = (int)(errorType.GetProperty("Column")?.GetValue(error, null) ?? 0),
-                    code = errorType.GetProperty("ErrorNumber")?.GetValue(error, null)?.ToString(),
-                    text = errorType.GetProperty("ErrorText")?.GetValue(error, null)?.ToString() ?? "Unknown error"
+                    code = code,
+                    text = text ?? "Unknown error"
                 });
             }
 

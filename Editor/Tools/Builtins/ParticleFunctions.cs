@@ -1,5 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+// com.unity.modules.particlesystem is optional; without it these tools disappear instead of breaking the build.
+#if KITWRIGHT_PARTICLES
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEngine;
@@ -91,3 +93,4 @@ namespace KitWright.Editor.Tools.Builtins
         }
     }
 }
+#endif

@@ -49,7 +49,7 @@ namespace KitWright.Editor.MCP.Server
             ProjectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? Directory.GetCurrentDirectory();
             RuntimeDirectory = Path.Combine(ProjectRoot, "Library", "KitWrightMcp", "Broker");
 
-            EditorApplication.quitting += Stop;
+            EditorApplication.quitting += StopOnQuit;
         }
 
         public static Task<bool> EnsureRunningAsync(int port, string monoPathOverride)
@@ -173,8 +173,8 @@ namespace KitWright.Editor.MCP.Server
                     var startInfo = new ProcessStartInfo
                     {
                         FileName = mono,
-                        Arguments = Quote(brokerExe) + " --port " + port + " --token " + spawnToken +
-                                    " --pin " + ProjectIdentity.PinFromProjectPath(ApplicationPaths.ProjectRoot),
+                        Arguments = BuildSpawnArguments(brokerExe, port, spawnToken,
+                            ProjectIdentity.PinFromProjectPath(ApplicationPaths.ProjectRoot)),
                         WorkingDirectory = Path.GetDirectoryName(brokerExe),
                         UseShellExecute = false,
                         CreateNoWindow = true
@@ -255,6 +255,16 @@ namespace KitWright.Editor.MCP.Server
         public static void Stop()
         {
             Stop(DefaultPaths);
+        }
+
+        // A -batchmode editor (our own CI runs -batchmode -runTests) shares the broker with any
+        // interactive editor on the same project, so its exit must not take the broker down.
+        internal static bool ShouldStopOnQuit(bool isBatchMode) => !isBatchMode;
+
+        private static void StopOnQuit()
+        {
+            if (ShouldStopOnQuit(Application.isBatchMode))
+                Stop();
         }
 
         internal static void Stop(MCPBrokerRuntimePaths paths)
@@ -413,14 +423,23 @@ namespace KitWright.Editor.MCP.Server
                         return null;
                     }
 
-                    var stdout = process.StandardOutput.ReadToEnd();
-                    var stderr = process.StandardError.ReadToEnd();
+                    // Drained concurrently: a compiler that filled the stderr buffer blocked, so
+                    // stdout never hit EOF and the sequential read hung past the timeout below.
+                    var stdoutRead = process.StandardOutput.ReadToEndAsync();
+                    var stderrRead = process.StandardError.ReadToEndAsync();
+
                     if (!process.WaitForExit(20000))
                     {
                         try { process.Kill(); } catch { }
                         LastError = "Broker compile timed out.";
                         return null;
                     }
+
+                    // Bounded: EOF needs every writer to close, and a diagnostic is not worth
+                    // blocking the editor for if one does not.
+                    try { Task.WaitAll(new Task[] { stdoutRead, stderrRead }, 2000); } catch { }
+                    var stdout = stdoutRead.Status == TaskStatus.RanToCompletion ? stdoutRead.Result : string.Empty;
+                    var stderr = stderrRead.Status == TaskStatus.RanToCompletion ? stderrRead.Result : string.Empty;
 
                     if (process.ExitCode != 0 || !File.Exists(cacheExe))
                     {
@@ -636,6 +655,15 @@ namespace KitWright.Editor.MCP.Server
             catch
             {
             }
+        }
+
+        // The broker reads its protocol version from here rather than declaring its own, so a bump
+        // touches one file. Dropping the argument would make it answer 0 and fail every health
+        // probe, which is the same silent fallback-to-HTTP a mismatched constant used to cause.
+        internal static string BuildSpawnArguments(string brokerExe, int port, string token, string pin)
+        {
+            return Quote(brokerExe) + " --port " + port + " --token " + token +
+                   " --pin " + pin + " --protocol " + MCPBrokerProtocol.Version;
         }
 
         private static string Quote(string value)

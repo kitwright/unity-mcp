@@ -44,8 +44,10 @@ namespace KitWright.Editor.Tools.Builtins
             AssetDatabase.SaveAssets();
             volume.sharedProfile = profile;
 
+#if KITWRIGHT_PHYSICS
             if (!global)
                 Undo.AddComponent<BoxCollider>(go).isTrigger = true;
+#endif
 
             Selection.activeGameObject = go;
             return Response.Success($"Created {(global ? "global" : "local")} volume '{name}'.", new

@@ -179,6 +179,14 @@ namespace KitWright.Editor
             }
         }
 
+        [Test]
+        public void ShouldStopOnQuit_LeavesTheBrokerRunningForBatchModeEditors()
+        {
+            Assert.IsFalse(MCPBrokerProcessManager.ShouldStopOnQuit(true),
+                "A -batchmode editor shares the broker with an interactive one, so quitting must not stop it.");
+            Assert.IsTrue(MCPBrokerProcessManager.ShouldStopOnQuit(false));
+        }
+
         [UnityTest]
         public IEnumerator BrokerTransport_LongRunningRequestIsNotRedeliveredWithinSameSession()
         {
@@ -211,7 +219,7 @@ namespace KitWright.Editor
                 yield return WaitForTask(startTask);
                 Assert.IsTrue(startTask.Result);
 
-                var requestTask = SendToolCallAsync(port, "get_editor_state");
+                var requestTask = SendToolCallBodyAsync(port, "get_editor_state");
                 yield return WaitForTask(requestTask, 8f);
 
                 Assert.That(requestTask.Result, Does.Contain("done"));
@@ -256,7 +264,7 @@ namespace KitWright.Editor
                 yield return WaitForTask(firstStart);
                 Assert.IsTrue(firstStart.Result);
 
-                var requestTask = SendToolCallAsync(port, "execute_code");
+                var requestTask = SendToolCallBodyAsync(port, "execute_code");
                 yield return WaitForTask(firstReceived.Task, 5f);
 
                 firstTransport.Dispose();
@@ -302,7 +310,7 @@ namespace KitWright.Editor
                 Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
 
                 var startedAt = DateTime.UtcNow;
-                var requestTask = SendToolCallAsync(port, "get_editor_state");
+                var requestTask = SendToolCallBodyAsync(port, "get_editor_state");
                 yield return WaitForTask(requestTask, 3f);
                 var elapsed = DateTime.UtcNow - startedAt;
 
@@ -346,7 +354,7 @@ namespace KitWright.Editor
                 transport = null;
 
                 var startedAt = DateTime.UtcNow;
-                var requestTask = SendToolCallAsync(port, "get_editor_state");
+                var requestTask = SendToolCallBodyAsync(port, "get_editor_state");
                 yield return WaitForTask(requestTask, 3f);
                 var elapsed = DateTime.UtcNow - startedAt;
 
@@ -356,6 +364,60 @@ namespace KitWright.Editor
             finally
             {
                 transport?.Dispose();
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator BrokerTransport_HoldsProtocolCallsAcrossAReattachInsteadOfErroring()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            MCPBrokerClientTransport firstTransport = null;
+            MCPBrokerClientTransport secondTransport = null;
+
+            try
+            {
+                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
+                    "Unity-bundled Mono is required for broker process tests.");
+
+                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
+
+                firstTransport = new MCPBrokerClientTransport(port, connection.Token);
+                var firstStart = firstTransport.StartAsync();
+                yield return WaitForTask(firstStart);
+                Assert.IsTrue(firstStart.Result);
+
+                yield return new WaitForSecondsRealtime(0.25f);
+
+                // Exactly what OnBeforeAssemblyReload does: detach, then vanish for the reload.
+                firstTransport.Dispose();
+                firstTransport = null;
+
+                var listTask = SendToolsListAsync(port);
+                yield return new WaitForSecondsRealtime(1f);
+
+                secondTransport = new MCPBrokerClientTransport(port, connection.Token);
+                secondTransport.OnRequestReceived += (request, sendResponse) =>
+                    sendResponse(CreateToolTextResponse(request.Id, "tools-after-reload"));
+
+                var secondStart = secondTransport.StartAsync();
+                yield return WaitForTask(secondStart);
+                Assert.IsTrue(secondStart.Result);
+
+                yield return WaitForTask(listTask, 10f);
+
+                Assert.That(listTask.Result, Does.Contain("\"result\""));
+                Assert.That(listTask.Result, Does.Contain("tools-after-reload"));
+                Assert.That(listTask.Result, Does.Not.Contain("-32001"));
+            }
+            finally
+            {
+                secondTransport?.Dispose();
+                firstTransport?.Dispose();
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
@@ -390,10 +452,10 @@ namespace KitWright.Editor
                 yield return WaitForTask(firstStart);
                 Assert.IsTrue(firstStart.Result);
 
-                var interruptedRequest = SendToolCallAsync(port, "execute_code");
+                var interruptedRequest = SendToolCallBodyAsync(port, "execute_code");
                 yield return WaitForTask(firstReceived.Task, 5f);
 
-                var queuedRequest = SendToolCallAsync(port, "get_editor_state");
+                var queuedRequest = SendToolCallBodyAsync(port, "get_editor_state");
                 yield return new WaitForSecondsRealtime(0.1f);
 
                 firstTransport.Dispose();
@@ -423,6 +485,106 @@ namespace KitWright.Editor
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
+        }
+
+        [UnityTest]
+        public IEnumerator BrokerTransport_RejectsRequestsFromNonLoopbackOrigin()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+
+            try
+            {
+                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
+                    "Unity-bundled Mono is required for broker process tests.");
+
+                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+
+                var hostile = SendToolCallAsync(port, "execute_code", "http://evil.example.com");
+                yield return WaitForTask(hostile, 5f);
+                Assert.AreEqual(HttpStatusCode.Forbidden, hostile.Result.StatusCode,
+                    "A web page must not be able to drive broker tool calls.");
+
+                var loopback = SendToolCallAsync(port, "execute_code", "http://localhost:" + port);
+                yield return WaitForTask(loopback, 5f);
+                Assert.AreEqual(HttpStatusCode.OK, loopback.Result.StatusCode);
+            }
+            finally
+            {
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        // The refusal has to be an HTTP 404, not a JSON-RPC error inside a 200: 404 is what makes a
+        // client re-initialize, and a client served 200 keeps the dead id and fails every later call
+        // while the connection still looks healthy. Broker mode could not answer 404 until the editor
+        // was given a way to name the status, so pin the status here rather than the decision --
+        // BrokerSession_InitializeMintsAnIdAndUnknownIdsAreRefused already covers the decision.
+        [UnityTest]
+        public IEnumerator BrokerTransport_RefusesADeadSessionWithNotFound()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            MCPBrokerClientTransport transport = null;
+
+            try
+            {
+                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
+                    "Unity-bundled Mono is required for broker process tests.");
+
+                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
+
+                transport = new MCPBrokerClientTransport(port, connection.Token);
+                transport.OnRequestReceived += (request, sendResponse) =>
+                    sendResponse(CreateToolTextResponse(request.Id, "served"));
+
+                var start = transport.StartAsync();
+                yield return WaitForTask(start);
+                Assert.IsTrue(start.Result);
+
+                var dead = SendToolCallAsync(port, "get_editor_state", mcpSessionId: "kw-not-a-session");
+                yield return WaitForTask(dead, 8f);
+                Assert.AreEqual(HttpStatusCode.NotFound, dead.Result.StatusCode,
+                    "a dead session id must come back as 404, or the client never re-initializes");
+
+                var sessionless = SendToolCallAsync(port, "get_editor_state");
+                yield return WaitForTask(sessionless, 8f);
+                Assert.AreEqual(HttpStatusCode.OK, sessionless.Result.StatusCode,
+                    "a client that sends no id at all is still served, so the refusal cannot be blanket");
+            }
+            finally
+            {
+                transport?.Dispose();
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        [Test]
+        public void BrokerSession_InitializeMintsAnIdAndUnknownIdsAreRefused()
+        {
+            Assert.IsTrue(MCPBrokerClientTransport.TryTakeSession(
+                new MCPRequest { Method = "initialize" }, out var issued));
+            Assert.IsFalse(string.IsNullOrEmpty(issued),
+                "initialize must mint a session id, or the broker has none to return to the client");
+
+            var live = new MCPRequest { Method = "tools/list", SessionId = issued };
+            Assert.IsTrue(MCPBrokerClientTransport.TryTakeSession(live, out var reissued));
+            Assert.IsNull(reissued, "only initialize issues an id");
+            Assert.AreEqual(issued, live.SessionId,
+                "the client's session has to reach the handler, or every broker client shares one slot");
+
+            Assert.IsFalse(MCPBrokerClientTransport.TryTakeSession(
+                new MCPRequest { Method = "tools/list", SessionId = "kw-not-a-session" }, out _),
+                "a session the server does not know must be refused, not served");
+
+            Assert.IsTrue(MCPBrokerClientTransport.TryTakeSession(
+                new MCPRequest { Method = "tools/list" }, out _),
+                "a client that sends no id at all is still served, as it was before sessions crossed the broker");
         }
 
         [Test]
@@ -474,6 +636,33 @@ namespace KitWright.Editor
 
             Assert.NotNull(source, "Broker source TextAsset not found at " + assetPath);
             Assert.That(source.text, Does.Contain("kitwright-unity-mcp-broker"));
+        }
+
+        [Test]
+        public void BrokerSpawn_PassesTheEditorsProtocolVersionToABrokerThatReadsIt()
+        {
+            var args = MCPBrokerProcessManager.BuildSpawnArguments(@"C:\b\broker.exe", 8765, "tok", "abc123");
+            StringAssert.Contains("--protocol " + MCPBrokerProtocol.Version, args,
+                "without this the broker answers 0, fails every health probe, and the transport " +
+                "silently falls back to in-process HTTP");
+
+            var source = AssetDatabase.LoadAssetAtPath<TextAsset>(ResolveBrokerSourceAssetPath());
+            Assert.NotNull(source, "Broker source TextAsset not found");
+            StringAssert.Contains("\"--protocol\"", source.text,
+                "the broker must still read the argument the editor sends");
+            Assert.That(source.text, Does.Not.Match(@"const\s+int\s+ProtocolVersion"),
+                "a second declaration here is what made a one-sided bump possible");
+        }
+
+        [Test]
+        public void BrokerLog_DoesNotWriteToTheStderrItInheritsFromUnity()
+        {
+            var source = AssetDatabase.LoadAssetAtPath<TextAsset>(ResolveBrokerSourceAssetPath());
+            Assert.NotNull(source, "Broker source TextAsset not found");
+            Assert.That(source.text, Does.Not.Contain("Console.Error"),
+                "the broker is spawned without redirection, so stderr is Unity's own Editor.log");
+            StringAssert.Contains("AppDomain.CurrentDomain.BaseDirectory", source.text,
+                "broker diagnostics belong in a file beside the broker exe");
         }
 
         private static MCPResponse CreateToolTextResponse(object id, string text)
@@ -528,18 +717,30 @@ namespace KitWright.Editor
             }
         }
 
-        private static async Task<string> SendToolCallAsync(int port, string toolName)
+        private static async Task<HttpResponseMessage> SendToolCallAsync(int port, string toolName,
+            string origin = null, string mcpSessionId = null)
         {
             using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) })
-            using (var content = new StringContent(
-                       "{\"jsonrpc\":\"2.0\",\"id\":\"test\",\"method\":\"tools/call\",\"params\":{\"name\":\"" + toolName + "\",\"arguments\":{}}}",
-                       Encoding.UTF8,
-                       "application/json"))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/"))
             {
-                var response = await client.PostAsync("http://127.0.0.1:" + port + "/", content);
-                return await response.Content.ReadAsStringAsync();
+                if (origin != null)
+                    request.Headers.Add("Origin", origin);
+                if (mcpSessionId != null)
+                    request.Headers.Add("Mcp-Session-Id", mcpSessionId);
+                request.Content = new StringContent(
+                    "{\"jsonrpc\":\"2.0\",\"id\":\"test\",\"method\":\"tools/call\",\"params\":{\"name\":\"" + toolName + "\",\"arguments\":{}}}",
+                    Encoding.UTF8,
+                    "application/json");
+
+                var response = await client.SendAsync(request);
+                // Buffered by SendAsync, so the body survives disposing the client below.
+                await response.Content.LoadIntoBufferAsync();
+                return response;
             }
         }
+
+        private static async Task<string> SendToolCallBodyAsync(int port, string toolName) =>
+            await (await SendToolCallAsync(port, toolName)).Content.ReadAsStringAsync();
 
         private static IEnumerator WaitForTask(Task task, float timeoutSeconds = 5f)
         {

@@ -44,20 +44,24 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Get all serialized properties on a component, including [SerializeField] private fields. " +
                      "Component can be addressed by type name on a GameObject, or directly by component instanceId. " +
                      "On a component with many properties, pass name_filter to return only the ones you need — " +
-                     "the response then reports how many were left out, so a filtered read is never mistaken for the whole component.")]
+                     "the response then reports how many were left out, so a filtered read is never mistaken for the whole component. " +
+                     "An enum reads as { name, value } and an object reference carries assetPath, so a read can be fed back to " +
+                     "set_component_property. descend also returns nested and array element properties, capped by max_properties.")]
         [ReadOnlyTool]
         public static object GetComponentProperties(
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
             [ToolParam("Component type name (e.g. 'Rigidbody'). Omit if using component_instance_id.", Required = false)] string component = null,
             [ToolParam("Component instanceId (alternative to target+component)", Required = false)] string component_instance_id = null,
             [ToolParam("How to resolve target", Required = false)] string find_method = null,
-            [ToolParam("Comma-separated name substrings; a property is kept if it contains any of them (case-insensitive). Matches Unity's serialized names, so 'resolution' finds 'm_ReferenceResolution'. Empty = every property.", Required = false)] string name_filter = null)
+            [ToolParam("Comma-separated name substrings; a property is kept if it contains any of them (case-insensitive). Matches Unity's serialized names, so 'resolution' finds 'm_ReferenceResolution'. Empty = every property.", Required = false)] string name_filter = null,
+            [ToolParam("Also return nested and array/list element properties, named by full path (e.g. 'm_Sizes.Array.data[0]'). Off by default: arrays then read as '<Array length=N>'.", Required = false)] bool descend = false,
+            [ToolParam("Stop after this many properties (1-5000). Mostly matters with descend, where an array of a few thousand elements is one property per element. The response reports the untruncated total.", Required = false)] int max_properties = 400)
         {
             var resolved = ResolveComponent(target, component, component_instance_id, find_method);
             if (resolved.Error != null) return resolved.Error;
 
-            var props = ComponentSerializer.ReadProperties(resolved.Component);
-            var total = props.Count;
+            max_properties = Mathf.Clamp(max_properties, 1, 5000);
+            var props = ComponentSerializer.ReadProperties(resolved.Component, out var total, descend: descend, maxProperties: max_properties);
             var terms = SplitFilterTerms(name_filter);
             if (terms.Length > 0)
                 props = props.Where(p => MatchesAnyTerm(p.Name, terms)).ToList();
@@ -65,7 +69,9 @@ namespace KitWright.Editor.Tools.Builtins
             var typeName = resolved.Component.GetType().Name;
             var message = terms.Length > 0
                 ? $"{props.Count} of {total} properties on {typeName} (filter: {name_filter})."
-                : $"{props.Count} properties on {typeName}.";
+                : total > max_properties
+                    ? $"{props.Count} of {total} properties on {typeName} (truncated; raise max_properties or pass name_filter)."
+                    : $"{props.Count} properties on {typeName}.";
 
             return Response.Success(message,
                 new

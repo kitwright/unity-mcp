@@ -14,6 +14,16 @@ namespace KitWright.Editor.MCP.Server
     /// </summary>
     internal class MCPRequestHandler
     {
+        // structuredContent only exists from this revision on.
+        internal const string ProtocolVersion = "2025-06-18";
+
+        private static readonly string[] SupportedProtocolVersions = { "2024-11-05", "2025-03-26", ProtocolVersion };
+
+        // A client that gets back a version it does not speak is expected to drop the connection,
+        // so echo what it asked for whenever we can serve it.
+        internal static string NegotiateProtocolVersion(string requested) =>
+            Array.IndexOf(SupportedProtocolVersions, requested) >= 0 ? requested : ProtocolVersion;
+
         private readonly MCPToolExporter _toolExporter;
         private readonly MCPExecutionBridge _executionBridge;
         private readonly MCPResourceProvider _resourceProvider;
@@ -21,6 +31,19 @@ namespace KitWright.Editor.MCP.Server
         private readonly string _serverName;
         private readonly string _serverVersion;
         private readonly string _projectIdentity;
+
+        // structuredContent only exists from 2025-06-18 on, so a client that negotiated an older
+        // revision must not receive it. Kept per session: one handler serves every client, and a
+        // single old client must not silently strip the field from everyone else's results. Requests
+        // with no session id (plain HTTP POST) share the sessionless slot.
+        private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _negotiatedBySession
+            = new System.Collections.Concurrent.ConcurrentDictionary<string, string>();
+
+        private static string SessionKey(MCPRequest request) =>
+            string.IsNullOrEmpty(request?.SessionId) ? string.Empty : request.SessionId;
+
+        private string NegotiatedFor(MCPRequest request) =>
+            _negotiatedBySession.TryGetValue(SessionKey(request), out var version) ? version : ProtocolVersion;
 
         public MCPRequestHandler(
             MCPToolExporter toolExporter,
@@ -56,6 +79,8 @@ namespace KitWright.Editor.MCP.Server
                 return request.Method switch
                 {
                     "initialize" => HandleInitialize(request),
+                    // Spec MUST: a ping is answered with an empty result, never -32601.
+                    "ping" => new MCPResponse { Id = request.Id, Result = new Dictionary<string, object>() },
                     "notifications/initialized" => null,
                     "notifications/cancelled" => null,
                     "logging/setLevel" => HandleLoggingSetLevel(request),
@@ -90,9 +115,16 @@ namespace KitWright.Editor.MCP.Server
 
         private MCPResponse HandleInitialize(MCPRequest request)
         {
+            var requested = request.Params != null && request.Params.TryGetValue("protocolVersion", out var versionObj)
+                ? versionObj as string
+                : null;
+
+            var negotiated = NegotiateProtocolVersion(requested);
+            _negotiatedBySession[SessionKey(request)] = negotiated;
+
             var result = new Dictionary<string, object>
             {
-                ["protocolVersion"] = "2024-11-05",
+                ["protocolVersion"] = negotiated,
                 ["serverInfo"] = new Dictionary<string, object>
                 {
                     ["name"] = _serverName,
@@ -150,7 +182,9 @@ namespace KitWright.Editor.MCP.Server
                 };
                 if (TryParseEnvelope(result, out var envelope, out var isError))
                 {
-                    callResult["structuredContent"] = envelope;
+                    // Version strings are ISO dates, so ordinal compare is a revision compare.
+                    if (string.CompareOrdinal(NegotiatedFor(request), ProtocolVersion) >= 0)
+                        callResult["structuredContent"] = envelope;
                     if (isError)
                         callResult["isError"] = true;
                 }
@@ -340,6 +374,7 @@ namespace KitWright.Editor.MCP.Server
             {
                 case null:
                 case "initialize":
+                case "ping":
                 case "notifications/initialized":
                 case "notifications/cancelled":
                 case "resources/list":

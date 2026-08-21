@@ -10,8 +10,8 @@ namespace KitWright.Editor.Threading
 {
     internal class EditorThreadHelper : IDisposable
     {
-        private readonly ConcurrentQueue<(Func<object> func, TaskCompletionSource<object> tcs)> _funcQueue
-            = new ConcurrentQueue<(Func<object>, TaskCompletionSource<object>)>();
+        private readonly ConcurrentQueue<(Func<object> func, TaskCompletionSource<object> tcs, CancellationToken ct)> _funcQueue
+            = new ConcurrentQueue<(Func<object>, TaskCompletionSource<object>, CancellationToken)>();
 
         private readonly int _mainThreadId;
         private readonly SynchronizationContext _syncContext;
@@ -119,7 +119,7 @@ namespace KitWright.Editor.Threading
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
 
-            _funcQueue.Enqueue((() => func(), tcs));
+            _funcQueue.Enqueue((() => func(), tcs, CancellationToken.None));
             WakeEditorLoop();
             FailIfEditorIsBlocked(outerTcs);
             return outerTcs.Task;
@@ -165,7 +165,7 @@ namespace KitWright.Editor.Threading
                         outerTcs.TrySetResult(task.Result);
                 });
                 return (object)null;
-            }, tcs));
+            }, tcs, ct));
             WakeEditorLoop();
 
             if (ctRegistration.HasValue)
@@ -175,7 +175,7 @@ namespace KitWright.Editor.Threading
             return outerTcs.Task;
         }
 
-        private void ProcessQueues()
+        internal void ProcessQueues()
         {
             Interlocked.Exchange(ref s_lastPumpUtcTicks, DateTime.UtcNow.Ticks);
             if (_disposed) return;
@@ -185,6 +185,14 @@ namespace KitWright.Editor.Threading
 
             while (processedCount < maxPerFrame && _funcQueue.TryDequeue(out var item))
             {
+                // The caller's deadline passed while this sat in the queue, so running it now would
+                // apply a mutation the client already gave up on - and double-apply on its retry.
+                if (item.ct.IsCancellationRequested)
+                {
+                    item.tcs.TrySetCanceled();
+                    continue;
+                }
+
                 try
                 {
                     var result = item.func();

@@ -216,6 +216,7 @@ namespace KitWright.Editor.Tools.Scripting
             var masked = new char[source.Length];
             bool inString = false, inVerbatim = false, inChar = false;
             bool inLineComment = false, inBlockComment = false;
+            var rawQuotes = 0;
 
             for (var i = 0; i < source.Length; i++)
             {
@@ -225,9 +226,10 @@ namespace KitWright.Editor.Tools.Scripting
                 if (c == '\n')
                 {
                     inLineComment = false;
-                    // A non-verbatim string cannot span lines; closing it here stops one stray quote
-                    // from blanking the rest of the file.
+                    // A non-verbatim string or a char literal cannot span lines; closing them here
+                    // stops one stray quote or apostrophe from blanking the rest of the file.
                     if (inString && !inVerbatim) inString = false;
+                    inChar = false;
                     masked[i] = c;
                     continue;
                 }
@@ -238,6 +240,17 @@ namespace KitWright.Editor.Tools.Scripting
                 {
                     masked[i] = ' ';
                     if (c == '*' && next == '/' && i + 1 < source.Length) { inBlockComment = false; masked[++i] = ' '; }
+                    continue;
+                }
+
+                if (rawQuotes > 0)
+                {
+                    masked[i] = ' ';
+                    if (c != '"') continue;
+
+                    var closing = QuoteRun(source, i);
+                    for (var q = 1; q < closing; q++) masked[++i] = ' ';
+                    if (closing >= rawQuotes) rawQuotes = 0;
                     continue;
                 }
 
@@ -268,9 +281,29 @@ namespace KitWright.Editor.Tools.Scripting
                 if (c == '/' && next == '/') { inLineComment = true; masked[i] = ' '; continue; }
                 if (c == '/' && next == '*') { inBlockComment = true; masked[i] = ' '; continue; }
 
+                // A raw string opens on three or more quotes, after any run of '$' (a raw string takes
+                // no '@' — there, four quotes are a verbatim string holding one), and closes on a quote
+                // run at least as long. Rule borrowed from CoplayDev/unity-mcp
+                // MCPForUnity/Editor/Tools/ManageScript.cs (CSharpLexer raw-string branch).
+                if (c == '"' || c == '$')
+                {
+                    var afterPrefix = i;
+                    while (afterPrefix < source.Length && source[afterPrefix] == '$')
+                        afterPrefix++;
+
+                    var opening = QuoteRun(source, afterPrefix);
+                    if (opening >= 3)
+                    {
+                        rawQuotes = opening;
+                        for (var j = i; j < afterPrefix + opening; j++) masked[j] = ' ';
+                        i = afterPrefix + opening - 1;
+                        continue;
+                    }
+                }
+
                 if (c == '@' && next == '"') { inString = true; inVerbatim = true; masked[i] = ' '; masked[++i] = ' '; continue; }
                 if (c == '$' && next == '"') { inString = true; masked[i] = ' '; masked[++i] = ' '; continue; }
-                if (c == '$' && next == '@' && i + 2 < source.Length && source[i + 2] == '"')
+                if (((c == '$' && next == '@') || (c == '@' && next == '$')) && i + 2 < source.Length && source[i + 2] == '"')
                 {
                     inString = true; inVerbatim = true;
                     masked[i] = ' '; masked[++i] = ' '; masked[++i] = ' ';
@@ -284,8 +317,17 @@ namespace KitWright.Editor.Tools.Scripting
 
             if (inBlockComment) unterminated = "block comment";
             else if (inString && inVerbatim) unterminated = "verbatim string";
+            else if (rawQuotes > 0) unterminated = "raw string";
+            else if (inChar) unterminated = "char literal";
 
             return new string(masked);
+        }
+
+        private static int QuoteRun(string source, int index)
+        {
+            var run = 0;
+            while (index + run < source.Length && source[index + run] == '"') run++;
+            return run;
         }
 
         private static bool TryFindTypeBody(string mask, string typeName, out int bodyOpen, out int bodyClose)

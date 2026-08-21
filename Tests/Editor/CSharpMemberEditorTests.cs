@@ -326,5 +326,47 @@ public class Trap
         {
             Assert.IsNull(CSharpSyntaxCheck.FindProblem("class A { string s = \"}\"; char c = '}'; }"));
         }
+
+        [Test]
+        public void ValidSourceIsNotReportedBrokenByAnApostropheOrARawString()
+        {
+            Assert.IsNull(CSharpSyntaxCheck.FindProblem(
+                "class A\n{\n    #region Don't touch\n    void M() { }\n    #endregion\n}\n"),
+                "A stray apostrophe opened a char literal that the newline never closed, blanking the rest of the file.");
+
+            Assert.IsNull(CSharpSyntaxCheck.FindProblem(
+                "class A\n{\n    const string S = \"\"\"\n    if (x) {\n    \"\"\";\n    void M() { }\n}\n"),
+                "A raw string literal's body leaked into the mask as real code.");
+
+            Assert.IsNull(CSharpSyntaxCheck.FindProblem("class A { string s = @\"\"\"\"; }"),
+                "Four quotes after '@' are a verbatim string holding one quote, not a raw string opener.");
+        }
+
+        [Test]
+        public void UnterminatedRawString_IsNamedInsteadOfSurfacingAsABraceCount()
+        {
+            var problem = CSharpSyntaxCheck.FindProblem("class A\n{\n    const string S = \"\"\"\n    still open\n");
+
+            Assert.IsNotNull(problem);
+            StringAssert.Contains("Unterminated raw string", problem);
+        }
+
+        [Test]
+        public void UnterminatedVerbatimString_IsNamedInsteadOfSurfacingAsABraceCount()
+        {
+            var problem = CSharpSyntaxCheck.FindProblem("class A\n{\n    const string S = @\"still open\n");
+
+            Assert.IsNotNull(problem);
+            StringAssert.Contains("Unterminated verbatim string", problem);
+        }
+
+        [Test]
+        public void UnterminatedCharLiteral_IsNamedInsteadOfSurfacingAsABraceCount()
+        {
+            var problem = CSharpSyntaxCheck.FindProblem("class A { char c = 'x; }");
+
+            Assert.IsNotNull(problem);
+            StringAssert.Contains("Unterminated char literal", problem);
+        }
     }
 }

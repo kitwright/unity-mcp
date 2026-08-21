@@ -121,6 +121,10 @@ namespace KitWright.Editor.Tools.Builtins
                      "Fails if a bake is already running; poll get_lighting_settings (is_running) to track progress.")]
         public static object BakeLightmaps()
         {
+            if (EditorApplication.isPlaying)
+                return Response.Error("BAKE_REQUIRES_EDIT_MODE",
+                    new { hint = "Lightmap baking only runs in Edit Mode. Call exit_play_mode first, then retry bake_lightmaps." });
+
             if (Lightmapping.isRunning)
                 return Response.Error("BAKE_ALREADY_RUNNING",
                     new { hint = "A lightmap bake is already in progress. Poll get_lighting_settings for is_running." });

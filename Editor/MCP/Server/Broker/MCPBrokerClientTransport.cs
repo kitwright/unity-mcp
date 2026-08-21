@@ -21,6 +21,11 @@ namespace KitWright.Editor.MCP.Server
         private const int ReconnectBackoffMs = 500;
         private const int RequestExecutionTimeoutSeconds = 300;
 
+        // Broker mode is the default transport, so first-connect approval has to run here too --
+        // gating only HttpMCPTransport would leave most installs ungated. Test seam.
+        internal static Func<int, int, Task<bool>> AuthorizeClient =
+            (clientPort, brokerPort) => Security.ClientApprovalGate.AuthorizeAsync(clientPort, brokerPort);
+
         private readonly int _port;
         private readonly string _token;
         private readonly string _baseUrl;
@@ -128,23 +133,50 @@ namespace KitWright.Editor.MCP.Server
         {
             var responseJson = string.Empty;
             var canPiggybackNotification = false;
+            string issuedSessionId = null;
+            var clientStatus = 0;
+            string clientContentTypeOverride = null;
             try
             {
                 var request = ParseJsonRequest(pull.Body);
                 if (request != null)
+                {
                     request.IsBrokerRedelivery = pull.IsRedelivery;
+                    request.SessionId = pull.McpSessionId;
+                }
+
+                var refusal = request == null
+                    ? null
+                    : await RefuseUnapprovedClientAsync(pull.ClientPort, _port, request.Id);
 
                 var handler = OnRequestReceived;
-                if (request == null || handler == null)
+                if (refusal != null)
+                {
+                    responseJson = refusal;
+                }
+                else if (request == null || handler == null)
                 {
                     responseJson = SerializeResponse(CreateError(null, -32000, "MCP server is stopping or not ready."));
+                }
+                else if (!TryTakeSession(request, out issuedSessionId))
+                {
+                    // 404 is the status the MCP spec makes a client re-initialize on, so the refusal
+                    // has to reach it as a status rather than as a JSON-RPC error the client has no
+                    // rule for. The broker writes the status it is told; this is the same body the
+                    // direct transport sends, so both transports look identical from the client.
+                    clientStatus = (int)HttpStatusCode.NotFound;
+                    clientContentTypeOverride = "text/html; charset=utf-8";
+                    responseJson = BuildHtmlStatusBody(
+                        clientStatus, "Not Found", "Session not found or expired. Please re-initialize.");
                 }
                 else
                 {
                     var responseTcs = new TaskCompletionSource<MCPResponse>();
                     handler.Invoke(request, response => responseTcs.TrySetResult(response));
 
-                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(RequestExecutionTimeoutSeconds)))
+                    var budgetSeconds = Tools.ToolRegistry.TimeoutSecondsForRequest(
+                        request.Method, request.Params, RequestExecutionTimeoutSeconds);
+                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds)))
                     using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
                     {
                         var completed = await Task.WhenAny(responseTcs.Task, Task.Delay(-1, linkedCts.Token));
@@ -177,7 +209,7 @@ namespace KitWright.Editor.MCP.Server
                 responseJson = SerializeResponse(CreateError(null, -32603, "Internal error: " + ex.Message));
             }
 
-            string contentType = null;
+            var contentType = clientContentTypeOverride;
             if (canPiggybackNotification && pull.AcceptsSse && MCPToolListChangeNotifier.TryConsumePending())
             {
                 responseJson = MCPToolListChangeNotifier.BuildSseBody(responseJson);
@@ -187,7 +219,7 @@ namespace KitWright.Editor.MCP.Server
 
             try
             {
-                await Task.Run(() => PushOnce(pull.RequestId, responseJson, contentType), ct);
+                await Task.Run(() => PushOnce(pull.RequestId, responseJson, contentType, issuedSessionId, clientStatus), ct);
             }
             catch (OperationCanceledException)
             {
@@ -201,6 +233,18 @@ namespace KitWright.Editor.MCP.Server
                     MCPToolListChangeNotifier.RestorePending();
                 Debug.LogError("[KitWright MCP Server] Broker push failed: " + ex.Message);
             }
+        }
+
+        internal static async Task<string> RefuseUnapprovedClientAsync(int clientPort, int brokerPort, object requestId)
+        {
+            if (await AuthorizeClient(clientPort, brokerPort))
+                return null;
+
+            return SerializeResponse(CreateError(
+                requestId,
+                -32001,
+                "This MCP client is not approved to drive the Unity editor. Approve it in the Unity " +
+                "dialog, or turn off client approval in KitWright MCP settings."));
         }
 
         private BrokerPullResult PullOnce()
@@ -227,6 +271,7 @@ namespace KitWright.Editor.MCP.Server
 
                 var redeliveryText = response.Headers[MCPBrokerProtocol.RedeliveryHeader];
                 var acceptsSseText = response.Headers[MCPBrokerProtocol.AcceptSseHeader];
+                int.TryParse(response.Headers[MCPBrokerProtocol.ClientPortHeader], out var clientPort);
                 using (var stream = response.GetResponseStream())
                 using (var reader = new StreamReader(stream ?? Stream.Null, Encoding.UTF8))
                 {
@@ -235,13 +280,36 @@ namespace KitWright.Editor.MCP.Server
                         RequestId = reqId,
                         IsRedelivery = string.Equals(redeliveryText, "1", StringComparison.Ordinal),
                         AcceptsSse = string.Equals(acceptsSseText, "1", StringComparison.Ordinal),
+                        ClientPort = clientPort,
+                        McpSessionId = response.Headers[MCPBrokerProtocol.McpSessionHeader] ?? string.Empty,
                         Body = reader.ReadToEnd()
                     };
                 }
             }
         }
 
-        private void PushOnce(long requestId, string body, string clientContentType = null)
+        /// <summary>
+        /// Applies the client's Mcp-Session-Id to the request. An `initialize` mints a new session
+        /// and reports its id through <paramref name="issuedSessionId"/> so the broker can return it;
+        /// any other method carrying an id the server does not know is refused (false).
+        /// </summary>
+        internal static bool TryTakeSession(MCPRequest request, out string issuedSessionId)
+        {
+            issuedSessionId = null;
+
+            if (string.Equals(request.Method, "initialize", StringComparison.Ordinal))
+            {
+                issuedSessionId = SSE.SSESessionManager.Instance.CreateSession().SessionId;
+                request.SessionId = issuedSessionId;
+                return true;
+            }
+
+            return string.IsNullOrEmpty(request.SessionId) ||
+                   SSE.SSESessionManager.Instance.TryGetSession(request.SessionId, out _);
+        }
+
+        private void PushOnce(long requestId, string body, string clientContentType = null,
+            string issuedSessionId = null, int clientStatus = 0)
         {
             var request = (HttpWebRequest)WebRequest.Create(_baseUrl + MCPBrokerProtocol.PushPath);
             request.Method = "POST";
@@ -254,6 +322,10 @@ namespace KitWright.Editor.MCP.Server
             request.Headers[MCPBrokerProtocol.ReqIdHeader] = requestId.ToString();
             if (!string.IsNullOrEmpty(clientContentType))
                 request.Headers[MCPBrokerProtocol.ContentTypeHeader] = clientContentType;
+            if (!string.IsNullOrEmpty(issuedSessionId))
+                request.Headers[MCPBrokerProtocol.McpSessionHeader] = issuedSessionId;
+            if (clientStatus != 0)
+                request.Headers[MCPBrokerProtocol.StatusHeader] = clientStatus.ToString();
 
             var bytes = Encoding.UTF8.GetBytes(body ?? string.Empty);
             request.ContentLength = bytes.Length;
@@ -326,7 +398,13 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        private string SerializeResponse(MCPResponse response)
+        private static string BuildHtmlStatusBody(int code, string reason, string message)
+        {
+            return "<html><body><h1>" + code + " " + reason + "</h1><p>"
+                   + WebUtility.HtmlEncode(message) + "</p></body></html>";
+        }
+
+        private static string SerializeResponse(MCPResponse response)
         {
             var dict = new Dictionary<string, object>
             {
@@ -392,6 +470,8 @@ namespace KitWright.Editor.MCP.Server
             public long RequestId;
             public bool IsRedelivery;
             public bool AcceptsSse;
+            public int ClientPort;
+            public string McpSessionId;
             public string Body;
         }
     }

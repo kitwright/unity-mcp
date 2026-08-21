@@ -8,7 +8,10 @@
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.2.1",
     "com.unity.ugui": "1.0.0",
-    "com.unity.test-framework": "1.1.33"
+    "com.unity.test-framework": "1.4.6",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.uielements": "1.0.0",
+    "com.unity.modules.unitywebrequest": "1.0.0"
   },
   "keywords": ["mcp", "ai", "llm", "editor", "tools", "model-context-protocol"],
   "author": {

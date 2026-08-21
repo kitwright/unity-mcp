@@ -5,6 +5,7 @@ using System.IO;
 using System.Reflection;
 using KitWright.Editor.Tools.Builtins;
 using KitWright.Editor.Tools.Helpers;
+using KitWright.Editor.Tools.Scripting;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -128,6 +129,38 @@ namespace KitWright.Editor.Tests
                 new TargetInvocationException(inner));
 
             Assert.AreSame(inner, ScriptExecutionFunctions.UnwrapTargetInvocationException(wrapped));
+        }
+
+        [Test]
+        public void CommandOutcome_NoLoggedErrors_ReportsPlainSuccess()
+        {
+            var ctx = new ExecutionContext();
+            ctx.Log("did a thing");
+            ctx.LogWarning("careful");
+
+            var message = ScriptExecutionFunctions.DescribeCommandOutcome(
+                ctx.Logs, out var errorCount, out var firstError);
+
+            Assert.AreEqual("Command executed.", message);
+            Assert.AreEqual(0, errorCount);
+            Assert.IsNull(firstError);
+        }
+
+        [Test]
+        public void CommandOutcome_LoggedErrors_NamesCountAndFirstErrorInMessage()
+        {
+            var ctx = new ExecutionContext();
+            ctx.LogError("first boom");
+            ctx.LogWarning("careful");
+            ctx.LogError("second boom");
+
+            var message = ScriptExecutionFunctions.DescribeCommandOutcome(
+                ctx.Logs, out var errorCount, out var firstError);
+
+            Assert.AreEqual(2, errorCount);
+            Assert.AreEqual("first boom", firstError);
+            StringAssert.StartsWith("[2 logged errors]", message);
+            StringAssert.Contains("first boom", message);
         }
 
         // ------------------------------------------------------------------

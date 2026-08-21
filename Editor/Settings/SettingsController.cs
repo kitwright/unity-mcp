@@ -28,7 +28,7 @@ namespace KitWright.Editor.Settings
         private const int DefaultEditorWindowScreenshotSize = 512;
         private const bool DefaultMCPCompactSchemaEnabled = false;
         private const int DefaultActivityLogCapacity = 200;
-        private const bool DefaultRequireClientApprovalEnabled = true;
+        internal const bool DefaultRequireClientApprovalEnabled = false;
 
         private readonly string _settingsPath;
         private readonly object _lock = new object();

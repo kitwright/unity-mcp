@@ -50,7 +50,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             var dir = Path.GetDirectoryName(path);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(path, obj.ToString(Formatting.Indented));
+            AtomicFile.WriteAllText(path, obj.ToString(Formatting.Indented));
             AssetDatabase.ImportAsset(path);
 
             return Response.Success($"Assembly definition '{asmName}' created at '{path}'.", new { path, name = asmName });
@@ -234,7 +234,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static void Save(string path, JObject obj)
         {
-            File.WriteAllText(path, obj.ToString(Formatting.Indented));
+            AtomicFile.WriteAllText(path, obj.ToString(Formatting.Indented));
             AssetDatabase.ImportAsset(path);
         }
 

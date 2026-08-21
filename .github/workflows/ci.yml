@@ -59,6 +59,9 @@ jobs:
                   print("Repository validation passed.")
                   PY
 
+            - name: Check generated docs are in sync
+              run: python scripts/generate_tools_doc.py --check
+
     # ────────────────────────────────────────────────────────────────
     # Unity EditMode Tests
     # ────────────────────────────────────────────────────────────────
@@ -77,12 +80,18 @@ jobs:
     #   Details: https://game.ci/docs/github/activation
     # ────────────────────────────────────────────────────────────────
     test:
-        name: Unity EditMode Tests
+        name: Unity EditMode Tests (${{ matrix.unityVersion }})
         runs-on: ubuntu-latest
         needs: validate
         permissions:
             contents: read
             checks: write
+        strategy:
+            # The minimum version package.json declares, plus the Unity 6 line we develop against, so a
+            # UNITY_6000_0_OR_NEWER branch cannot break unnoticed.
+            fail-fast: false
+            matrix:
+                unityVersion: [2022.3.0f1, 6000.0.75f1]
 
         steps:
             - name: Checkout
@@ -99,10 +108,7 @@ jobs:
                   mkdir -p UnityProject/ProjectSettings
 
                   # ProjectSettings/ProjectVersion.txt – game-ci uses this file to auto-detect the version.
-                  # Read the "unity" field from package.json (e.g. "2022.3") then append patch ".0f1"
-                  UNITY_VER=$(python3 -c "import json; print(json.load(open('package.json'))['unity'])")
-                  echo "m_EditorVersion: ${UNITY_VER}.0f1" > UnityProject/ProjectSettings/ProjectVersion.txt
-                  echo "Unity version detected: ${UNITY_VER}.0f1"
+                  echo "m_EditorVersion: ${{ matrix.unityVersion }}" > UnityProject/ProjectSettings/ProjectVersion.txt
 
                   # Copy the package into Packages/ (a symlink breaks inside the game-ci
                   # docker container: the absolute host path does not exist there).
@@ -110,9 +116,32 @@ jobs:
                   rsync -a --exclude UnityProject --exclude .git --exclude .github ./ "UnityProject/Packages/${PKG_NAME}/"
                   echo "Package '${PKG_NAME}' copied into UnityProject/Packages/"
 
-                  # Manifest – package deps resolve automatically; testables makes the
-                  # test runner pick up the package's tests.
-                  echo "{ \"dependencies\": {}, \"testables\": [\"${PKG_NAME}\"] }" > UnityProject/Packages/manifest.json
+                  # The optional engine modules are declared on purpose. An empty dependency
+                  # list still gives the editor its built-in modules, so BoxCollider compiles -
+                  # but the KITWRIGHT_* versionDefines key off a manifest entry, not off whether
+                  # the module is really there. Omitting them compiled the physics, particle and
+                  # 2D tools out and quietly tested a smaller tool surface than any real project
+                  # has. Stripping them is the separate optional-modules job's job.
+                  # testables makes the test runner pick up the package's tests.
+                  cat > UnityProject/Packages/manifest.json <<JSON
+                  {
+                      "dependencies": {
+                          "com.unity.modules.ai": "1.0.0",
+                          "com.unity.modules.animation": "1.0.0",
+                          "com.unity.modules.audio": "1.0.0",
+                          "com.unity.modules.imageconversion": "1.0.0",
+                          "com.unity.modules.jsonserialize": "1.0.0",
+                          "com.unity.modules.particlesystem": "1.0.0",
+                          "com.unity.modules.physics": "1.0.0",
+                          "com.unity.modules.physics2d": "1.0.0",
+                          "com.unity.modules.terrain": "1.0.0",
+                          "com.unity.modules.ui": "1.0.0",
+                          "com.unity.modules.uielements": "1.0.0",
+                          "com.unity.modules.unitywebrequest": "1.0.0"
+                      },
+                      "testables": ["${PKG_NAME}"]
+                  }
+                  JSON
 
             - name: Run EditMode tests
               uses: game-ci/unity-test-runner@v4
@@ -127,11 +156,90 @@ jobs:
                   customParameters: -nographics
                   projectPath: UnityProject
                   githubToken: ${{ secrets.GITHUB_TOKEN }}
-                  checkName: EditMode Test Results
+                  checkName: EditMode Test Results (${{ matrix.unityVersion }})
 
             - name: Upload test results
               uses: actions/upload-artifact@v4
               if: always()
               with:
-                  name: editmode-test-results
+                  name: editmode-test-results-${{ matrix.unityVersion }}
                   path: artifacts/
+
+    # ────────────────────────────────────────────────────────────────
+    # Optional engine modules stripped
+    # ────────────────────────────────────────────────────────────────
+    # OptionalModuleGuardTests only reads source; this job is the one that actually compiles the
+    # package on a project without the seven modules the KITWRIGHT_* versionDefines guard.
+    # Same license secrets as the test job above.
+    # ────────────────────────────────────────────────────────────────
+    optional-modules:
+        name: Compile Without Optional Modules (6000.0.75f1)
+        runs-on: ubuntu-latest
+        needs: validate
+        # Advisory until one green run is observed: the module dependency closure and whether Unity
+        # re-adds an omitted built-in module are both unverified. Remove this line after that run.
+        continue-on-error: true
+        permissions:
+            contents: read
+
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+
+            # Same throwaway project as the test job, with two differences: no "testables" (the test
+            # assembly still owes a few #ifs - see OptionalModuleGuardTests.Exempt - so only the
+            # package's own assemblies are compiled here), and the manifest lists only the modules
+            # the package needs, so physics, physics2d, ai, terrain, particlesystem, audio and
+            # animation are absent.
+            - name: Create temporary Unity project structure
+              run: |
+                  mkdir -p UnityProject/Assets
+                  mkdir -p UnityProject/Packages
+                  mkdir -p UnityProject/ProjectSettings
+
+                  echo "m_EditorVersion: 6000.0.75f1" > UnityProject/ProjectSettings/ProjectVersion.txt
+
+                  PKG_NAME=$(python3 -c "import json; print(json.load(open('package.json'))['name'])")
+                  rsync -a --exclude UnityProject --exclude .git --exclude .github ./ "UnityProject/Packages/${PKG_NAME}/"
+                  echo "Package '${PKG_NAME}' copied into UnityProject/Packages/"
+
+                  cat > UnityProject/Packages/manifest.json <<'JSON'
+                  {
+                      "dependencies": {
+                          "com.unity.modules.imageconversion": "1.0.0",
+                          "com.unity.modules.jsonserialize": "1.0.0",
+                          "com.unity.modules.ui": "1.0.0",
+                          "com.unity.modules.uielements": "1.0.0",
+                          "com.unity.modules.unitywebrequest": "1.0.0"
+                      }
+                  }
+                  JSON
+
+            # Unity refuses to run and exits non-zero when an assembly fails to compile, so the
+            # action's exit code is the gate; the editor log with the CS errors is in the step log.
+            - name: Compile package with the modules absent
+              uses: game-ci/unity-test-runner@v4
+              env:
+                  UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+                  UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+                  UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+                  UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+              with:
+                  unityVersion: auto
+                  testMode: EditMode
+                  customParameters: -nographics
+                  projectPath: UnityProject
+
+            # A green run above only proves the claim if the modules really stayed out.
+            - name: Verify the modules stayed out
+              if: always()
+              run: |
+                  LOCK=UnityProject/Packages/packages-lock.json
+                  test -f "$LOCK" || { echo "$LOCK missing: package resolution never ran."; exit 1; }
+                  for module in physics physics2d ai terrain particlesystem audio animation; do
+                      if grep -q "\"com.unity.modules.${module}\"" "$LOCK"; then
+                          echo "com.unity.modules.${module} was resolved anyway - this job proves nothing."
+                          exit 1
+                      fi
+                  done
+                  echo "All seven optional modules absent from the resolved project."

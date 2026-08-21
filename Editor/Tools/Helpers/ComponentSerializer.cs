@@ -30,10 +30,13 @@ namespace KitWright.Editor.Tools.Helpers
 
         /// <summary>
         /// Returns every visible serialized property on the component. Skips Unity's "m_Script"
-        /// field by default since it's noise for AI consumers.
+        /// field by default since it's noise for AI consumers. <paramref name="totalCount"/> reports
+        /// how many the component really has, so a read capped by <paramref name="maxProperties"/>
+        /// can say what it left out.
         /// </summary>
-        public static List<PropertySnapshot> ReadProperties(UnityEngine.Object component, bool includeScriptField = false)
+        public static List<PropertySnapshot> ReadProperties(UnityEngine.Object component, out int totalCount, bool includeScriptField = false, bool descend = false, int maxProperties = int.MaxValue)
         {
+            totalCount = 0;
             var list = new List<PropertySnapshot>();
             if (component == null) return list;
 
@@ -47,14 +50,20 @@ namespace KitWright.Editor.Tools.Helpers
                     if (!includeScriptField && prop.name == "m_Script")
                         continue;
 
+                    totalCount++;
+                    // Past the cap keep counting but stop building: reading the values is what makes
+                    // a descended read of a few thousand array elements expensive.
+                    if (list.Count >= maxProperties)
+                        continue;
+
                     list.Add(new PropertySnapshot
                     {
-                        Name = prop.name,
+                        Name = descend ? prop.propertyPath : prop.name,
                         Type = prop.propertyType.ToString(),
                         Value = ReadPropertyValue(prop)
                     });
                 }
-                while (prop.NextVisible(false));
+                while (prop.NextVisible(descend));
             }
             return list;
         }
@@ -84,15 +93,33 @@ namespace KitWright.Editor.Tools.Helpers
                     var b = p.boundsValue;
                     return new { center = new { x = b.center.x, y = b.center.y, z = b.center.z },
                                  extents = new { x = b.extents.x, y = b.extents.y, z = b.extents.z } };
+                case SerializedPropertyType.Vector2Int:
+                    var v2i = p.vector2IntValue; return new { x = v2i.x, y = v2i.y };
+                case SerializedPropertyType.Vector3Int:
+                    var v3i = p.vector3IntValue; return new { x = v3i.x, y = v3i.y, z = v3i.z };
                 case SerializedPropertyType.Enum:
-                    return p.enumValueIndex >= 0 && p.enumValueIndex < p.enumDisplayNames.Length
-                        ? (object)p.enumDisplayNames[p.enumValueIndex]
-                        : p.enumValueIndex;
+                    // enumValueIndex is an index into the display list, so it only names single-valued
+                    // enums; intValue is the underlying value and the only readable form of a [Flags] mask.
+                    var enumNames = p.enumDisplayNames;
+                    return new
+                    {
+                        name = p.enumValueIndex >= 0 && p.enumValueIndex < enumNames.Length
+                            ? enumNames[p.enumValueIndex]
+                            : null,
+                        value = p.intValue
+                    };
                 case SerializedPropertyType.ObjectReference:
                     var o = p.objectReferenceValue;
-                    return o == null
-                        ? null
-                        : (object)new { fileID = ObjectIdCodec.GetSerializableId(o), name = o.name, type = o.GetType().Name };
+                    if (o == null)
+                        return null;
+                    var assetPath = AssetDatabase.GetAssetPath(o);
+                    return new
+                    {
+                        fileID = ObjectIdCodec.GetSerializableId(o),
+                        name = o.name,
+                        type = o.GetType().Name,
+                        assetPath = string.IsNullOrEmpty(assetPath) ? null : assetPath
+                    };
                 case SerializedPropertyType.LayerMask:
                     return p.intValue;
                 case SerializedPropertyType.AnimationCurve:
@@ -100,7 +127,7 @@ namespace KitWright.Editor.Tools.Helpers
                 default:
                     if (p.isArray)
                         return $"<Array length={p.arraySize}>";
-                    return p.propertyType.ToString();
+                    return $"<unreadable {p.propertyType}>";
             }
         }
 
@@ -230,10 +257,20 @@ namespace KitWright.Editor.Tools.Helpers
                             return true;
                         }
                         break;
+                    case SerializedPropertyType.Vector2Int:
+                        if (TryParseVector(value, 2, out var v2int))
+                        { p.vector2IntValue = new Vector2Int(Mathf.RoundToInt(v2int[0]), Mathf.RoundToInt(v2int[1])); return true; }
+                        break;
+                    case SerializedPropertyType.Vector3Int:
+                        if (TryParseVector(value, 3, out var v3int))
+                        { p.vector3IntValue = new Vector3Int(Mathf.RoundToInt(v3int[0]), Mathf.RoundToInt(v3int[1]), Mathf.RoundToInt(v3int[2])); return true; }
+                        break;
                     case SerializedPropertyType.Enum:
                         if (value.Type == JTokenType.Integer)
                         {
-                            p.enumValueIndex = value.ToObject<int>();
+                            // A number is the enum's underlying value (a [Flags] mask included), not a
+                            // position in the display list, so it must go through intValue.
+                            p.intValue = value.ToObject<int>();
                             return true;
                         }
                         if (value.Type == JTokenType.String)

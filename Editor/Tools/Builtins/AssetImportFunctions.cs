@@ -61,6 +61,7 @@ namespace KitWright.Editor.Tools.Builtins
                             }
                         });
                     }
+#if KITWRIGHT_AUDIO
                     case AudioImporter ai:
                     {
                         // preloadAudioData was moved onto AudioImporterSampleSettings (the top-level
@@ -82,6 +83,7 @@ namespace KitWright.Editor.Tools.Builtins
                             loadInBackground = ai.loadInBackground
                         });
                     }
+#endif
                     case ModelImporter mi:
                     {
                         return Response.Success($"Import settings for '{path}' (ModelImporter).", new
@@ -168,9 +170,11 @@ namespace KitWright.Editor.Tools.Builtins
                     case TextureImporter ti:
                         ApplyTexture(ti, obj, applied, skipped);
                         break;
+#if KITWRIGHT_AUDIO
                     case AudioImporter ai:
                         ApplyAudio(ai, obj, applied, skipped);
                         break;
+#endif
                     case ModelImporter mi:
                         ApplyModel(mi, obj, applied, skipped);
                         break;
@@ -243,6 +247,7 @@ namespace KitWright.Editor.Tools.Builtins
                         case "isReadable": valid = TryGetBool(token, out _); break;
                     }
                 }
+#if KITWRIGHT_AUDIO
                 else if (importer is AudioImporter)
                 {
                     switch (name)
@@ -255,6 +260,7 @@ namespace KitWright.Editor.Tools.Builtins
                         case "quality": valid = TryGetFloat(token, out var quality) && quality >= 0f && quality <= 1f; break;
                     }
                 }
+#endif
                 else if (importer is ModelImporter)
                 {
                     switch (name)
@@ -314,6 +320,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
+#if KITWRIGHT_AUDIO
         private static void ApplyAudio(AudioImporter ai, JObject obj, List<string> applied, List<string> skipped)
         {
             var ss = ai.defaultSampleSettings;
@@ -351,6 +358,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (ssDirty)
                 ai.defaultSampleSettings = ss;
         }
+#endif
 
         private static void ApplyModel(ModelImporter mi, JObject obj, List<string> applied, List<string> skipped)
         {
@@ -398,6 +406,7 @@ namespace KitWright.Editor.Tools.Builtins
                         case "isReadable": return ti.isReadable;
                     }
                     break;
+#if KITWRIGHT_AUDIO
                 case AudioImporter ai:
                     switch (field)
                     {
@@ -409,6 +418,7 @@ namespace KitWright.Editor.Tools.Builtins
                         case "quality": return ai.defaultSampleSettings.quality;
                     }
                     break;
+#endif
                 case ModelImporter mi:
                     switch (field)
                     {

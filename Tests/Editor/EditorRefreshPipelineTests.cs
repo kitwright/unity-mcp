@@ -175,6 +175,41 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(task.Result.ScriptChangesStillPending);
         }
 
+        [Test]
+        public void AnnotatePendingScriptChanges_AnnouncesStaleSourcesAndPointsAtRequestRecompile()
+        {
+            var temp = CreateTempDirectory();
+            try
+            {
+                var output = Path.Combine(temp, "Assembly-CSharp.dll");
+                var source = Path.Combine(temp, "Example.cs");
+                File.WriteAllText(output, "compiled");
+                File.WriteAllText(source, "class Example {}");
+                File.SetLastWriteTimeUtc(output, new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc));
+                File.SetLastWriteTimeUtc(source, new DateTime(2026, 1, 1, 0, 0, 5, DateTimeKind.Utc));
+
+                var pending = EditorRefreshPipeline.AnalyzeScriptChangeState(
+                    new[] { new ScriptCompilationArtifact(output, new[] { source }) },
+                    Array.Empty<string>(),
+                    TimeSpan.FromSeconds(1));
+
+                var annotated = EditorRefreshPipeline.AnnotatePendingScriptChanges(
+                    pending, "No compilation errors detected.");
+                StringAssert.Contains("1 script file(s)", annotated);
+                StringAssert.Contains("request_recompile", annotated);
+                StringAssert.Contains("No compilation errors detected.", annotated);
+
+                Assert.AreEqual(
+                    "No compilation errors detected.",
+                    EditorRefreshPipeline.AnnotatePendingScriptChanges(
+                        new ScriptChangeState(), "No compilation errors detected."));
+            }
+            finally
+            {
+                DeleteTempDirectory(temp);
+            }
+        }
+
         private static string CreateTempDirectory()
         {
             var path = Path.Combine(Path.GetTempPath(), "KitWrightEditorRefreshTests_" + Guid.NewGuid().ToString("N"));

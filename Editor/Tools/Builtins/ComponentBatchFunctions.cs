@@ -164,7 +164,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             var type = TypeResolver.ResolveComponent(component_type);
             if (type == null)
-                return Response.Error("COMPONENT_TYPE_NOT_FOUND", new { component_type });
+                return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
 
             var gos = ResolveManyTargets(targets, find_method);
             if (gos.Count == 0)

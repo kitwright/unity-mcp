@@ -33,7 +33,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             var type = ResolveScriptableObjectType(type_name);
             if (type == null)
-                return Response.Error("TYPE_NOT_FOUND", new { type_name, hint = "Type must derive from ScriptableObject and be loaded." });
+                return TypeResolver.UnresolvedError(type_name, "TYPE_NOT_FOUND", "type_name");
             if (type.IsAbstract)
                 return Response.Error("TYPE_IS_ABSTRACT", new { type = type.FullName });
 
@@ -68,7 +68,7 @@ namespace KitWright.Editor.Tools.Builtins
             var resolved = LoadScriptableObject(asset_path);
             if (resolved.Error != null) return resolved.Error;
 
-            var props = ComponentSerializer.ReadProperties(resolved.Asset);
+            var props = ComponentSerializer.ReadProperties(resolved.Asset, out _);
             return Response.Success($"{props.Count} properties on {resolved.Asset.GetType().Name}.", new
             {
                 assetPath = asset_path,
@@ -146,7 +146,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (type != null && typeof(ScriptableObject).IsAssignableFrom(type))
                 return type;
 
-            // Fallback: scan loaded assemblies for a ScriptableObject-derived type with a matching short name
+            // Fallback for a ScriptableObject the TypeCache index does not carry. Collected rather
+            // than returned on first hit: a short name shared by two loaded types used to resolve to
+            // whichever assembly was scanned first, which is the guess TypeResolver refuses to make.
+            Type single = null;
             foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
             {
                 Type[] types;
@@ -154,12 +157,18 @@ namespace KitWright.Editor.Tools.Builtins
                 catch { continue; }
                 foreach (var t in types)
                 {
-                    if ((t.Name == typeName || t.FullName == typeName) &&
-                        typeof(ScriptableObject).IsAssignableFrom(t))
+                    if (!typeof(ScriptableObject).IsAssignableFrom(t))
+                        continue;
+                    if (t.FullName == typeName)
                         return t;
+                    if (t.Name != typeName)
+                        continue;
+                    if (single != null && single != t)
+                        return null;
+                    single = t;
                 }
             }
-            return null;
+            return single;
         }
     }
 }

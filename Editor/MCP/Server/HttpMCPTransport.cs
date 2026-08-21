@@ -396,9 +396,15 @@ namespace KitWright.Editor.MCP.Server
                         var newSession = SSESessionManager.Instance.CreateSession();
                         extraHeaders = $"Mcp-Session-Id: {newSession.SessionId}\r\n";
                     }
-                    else if (!string.IsNullOrEmpty(httpRequest.SessionId))
+                    else if (!string.IsNullOrEmpty(httpRequest.SessionId)
+                             && !SSESessionManager.Instance.TryGetSession(httpRequest.SessionId, out _))
                     {
-                        SSESessionManager.Instance.TryGetSession(httpRequest.SessionId, out _);
+                        // Same answer the event-stream GET gives, so a client whose session died with
+                        // a domain reload re-runs initialize instead of being served forever on a
+                        // dead id while its notification stream 404s.
+                        await SendHtmlStatusAsync(stream, HttpStatusCode.NotFound, "Not Found",
+                            "Session not found or expired. Please re-initialize.", ct);
+                        return;
                     }
 
                     var requestReceived = OnRequestReceived;
@@ -411,7 +417,8 @@ namespace KitWright.Editor.MCP.Server
                     var responseTcs = new TaskCompletionSource<MCPResponse>();
                     requestReceived.Invoke(request, r => responseTcs.TrySetResult(r));
 
-                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(180)))
+                    var budgetSeconds = Tools.ToolRegistry.TimeoutSecondsForRequest(request.Method, request.Params);
+                    using (var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(budgetSeconds)))
                     using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(ct, timeoutCts.Token))
                     {
                         try

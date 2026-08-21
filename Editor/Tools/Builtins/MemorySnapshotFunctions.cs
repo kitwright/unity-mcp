@@ -43,7 +43,6 @@ namespace KitWright.Editor.Tools.Builtins
                      "shows up in the window's snapshot list. WARNING: in-editor captures include editor-owned memory " +
                      "and can be hundreds of MB to several GB on large projects; the capture stalls the editor for a " +
                      "few seconds while it runs.")]
-        [ReadOnlyTool]
         public static async Task<string> MemoryTakeFullSnapshot(
             [ToolParam("Base file name (timestamp and .snap extension are appended). Default 'mcp'.", Required = false)] string name = null,
             [ToolParam("Comma-separated capture flags: ManagedObjects, NativeObjects, NativeAllocations, " +

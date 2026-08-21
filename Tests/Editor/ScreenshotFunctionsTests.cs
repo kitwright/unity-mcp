@@ -160,12 +160,6 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void CoreToolProfile_IncludesSimulatorScreenshot()
-        {
-            Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Contains("capture_simulator_view"));
-        }
-
-        [Test]
         public void CoreToolProfile_IncludesEditorWindowAndRaycastDiagnostics()
         {
             Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Contains("capture_editor_window"));

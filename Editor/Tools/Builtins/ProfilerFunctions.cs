@@ -178,6 +178,21 @@ namespace KitWright.Editor.Tools.Builtins
                         if (wanted.Contains(shortName))
                             keysToShow.Add(kv.Key);
                     }
+
+                    if (keysToShow.Count == 0)
+                    {
+                        var available = new List<string>();
+                        foreach (var kv in _recorders)
+                            available.Add(kv.Key.Substring(kv.Key.IndexOf('/') + 1));
+
+                        var hint = "Only the counters listed in available_names are recorded; omit 'names' to read them all.";
+                        if (!wasRunning)
+                            hint += " profiler_start was not called; the recorders were just started now, which is why available_names is the default set.";
+
+                        return ToolResultFormatter.Error("UNKNOWN_COUNTERS",
+                            new { requested_names = wanted, available_names = available },
+                            hint);
+                    }
                 }
 
                 foreach (var key in keysToShow)
@@ -293,9 +308,13 @@ namespace KitWright.Editor.Tools.Builtins
             ("Texture2D", typeof(Texture2D)),
             ("RenderTexture", typeof(RenderTexture)),
             ("Mesh", typeof(Mesh)),
+#if KITWRIGHT_AUDIO
             ("AudioClip", typeof(AudioClip)),
+#endif
             ("Material", typeof(Material)),
+#if KITWRIGHT_ANIMATION
             ("AnimationClip", typeof(AnimationClip)),
+#endif
             ("Shader", typeof(Shader)),
             ("Sprite", typeof(Sprite)),
         };
@@ -392,9 +411,11 @@ namespace KitWright.Editor.Tools.Builtins
                 case Mesh mesh:
                     sb.Append($"  ({mesh.vertexCount} verts)");
                     break;
+#if KITWRIGHT_AUDIO
                 case AudioClip clip:
                     sb.Append($"  ({clip.length:F1}s {clip.frequency}Hz)");
                     break;
+#endif
             }
             if (obj.hideFlags != HideFlags.None)
                 sb.Append($"  [flags: {obj.hideFlags}]");

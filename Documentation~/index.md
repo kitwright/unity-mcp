@@ -18,7 +18,8 @@ KitWright MCP for Unity is an open-source MCP server for the Unity Editor.
 - Structured `{success, message, data}` JSON returns with stable `instanceId` fields so agents can chain `by_id` lookups
 - `IKitWrightCommand` template for `execute_code` with auto-Undo, structured logs, and a returned changelog of created/modified/destroyed objects
 - Default-on `execute_code` safety checks in the **Settings** tab, with per-call override support through the optional `safety_checks` argument
-- Client approval: the first connection from an unknown client executable asks Allow/Deny in the editor and is remembered per user (Windows identifies the process; batch mode, the editor itself, and the configured broker are always allowed)
+- Loopback-only server with an `Origin` check and a per-project pin in the request path, so a web page cannot POST into the editor and a stale client config cannot reach a sibling project
+- Optional client approval (off by default, **Safety** tab): the first connection from an unknown client executable asks Allow/Deny and is remembered per user. Identity is the executable path, so approving a shared runtime such as `node` or `python` covers every script that uses it
 - MCP `structuredContent` on tool results: the `{success, message, data}` envelope is returned as structured output alongside text, with `isError` set on failed calls
 - HTTP JSON-RPC 2.0 MCP server compatible with Claude Code, Cursor, LM Studio, Windsurf, Codex, VS Code Copilot, and other MCP clients
 - Reflection-based tool discovery via `[ToolProvider]`

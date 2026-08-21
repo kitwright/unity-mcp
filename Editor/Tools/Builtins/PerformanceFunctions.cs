@@ -238,24 +238,32 @@ namespace KitWright.Editor.Tools.Builtins
                         case MeshFilter meshFilter:
                             localTriangles += GetTriangleCount(meshFilter.sharedMesh);
                             break;
+#if KITWRIGHT_PHYSICS
                         case Collider _:
                             counters.ColliderCount++;
                             break;
                         case Rigidbody _:
                             counters.RigidbodyCount++;
                             break;
+#endif
+#if KITWRIGHT_ANIMATION
                         case Animator _:
                             counters.AnimatorCount++;
                             break;
+#endif
                         case Light _:
                             counters.LightCount++;
                             break;
+#if KITWRIGHT_PARTICLES
                         case ParticleSystem _:
                             counters.ParticleSystemCount++;
                             break;
+#endif
+#if KITWRIGHT_AUDIO
                         case AudioSource _:
                             counters.AudioSourceCount++;
                             break;
+#endif
                         case Camera _:
                             counters.CameraCount++;
                             break;

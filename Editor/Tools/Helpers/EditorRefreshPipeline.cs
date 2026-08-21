@@ -261,7 +261,21 @@ namespace KitWright.Editor.Tools.Helpers
             return await tcs.Task;
         }
 
-        private static ScriptChangeState CaptureScriptChangeState(bool scanForUnknownProjectScripts)
+        /// <summary>Prefixes a compilation report with a staleness warning, so a clean result read off
+        /// stale artifacts cannot be mistaken for "the code on disk compiles".</summary>
+        internal static string AnnotatePendingScriptChanges(ScriptChangeState state, string report)
+        {
+            var pending = state == null
+                ? 0
+                : state.OutOfDateSourceCount + state.UnknownProjectScriptCount;
+            if (pending == 0)
+                return report;
+
+            return $"Warning: {pending} script file(s) on disk are newer than the last compilation, so this result " +
+                   "predates them. Call request_recompile first.\n" + report;
+        }
+
+        internal static ScriptChangeState CaptureScriptChangeState(bool scanForUnknownProjectScripts)
         {
             try
             {
@@ -320,7 +334,29 @@ namespace KitWright.Editor.Tools.Helpers
             }
         }
 
+        // One refresh calls CaptureScriptChangeState five times, and only a compile can change
+        // these timestamps, so the recursive scan of Library/Bee/artifacts ran five times for one
+        // answer. Invalidated on compile because that is when the cached answer stops being true.
+        private static Dictionary<string, DateTime> s_beeOutputTimes;
+        private static bool s_beeInvalidationHooked;
+
         private static Dictionary<string, DateTime> CaptureBeeOutputTimes()
+        {
+            if (!s_beeInvalidationHooked)
+            {
+                CompilationPipeline.compilationStarted += _ => s_beeOutputTimes = null;
+                CompilationPipeline.compilationFinished += _ => s_beeOutputTimes = null;
+                s_beeInvalidationHooked = true;
+            }
+
+            if (s_beeOutputTimes != null)
+                return s_beeOutputTimes;
+
+            s_beeOutputTimes = ScanBeeOutputTimes();
+            return s_beeOutputTimes;
+        }
+
+        private static Dictionary<string, DateTime> ScanBeeOutputTimes()
         {
             var result = new Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase);
             var beeRoot = Path.Combine(GetProjectRoot(), "Library", "Bee", "artifacts");

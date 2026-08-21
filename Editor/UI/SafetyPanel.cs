@@ -27,7 +27,7 @@ namespace KitWright.Editor.MCP.Server
 
             AddSafetyBox(parent, new VisualElement().Card(),
                 "Require client approval",
-                "First connection from an unknown client executable shows an Allow/Deny dialog; approvals are remembered per user across projects. Batch mode and the editor itself are always allowed.",
+                "Off by default. When enabled, the first connection from an unknown client executable shows an Allow/Deny dialog and the answer is remembered per user across projects. Identity is the executable path, so approving a shared runtime (curl, node, python) covers every script that uses it. Batch mode and the editor itself are always allowed.",
                 settings.RequireClientApprovalEnabled,
                 value => settings.RequireClientApprovalEnabled = value);
 

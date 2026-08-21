@@ -18,7 +18,6 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Click inside any open EditorWindow (Inspector, Console, Project, custom tool windows...) as a real user would. " +
                      "Coordinates are in pixels with 0,0 at the TOP-LEFT of the window, matching what capture_editor_window returns. " +
                      "Dispatches a real mouse-down + mouse-up event into the window's internal GUIView so IMGUI/UI Toolkit controls react.")]
-        [ReadOnlyTool]
         public static string SimulateEditorWindowClick(
             [ToolParam("Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). Case-insensitive.")] string window,
             [ToolParam("X coordinate in pixels from the window's left edge")] int x,
@@ -52,7 +51,6 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Type text or send a key into any open EditorWindow as a real user would (e.g. into a focused text field after clicking it). " +
                      "Dispatches real key-down + key-up events into the window's internal GUIView. " +
                      "Either provide 'text' to type a string character-by-character, or 'key' for a single named key (Return, Escape, Tab, Backspace, Delete, LeftArrow...).")]
-        [ReadOnlyTool]
         public static string SimulateEditorWindowKey(
             [ToolParam("Window title or type name. Case-insensitive.")] string window,
             [ToolParam("Text to type character-by-character", Required = false)] string text = null,

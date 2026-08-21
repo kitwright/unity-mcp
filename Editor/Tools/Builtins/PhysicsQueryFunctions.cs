@@ -16,6 +16,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Physics")]
     internal static class PhysicsQueryFunctions
     {
+        // com.unity.modules.physics is optional; without it the 3D queries disappear.
+#if KITWRIGHT_PHYSICS
         [Description("Cast a 3D ray against scene colliders (Physics.RaycastAll) and return every hit ordered nearest-first. " +
                      "Works in Edit Mode against static colliders. origin/direction are 'x,y,z' strings; direction is normalized internally.")]
         [ReadOnlyTool]
@@ -134,7 +136,10 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Overlap ({shapeLower}) matched {list.Count} collider(s) (of {cols.Length} total).",
                 new { count = list.Count, totalHits = cols.Length, shape = shapeLower, hits = list });
         }
+#endif
 
+        // com.unity.modules.physics2d is optional; without it the 2D query disappears.
+#if KITWRIGHT_PHYSICS2D
         [Description("2D overlap-point query (Physics2D.OverlapPointAll) for the 2D merge board. " +
                      "Returns every 2D collider overlapping the point. Works in Edit Mode. point is an 'x,y' string.")]
         [ReadOnlyTool]
@@ -167,6 +172,7 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Physics2D overlap-point matched {list.Count} collider(s).",
                 new { count = list.Count, hits = list });
         }
+#endif
 
         // -------- Helpers --------
 

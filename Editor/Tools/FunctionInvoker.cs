@@ -68,9 +68,36 @@ namespace KitWright.Editor.Tools
                 return ToolResultFormatter.Error(pex.Code,
                     new { param = pex.ParamName, provided = pex.Provided, expected = pex.Expected });
             }
-            catch (TargetInvocationException ex)
+            // An async tool throws out of the await rather than through reflection, so both shapes
+            // land here and the policy errors below stay reachable either way.
+            catch (Exception ex) when (ex is TargetInvocationException || ex is PathOutsideProjectException
+                                       || ex is AmbiguousTargetException || ex is AmbiguousTypeException)
             {
-                var inner = ex.InnerException ?? ex;
+                var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+                if (inner is PathOutsideProjectException)
+                    return ToolResultFormatter.Error("PATH_OUTSIDE_PROJECT",
+                        new { function = functionCall.FunctionName, message = inner.Message });
+                if (inner is AmbiguousTypeException ambiguousType)
+                    return ToolResultFormatter.Error("AMBIGUOUS_TYPE",
+                        new
+                        {
+                            function = functionCall.FunctionName,
+                            value = ambiguousType.TypeName,
+                            candidates = ambiguousType.Candidates
+                        },
+                        "Pass one of the candidates as the fully qualified name.");
+                if (inner is AmbiguousTargetException ambiguous)
+                    return ToolResultFormatter.Error("AMBIGUOUS_TARGET",
+                        new
+                        {
+                            function = functionCall.FunctionName,
+                            target = ambiguous.Target,
+                            match_count = ambiguous.MatchCount,
+                            candidates = ambiguous.Candidates,
+                            message = inner.Message
+                        },
+                        "Re-call with find_method=by_id and one of the candidate ids, or find_method=by_path.");
+
                 Debug.LogError($"[KitWright] Function '{functionCall.FunctionName}' failed: {inner.Message}\n{inner.StackTrace}");
                 return ToolResultFormatter.Error("FUNCTION_FAILED",
                     new { function = functionCall.FunctionName, message = inner.Message });
@@ -238,9 +265,51 @@ namespace KitWright.Editor.Tools
             });
         }
 
+        // A name with no slot was dropped in silence, so the tool ran on its defaults and reported
+        // success: test_filter for test_names read back as "ran the whole suite, all green". Checked
+        // before MISSING_PARAM so a misspelling is named as one, not as the slot it failed to fill.
+        private static void RejectUnknownParameters(ParamPlan[] plans, Dictionary<string, string> parameters)
+        {
+            if (parameters == null || parameters.Count == 0)
+                return;
+
+            List<string> unknown = null;
+            foreach (var key in parameters.Keys)
+            {
+                var known = false;
+                foreach (var plan in plans)
+                {
+                    if (key == plan.SnakeName || key == plan.OriginalName)
+                    {
+                        known = true;
+                        break;
+                    }
+                }
+
+                if (!known)
+                    (unknown ??= new List<string>()).Add(key);
+            }
+
+            if (unknown == null)
+                return;
+
+            var accepted = new string[plans.Length];
+            for (int i = 0; i < plans.Length; i++)
+                accepted[i] = plans[i].SnakeName;
+
+            throw new ToolArgumentException(
+                "UNKNOWN_PARAM",
+                string.Join(", ", unknown),
+                null,
+                accepted.Length == 0
+                    ? "no parameters"
+                    : $"one of [{string.Join(", ", accepted)}]");
+        }
+
         private object[] BuildArguments(MethodInfo method, Dictionary<string, string> parameters)
         {
             var plans = GetParamPlans(method);
+            RejectUnknownParameters(plans, parameters);
             var args = new object[plans.Length];
 
             for (int i = 0; i < plans.Length; i++)
