@@ -176,25 +176,18 @@ namespace KitWright.Editor.MCP.Server
 
                 button.text = "Installing...";
                 button.SetEnabled(false);
-                var req = UnityEditor.PackageManager.Client.Add(integration.PackageId);
-                EditorApplication.CallbackFunction poll = null;
-                poll = () =>
+                PackageInstaller.Install(integration.PackageId, (ok, error) =>
                 {
-                    if (!req.IsCompleted)
-                        return;
-                    EditorApplication.update -= poll;
-                    if (req.Status == UnityEditor.PackageManager.StatusCode.Success)
+                    if (ok)
                     {
                         button.text = "Installed";
+                        return;
                     }
-                    else
-                    {
-                        button.text = "Install";
-                        button.SetEnabled(true);
-                        EditorUtility.DisplayDialog("Package Install Error", req.Error?.message ?? "Unknown error", "OK");
-                    }
-                };
-                EditorApplication.update += poll;
+
+                    button.text = "Install";
+                    button.SetEnabled(true);
+                    EditorUtility.DisplayDialog("Package Install Error", error ?? "Unknown error", "OK");
+                });
             };
 
             return button;

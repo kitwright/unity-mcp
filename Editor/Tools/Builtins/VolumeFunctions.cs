@@ -15,6 +15,7 @@ using UnityEngine.Rendering;
 namespace KitWright.Editor.Tools.Builtins
 {
     [ToolProvider("Volume")]
+    [RequiresPackage("com.unity.render-pipelines.universal")]
     internal static class VolumeFunctions
     {
         private const string UrpRequiredHint =

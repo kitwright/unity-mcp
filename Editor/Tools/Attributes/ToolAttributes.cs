@@ -17,6 +17,22 @@ namespace KitWright.Editor.Tools
         }
     }
 
+    /// The package id a tool needs at runtime, on the provider class or on a single method.
+    /// Use it where the code still compiles without the package and answers with a "not installed"
+    /// error instead: the Tool Exposure editor greys those tools out so nobody switches on a tool
+    /// that cannot run. Tools that simply vanish with their package (an asmdef defineConstraint, or
+    /// a whole class inside #if) need nothing here.
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
+    public class RequiresPackageAttribute : Attribute
+    {
+        public string PackageId { get; }
+
+        public RequiresPackageAttribute(string packageId)
+        {
+            PackageId = packageId;
+        }
+    }
+
     [AttributeUsage(AttributeTargets.Parameter)]
     public class ToolParamAttribute : Attribute
     {

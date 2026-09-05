@@ -45,6 +45,9 @@ namespace KitWright.Editor.MCP.Server
         private static readonly Color RowOffBg = new Color(0.165f, 0.165f, 0.17f);
         private static readonly Color RowOnText = new Color(0.92f, 0.95f, 0.90f);
         private static readonly Color RowOffText = new Color(0.72f, 0.72f, 0.72f);
+        private static readonly Color RowLockedText = new Color(0.48f, 0.48f, 0.50f);
+        private static readonly Color RowDescriptionText = new Color(0.55f, 0.55f, 0.58f);
+        private static readonly Color SwitchLockedTrack = new Color(0.28f, 0.28f, 0.30f);
 
         public ToolExposureEditorPanel(SettingsController settingsController, MCPServerService mcpServer)
         {
@@ -129,7 +132,7 @@ namespace KitWright.Editor.MCP.Server
             clearButton.style.marginLeft = 6;
             buttonRow.Add(clearButton);
 
-            var defaultButton = CreateActionButton("Restore Default", UseDefaultTools, 106, new Color(0.34f, 0.34f, 0.34f));
+            var defaultButton = CreateActionButton("Reset", UseDefaultTools, 64, new Color(0.34f, 0.34f, 0.34f));
             defaultButton.style.marginLeft = 6;
             buttonRow.Add(defaultButton);
 
@@ -397,7 +400,11 @@ namespace KitWright.Editor.MCP.Server
                 button.style.marginBottom = 0;
                 button.style.marginLeft = 0;
                 button.style.marginRight = 0;
-                button.Rounded(0);
+                // Overflow.Hidden on the group clips to a rectangle, not to its radius, so the end
+                // segments carry the rounding themselves.
+                var outer = ProfileChoices.Count - 1;
+                button.style.borderTopLeftRadius = button.style.borderBottomLeftRadius = i == 0 ? 4 : 0;
+                button.style.borderTopRightRadius = button.style.borderBottomRightRadius = i == outer ? 4 : 0;
                 button.style.borderLeftWidth = i == 0 ? 0 : 1;
                 button.style.borderRightWidth = 0;
                 button.style.borderTopWidth = 0;
@@ -470,6 +477,35 @@ namespace KitWright.Editor.MCP.Server
 
             foreach (var toolName in _allToolNames)
                 _toolCategories[toolName] = GetToolCategory(toolName);
+        }
+
+        // Switching on a tool whose package is missing is a reasonable way to say "I want this
+        // tool", so answer with the install rather than a dead switch.
+        private void OfferPackageInstall(string toolName)
+        {
+            var packageId = ToolPackageGate.MissingPackageFor(toolName);
+            if (packageId == null)
+                return;
+
+            if (!EditorUtility.DisplayDialog(
+                    $"Install {packageId}?",
+                    $"{toolName} needs it. Unity reloads after installing.",
+                    "Install",
+                    "Cancel"))
+                return;
+
+            PackageInstaller.Install(packageId, (ok, error) =>
+            {
+                ToolPackageGate.Invalidate();
+
+                if (!ok)
+                    EditorUtility.DisplayDialog("Package Install Error", error ?? "Unknown error", "OK");
+
+                // The install triggers a domain reload that rebuilds this window; refresh anyway so
+                // a no-reload outcome (already installed, or a failure) still redraws correctly.
+                if (_root != null)
+                    BuildUI();
+            });
         }
 
         private void LoadEditingTools()
@@ -590,8 +626,17 @@ namespace KitWright.Editor.MCP.Server
 
         private void ToggleTool(string toolName)
         {
-            if (!_editingTools.Remove(toolName))
+            var removed = _editingTools.Remove(toolName);
+            if (!removed)
+            {
+                // Still removable, so a profile saved before the package went missing can be cleaned up.
+                if (ToolPackageGate.IsUnavailable(toolName))
+                {
+                    OfferPackageInstall(toolName);
+                    return;
+                }
                 _editingTools.Add(toolName);
+            }
 
             _slideUntil = EditorApplication.timeSinceStartup + SlideWindow;
             RefreshRows();
@@ -729,17 +774,22 @@ namespace KitWright.Editor.MCP.Server
             }
 
             var isOn = _editingTools.Contains(entry.Tool);
+            var missingPackage = ToolPackageGate.MissingPackageFor(entry.Tool);
+            var locked = missingPackage != null;
             view.ToolName.enableRichText = hasFilter;
             view.ToolName.text = HighlightMatch(entry.Tool, _searchFilter);
-            view.ToolName.style.color = isOn ? RowOnText : RowOffText;
+            view.ToolName.style.color = locked ? RowLockedText : isOn ? RowOnText : RowOffText;
             view.ToolRow.style.backgroundColor = RowBg(entry, hover: false);
             var hasDescription = _toolDescriptions.TryGetValue(entry.Tool, out var description) && !string.IsNullOrWhiteSpace(description);
             view.ToolDescription.text = hasDescription ? description : string.Empty;
-            view.ToolRow.tooltip = hasDescription ? description : entry.Tool;
+            view.ToolDescription.style.color = locked ? RowLockedText : RowDescriptionText;
+            view.ToolRow.tooltip = locked
+                ? $"{entry.Tool} needs '{missingPackage}'. Click to install it."
+                : hasDescription ? description : entry.Tool;
             var slide = EditorApplication.timeSinceStartup < _slideUntil;
             view.Switch.style.transitionDuration = slide ? MCPSwitchToggle.Slide : MCPSwitchToggle.Instant;
             view.Knob.style.transitionDuration = slide ? MCPSwitchToggle.Slide : MCPSwitchToggle.Instant;
-            view.Switch.style.backgroundColor = isOn ? MCPSwitchToggle.OnTrack : MCPSwitchToggle.OffTrack;
+            view.Switch.style.backgroundColor = isOn ? MCPSwitchToggle.OnTrack : locked ? SwitchLockedTrack : MCPSwitchToggle.OffTrack;
             view.Knob.style.left = isOn ? MCPSwitchToggle.KnobLeftOn : MCPSwitchToggle.KnobLeftOff;
         }
 
@@ -791,10 +841,10 @@ namespace KitWright.Editor.MCP.Server
 
             foreach (var toolName in categoryTools)
             {
-                if (enabled)
-                    _editingTools.Add(toolName);
-                else
+                if (!enabled)
                     _editingTools.Remove(toolName);
+                else if (!ToolPackageGate.IsUnavailable(toolName))
+                    _editingTools.Add(toolName);
             }
 
             RefreshRows();
@@ -803,7 +853,8 @@ namespace KitWright.Editor.MCP.Server
         private void SetAllToolToggles(bool enabled)
         {
             if (enabled)
-                _editingTools = new HashSet<string>(_allToolNames, StringComparer.OrdinalIgnoreCase);
+                _editingTools = new HashSet<string>(
+                    _allToolNames.Where(tool => !ToolPackageGate.IsUnavailable(tool)), StringComparer.OrdinalIgnoreCase);
             else
                 _editingTools.Clear();
 
