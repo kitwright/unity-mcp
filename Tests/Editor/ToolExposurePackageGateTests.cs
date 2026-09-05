@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using KitWright.Editor.MCP.Server;
@@ -50,8 +51,14 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("com.unity.memoryprofiler", Required(missing, "memory_query_references"));
             Assert.AreEqual("com.unity.memoryprofiler", Required(missing, "memory_open_snapshot_in_profiler"));
 
-            Assert.IsFalse(missing.ContainsKey("memory_take_full_snapshot"));
-            Assert.IsFalse(missing.ContainsKey("memory_list_full_snapshots"));
+            // Counted rather than named: taking and listing snapshots run on the built-in profiler
+            // API, and ToolTestCoverageTests reads this file for tool names, so spelling one out
+            // here would claim a test that does not exist.
+            var lockedMemoryTools = AllToolNames
+                .Where(name => name.StartsWith("memory_", StringComparison.Ordinal))
+                .Count(missing.ContainsKey);
+
+            Assert.AreEqual(3, lockedMemoryTools, "only the crawler- and window-bound calls need the package");
         }
 
         [Test]
