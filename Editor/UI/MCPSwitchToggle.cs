@@ -13,8 +13,47 @@ namespace KitWright.Editor.MCP.Server
     /// </summary>
     internal sealed class MCPSwitchToggle : VisualElement
     {
-        private static readonly Color OnTrack = MCPPalette.AccentGreen;
-        private static readonly Color OffTrack = new Color(0.62f, 0.26f, 0.26f);
+        // Shared with the Tool Exposure list, which builds the same switch but drives its state
+        // from outside. Keeping the look in one place is what stops the two drifting apart.
+        internal static readonly Color OnTrack = MCPPalette.AccentGreen;
+        internal static readonly Color OffTrack = new Color(0.62f, 0.26f, 0.26f);
+        internal static readonly List<TimeValue> Slide = new List<TimeValue> { new TimeValue(0.1f, TimeUnit.Second) };
+        internal static readonly List<TimeValue> Instant = new List<TimeValue> { new TimeValue(0, TimeUnit.Second) };
+
+        internal const int KnobLeftOn = 18;
+        internal const int KnobLeftOff = 2;
+
+        private static readonly List<StylePropertyName> TrackTransition = new List<StylePropertyName> { "background-color" };
+        private static readonly List<StylePropertyName> KnobTransition = new List<StylePropertyName> { "left" };
+        private static readonly List<EasingFunction> KnobEasing = new List<EasingFunction> { new EasingFunction(EasingMode.EaseOutCubic) };
+
+        /// <summary>Track with its knob as the first child. Colour, knob side and duration are the caller's.</summary>
+        internal static VisualElement CreateTrack()
+        {
+            var track = new VisualElement();
+            track.style.width = 34;
+            track.style.height = 18;
+            track.style.flexShrink = 0;
+            track.style.backgroundColor = OffTrack;
+            track.Rounded(9);
+            track.style.transitionProperty = TrackTransition;
+            track.style.transitionDuration = Instant;
+
+            var knob = new VisualElement();
+            knob.style.position = Position.Absolute;
+            knob.style.width = 14;
+            knob.style.height = 14;
+            knob.style.top = 2;
+            knob.style.left = KnobLeftOff;
+            knob.style.backgroundColor = Color.white;
+            knob.Rounded(7);
+            knob.style.transitionProperty = KnobTransition;
+            knob.style.transitionDuration = Instant;
+            knob.style.transitionTimingFunction = KnobEasing;
+            track.Add(knob);
+
+            return track;
+        }
 
         private readonly Label _label;
         private readonly VisualElement _track;
@@ -33,28 +72,13 @@ namespace KitWright.Editor.MCP.Server
             _label.style.color = new Color(0.85f, 0.85f, 0.85f);
             Add(_label);
 
-            _track = new VisualElement();
-            _track.style.width = 34;
-            _track.style.height = 18;
-            _track.style.flexShrink = 0;
-            _track.style.backgroundColor = OffTrack;
-            _track.Rounded(9);
-            _track.style.transitionProperty = new List<StylePropertyName> { "background-color" };
-            _track.style.transitionDuration = new List<TimeValue> { new TimeValue(0.1f, TimeUnit.Second) };
-            Add(_track);
+            _track = CreateTrack();
+            _knob = _track[0];
 
-            _knob = new VisualElement();
-            _knob.style.position = Position.Absolute;
-            _knob.style.width = 14;
-            _knob.style.height = 14;
-            _knob.style.top = 2;
-            _knob.style.left = 2;
-            _knob.style.backgroundColor = Color.white;
-            _knob.Rounded(7);
-            _knob.style.transitionProperty = new List<StylePropertyName> { "left" };
-            _knob.style.transitionDuration = new List<TimeValue> { new TimeValue(0.1f, TimeUnit.Second) };
-            _knob.style.transitionTimingFunction = new List<EasingFunction> { new EasingFunction(EasingMode.EaseOutCubic) };
-            _track.Add(_knob);
+            // Every change here is a click, so it always slides.
+            _track.style.transitionDuration = Slide;
+            _knob.style.transitionDuration = Slide;
+            Add(_track);
 
             RegisterCallback<ClickEvent>(_ =>
             {
@@ -82,7 +106,7 @@ namespace KitWright.Editor.MCP.Server
         private void UpdateVisual()
         {
             _track.style.backgroundColor = _value ? OnTrack : OffTrack;
-            _knob.style.left = _value ? 18 : 2;
+            _knob.style.left = _value ? KnobLeftOn : KnobLeftOff;
         }
     }
 }
