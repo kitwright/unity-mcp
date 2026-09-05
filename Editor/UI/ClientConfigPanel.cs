@@ -351,8 +351,7 @@ namespace KitWright.Editor.MCP.Server
 
             // Built by the same merge the Configure button writes, so what the user copies is byte
             // for byte what lands in the file.
-            var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
-            return MergeJsonConfig(null, rootKey, ServerEntryName, CreateHttpEntry(target), target.SchemaUrl, target.ConfigPath);
+            return MergeJsonConfig(null, target.EffectiveRootKey, ServerEntryName, CreateHttpEntry(target), target.SchemaUrl, target.ConfigPath);
         }
 
         public void RefreshStatus()
@@ -739,30 +738,25 @@ namespace KitWright.Editor.MCP.Server
         // JSON only: the sole client that shadows is Antigravity, and Codex is the only TOML target.
         private static bool RemoveOurEntries(string path, string text, MCPConfigTarget target)
         {
-            JObject root;
-            try
-            {
-                root = JObject.Parse(text);
-            }
-            catch (JsonException)
-            {
+            if (!TryParseConfig(text, out var root))
                 return false;
-            }
 
-            var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
-            if (!(root[rootKey] is JObject servers))
-                return true;
+            if (root[target.EffectiveRootKey] is JObject servers && RemoveOurNames(servers))
+                AtomicFile.WriteAllText(path, root.ToString(Formatting.Indented));
 
+            return true;
+        }
+
+        // Every name this plugin has ever written, so a rename or a version bump does not leave a
+        // second entry behind pointing at the same editor.
+        private static bool RemoveOurNames(JObject servers)
+        {
             var removed = servers.Remove(ServerEntryName);
             removed |= servers.Remove(PinnedServerEntryName());
             removed |= servers.Remove(ProductServerEntryName());
             foreach (var legacy in LegacyServerEntryNames())
                 removed |= servers.Remove(legacy);
-
-            if (removed)
-                AtomicFile.WriteAllText(path, root.ToString(Formatting.Indented));
-
-            return true;
+            return removed;
         }
 
         private bool ConfigureProjectSkillsForPlatform(string platformId)
@@ -783,12 +777,10 @@ namespace KitWright.Editor.MCP.Server
 
         private void ConfigureJsonTarget(MCPConfigTarget target)
         {
-            var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
-            var serverName = ServerEntryName;
-            var entry = CreateHttpEntry(target);
-
             var existingJson = ReadConfigText(target.ConfigPath);
-            var json = MergeJsonConfig(existingJson, rootKey, serverName, entry, target.SchemaUrl, target.ConfigPath);
+            var json = MergeJsonConfig(
+                existingJson, target.EffectiveRootKey, ServerEntryName, CreateHttpEntry(target),
+                target.SchemaUrl, target.ConfigPath);
 
             AtomicFile.WriteAllText(target.ConfigPath, json);
         }
@@ -809,10 +801,7 @@ namespace KitWright.Editor.MCP.Server
                 root[rootKey] = servers;
             }
 
-            servers.Remove(PinnedServerEntryName());
-            servers.Remove(ProductServerEntryName());
-            foreach (var legacy in LegacyServerEntryNames())
-                servers.Remove(legacy);
+            RemoveOurNames(servers);
             servers[serverName] = JToken.FromObject(entry);
 
             if (!string.IsNullOrEmpty(schemaUrl) && root["$schema"] == null)
@@ -829,15 +818,25 @@ namespace KitWright.Editor.MCP.Server
             if (string.IsNullOrWhiteSpace(existingJson))
                 return new JObject();
 
-            try
-            {
-                return JObject.Parse(existingJson);
-            }
-            catch (JsonException)
-            {
+            if (!TryParseConfig(existingJson, out var root))
                 throw new IOException(
                     $"{configPath} is not valid JSON. Refusing to overwrite it so other MCP servers " +
                     "in the file are not lost. Fix or delete the file, then configure again.");
+
+            return root;
+        }
+
+        private static bool TryParseConfig(string json, out JObject root)
+        {
+            try
+            {
+                root = JObject.Parse(json);
+                return true;
+            }
+            catch (JsonException)
+            {
+                root = null;
+                return false;
             }
         }
 
@@ -1101,6 +1100,8 @@ namespace KitWright.Editor.MCP.Server
 
             public bool Supports(bool global)
                 => !string.IsNullOrEmpty(global ? GlobalConfigPath : ProjectConfigPath);
+
+            public string EffectiveRootKey => string.IsNullOrEmpty(RootKey) ? "mcpServers" : RootKey;
 
             public bool ProjectScoped => Supports(false) && !(UseGlobal && Supports(true));
             public string ConfigPath => ProjectScoped ? ProjectConfigPath : GlobalConfigPath;
