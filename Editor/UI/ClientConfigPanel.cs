@@ -407,6 +407,23 @@ namespace KitWright.Editor.MCP.Server
                   "tool calls can land in a sibling project.";
         }
 
+        // JsonCodec's reader is lenient by design -- it stops at the first thing it does not
+        // understand and returns what it collected, so a truncated file comes back as a partial
+        // dictionary rather than null. Rewriting that drops every server past the truncation, which
+        // is the loss the callers are guarding against, so validate with the strict reader.
+        private static bool IsWellFormedJson(string json)
+        {
+            try
+            {
+                Newtonsoft.Json.Linq.JToken.Parse(json);
+                return true;
+            }
+            catch (Newtonsoft.Json.JsonException)
+            {
+                return false;
+            }
+        }
+
         private static string ReadConfigText(string path)
         {
             try
@@ -742,7 +759,7 @@ namespace KitWright.Editor.MCP.Server
         // JSON only: the sole client that shadows is Antigravity, and Codex is the only TOML target.
         private static bool RemoveOurEntries(string path, string text, MCPConfigTarget target)
         {
-            if (!(JsonCodec.Deserialize(text) is Dictionary<string, object> root))
+            if (!IsWellFormedJson(text) || !(JsonCodec.Deserialize(text) is Dictionary<string, object> root))
                 return false;
 
             var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
@@ -803,7 +820,7 @@ namespace KitWright.Editor.MCP.Server
             // A file we cannot parse that still has content holds servers we cannot see. Rewriting
             // it would drop every one of them, so stop and let the user fix it. A blank file carries
             // nothing, so it falls through and gets rebuilt.
-            if (parsed == null && !string.IsNullOrWhiteSpace(existingJson))
+            if (!string.IsNullOrWhiteSpace(existingJson) && (parsed == null || !IsWellFormedJson(existingJson)))
                 throw new IOException(
                     $"{configPath} is not valid JSON. Refusing to overwrite it so other MCP servers " +
                     "in the file are not lost. Fix or delete the file, then configure again.");

@@ -159,10 +159,20 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("kitwright", rebuilt);
             Assert.IsFalse(string.IsNullOrWhiteSpace(rebuilt), "a write must never produce an empty file");
 
-            // Truncated but not empty: servers we cannot see are still in there.
-            Assert.Throws<IOException>(() => ClientConfigPanel.MergeJsonConfig(
-                "{\"mcpServers\":{\"claude-mem\"", "mcpServers", "kitwright", entry, null, "cfg.json"),
-                "a config we cannot parse must not be overwritten");
+            // Truncated but not empty: servers we cannot see are still in there. The lenient reader
+            // returns a partial dictionary for these rather than null, so a null check alone misses
+            // them and the servers past the cut get dropped on write.
+            foreach (var corrupt in new[]
+                     {
+                         "{\"mcpServers\":{\"claude-mem\"",
+                         "{\"mcpServers\":{\"a\":{\"url\":\"x\"},",
+                         "not json at all",
+                     })
+            {
+                Assert.Throws<IOException>(() => ClientConfigPanel.MergeJsonConfig(
+                    corrupt, "mcpServers", "kitwright", entry, null, "cfg.json"),
+                    $"a config we cannot parse must not be overwritten: {corrupt}");
+            }
         }
 
         [Test]
