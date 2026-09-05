@@ -6,8 +6,10 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using KitWright.Editor.Services;
 using KitWright.Editor.Settings;
+using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -25,6 +27,7 @@ namespace KitWright.Editor.MCP.Server
         private Label _configProblemLabel;
         private Label _configPathLabel;
         private const string ScopeGlobalKey = "KitWright.MCP.ConfigScopeGlobal";
+        private Label _configResultLabel;
 
         public ClientConfigPanel(
             SettingsController settings,
@@ -159,6 +162,14 @@ namespace KitWright.Editor.MCP.Server
             row.Add(configureSkillsButton);
 
             body.Add(row);
+
+            _configResultLabel = new Label();
+            _configResultLabel.style.fontSize = 11;
+            _configResultLabel.style.color = MCPPalette.Ok;
+            _configResultLabel.style.whiteSpace = WhiteSpace.Normal;
+            _configResultLabel.style.marginBottom = 4;
+            _configResultLabel.style.display = DisplayStyle.None;
+            body.Add(_configResultLabel);
 
             // Deferred: the snippet build's first Newtonsoft call after a domain reload pays
             // the JIT cost (~40ms), lengthening the blank-window flash on Play.
@@ -355,15 +366,7 @@ namespace KitWright.Editor.MCP.Server
             var idx = Mathf.Clamp(_selectedTargetIndex, 0, _targets.Length - 1);
             var target = _targets[idx];
 
-            string configText = null;
-            try
-            {
-                if (File.Exists(target.ConfigPath))
-                    configText = File.ReadAllText(target.ConfigPath);
-            }
-            catch
-            {
-            }
+            var configText = ReadConfigText(target.ConfigPath);
 
             var configured = ConfigHasOurEntry(configText);
             _configStatusLabel.text = configured ? "Configured ✓" : "Not configured ✕";
@@ -371,17 +374,49 @@ namespace KitWright.Editor.MCP.Server
                 ? MCPPalette.Ok
                 : MCPPalette.Warn;
             _configPathLabel.text = target.ConfigPath;
-            _configPathLabel.tooltip = target.ConfigPath;
+            _configPathLabel.tooltip = target.ConfigPath + ProjectScopedNote(target);
 
             var liveUrl = _server != null && _server.Port > 0 ? BuildServerUrl(_server.Port) : null;
-            var problem = DescribeConfigProblem(configText, liveUrl);
 
-            _configProblemLabel.text = problem ?? string.Empty;
+            // The client reads the files it reads regardless of the scope this panel happens to be
+            // showing, so a broken entry in the other scope still breaks the connection -- and for a
+            // client that merges the global file over the project one it is the only entry that
+            // counts. The selected scope speaks first because its path is the one on screen; only
+            // when it is clean does the other one get to, and then it names the file it means.
+            var problem = DescribeConfigProblem(configText, liveUrl);
+            var problemPath = problem == null ? null : target.ConfigPath;
+
+            if (problem == null)
+            {
+                var otherIsGlobal = target.ProjectScoped;
+                var otherPath = otherIsGlobal ? target.GlobalConfigPath : target.ProjectConfigPath;
+                var otherProblem = DescribeConfigProblem(ReadConfigText(otherPath), liveUrl);
+
+                if (otherProblem != null)
+                {
+                    problem = $"{(otherIsGlobal ? "Global" : "Project")} config: {otherProblem}";
+                    problemPath = otherPath;
+                }
+            }
+
+            _configProblemLabel.text = problem == null ? string.Empty : "⚠ " + problem;
             _configProblemLabel.tooltip = problem == null
                 ? string.Empty
-                : $"This client posts to a URL that is not {liveUrl}. A URL on a stale port, or one " +
+                : $"{problemPath} posts to a URL that is not {liveUrl}. A URL on a stale port, or one " +
                   "written before project pinning, reaches whichever editor now owns that port -- so " +
                   "tool calls can land in a sibling project.";
+        }
+
+        private static string ReadConfigText(string path)
+        {
+            try
+            {
+                return !string.IsNullOrEmpty(path) && File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // The file existing said nothing: one holding other MCP servers and no entry of ours read as
@@ -394,15 +429,40 @@ namespace KitWright.Editor.MCP.Server
                     configText.Contains($".{ServerEntryName}]"));
         }
 
+        // Returns the problem without a marker; callers prefix "⚠ " and name the file.
         internal static string DescribeConfigProblem(string configText, string liveUrl)
         {
             if (!ConfigHasOurEntry(configText) || string.IsNullOrEmpty(liveUrl))
                 return null;
 
-            return configText.Contains(liveUrl)
-                ? null
-                : "⚠ Points at another URL - re-run Configure";
+            if (configText.Contains(liveUrl))
+                return null;
+
+            // One entry name, one global file, many projects: an entry pinned to a sibling project
+            // is that project's, and the background sweep deliberately leaves it alone. Sending the
+            // user to Configure would point it at this editor and break the sibling, so name the
+            // fix that actually applies.
+            return PinnedToAnotherProject(configText, liveUrl)
+                ? "Entry belongs to another project - remove it"
+                : "Points at another URL - re-run Configure";
         }
+
+        private static bool PinnedToAnotherProject(string configText, string liveUrl)
+        {
+            var ours = HttpMCPTransport.ExtractPin(liveUrl);
+            if (ours.Length == 0)
+                return false;
+
+            foreach (Match found in PinPattern.Matches(configText))
+            {
+                if (!string.Equals(found.Groups[1].Value, ours, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
+        private static readonly Regex PinPattern = new Regex("/p/([^/\"\\s]+)", RegexOptions.Compiled);
 
         public static string[] GetAllTargetNames()
             => GetAllTargets().Select(t => t.Name).ToArray();
@@ -524,7 +584,10 @@ namespace KitWright.Editor.MCP.Server
                     GlobalConfigPath = Path.Combine(homePath, ".gemini", "config", "mcp_config.json"),
                     IncludeTypeField = true,
                     HttpUrlProperty = "serverUrl",
-                    DefaultFields = new Dictionary<string, object> { ["disabled"] = false }
+                    DefaultFields = new Dictionary<string, object> { ["disabled"] = false },
+                    // Probed: with the project file naming the live port and the global file a dead
+                    // one, Antigravity dials the global URL -- the global entry wins the name.
+                    GlobalShadowsProject = true
                 },
                 new MCPConfigTarget
                 {
@@ -580,14 +643,9 @@ namespace KitWright.Editor.MCP.Server
         {
             try
             {
-                WriteMCPConfigurationForTarget(target);
+                var shadowNote = WriteMCPConfigurationForTarget(target);
 
-                var message = $"MCP configuration written to:\n{target.ConfigPath}\n\n" +
-                              $"Please restart {target.Name} for it to take effect." +
-                              ProjectScopedNote(target);
-
-                EditorUtility.DisplayDialog("MCP Configuration", message, "OK");
-                _rebuildWindow?.Invoke();
+                ShowConfigResult($"✓ Configured - restart {target.Name} to connect." + shadowNote);
             }
             catch (Exception ex)
             {
@@ -599,18 +657,13 @@ namespace KitWright.Editor.MCP.Server
         {
             try
             {
-                WriteMCPConfigurationForTarget(target);
+                var shadowNote = WriteMCPConfigurationForTarget(target);
 
                 var platformId = MapTargetNameToSkillsPlatformId(target.Name);
                 if (string.IsNullOrEmpty(platformId))
                 {
-                    EditorUtility.DisplayDialog(
-                        "MCP Configuration",
-                        $"MCP configuration written to:\n{target.ConfigPath}\n\n" +
-                        "Project skills are not available for this client.",
-                        "OK");
-
-                    _rebuildWindow?.Invoke();
+                    ShowConfigResult($"✓ Configured - restart {target.Name} to connect. " +
+                                     "Project skills are not available for this client." + shadowNote);
                     return;
                 }
 
@@ -621,15 +674,8 @@ namespace KitWright.Editor.MCP.Server
                 var manifest = ProjectSkillsManager.LoadManifest(projectRoot);
                 var generatedPaths = ProjectSkillsManager.GetGeneratedPathsForPlatform(projectRoot, manifest, platformId);
 
-                EditorUtility.DisplayDialog(
-                    "MCP Configuration",
-                    $"MCP configuration written to:\n{target.ConfigPath}\n\n" +
-                    "Project MCP workflow skill installed:\n" +
-                    string.Join("\n", generatedPaths) +
-                    ProjectScopedNote(target),
-                    "OK");
-
-                _rebuildWindow?.Invoke();
+                ShowConfigResult($"✓ Configured - restart {target.Name} to connect. " +
+                                 $"Installed {generatedPaths.Count()} project skill file(s)." + shadowNote);
             }
             catch (Exception ex)
             {
@@ -637,7 +683,23 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        private void WriteMCPConfigurationForTarget(MCPConfigTarget target)
+        // No RefreshStatus here: the button handlers call it on every path, error included.
+        private void ShowConfigResult(string message)
+        {
+            if (_configResultLabel == null)
+                return;
+
+            _configResultLabel.text = message;
+            _configResultLabel.style.display = DisplayStyle.Flex;
+
+            // ~40ms a character: the variant reporting a removed global entry is 5x the short one.
+            _configResultLabel.schedule
+                .Execute(() => _configResultLabel.style.display = DisplayStyle.None)
+                .ExecuteLater(Mathf.Clamp(message.Length * 40, 3000, 9000));
+        }
+
+        /// <summary>Writes the config and returns a note for the result line, or null when there is nothing to add.</summary>
+        private string WriteMCPConfigurationForTarget(MCPConfigTarget target)
         {
             var dir = Path.GetDirectoryName(target.ConfigPath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -647,6 +709,56 @@ namespace KitWright.Editor.MCP.Server
                 ConfigureTomlTarget(target);
             else
                 ConfigureJsonTarget(target);
+
+            // Only after the project file is on disk: if this threw, the user still has whatever
+            // the global file gave them.
+            return ClearShadowingGlobalEntry(target);
+        }
+
+        // Antigravity merges the global file over the project one, so a global entry of ours wins
+        // however correct the project file is. One global slot cannot serve every project that
+        // writes the same entry name -- repointing it at whichever project clicked Configure last
+        // just moves the breakage to a sibling. Removing it lets each project fall back to its own
+        // file, so the entry goes. Clients with no project config are left alone: there the global
+        // file is the only one they read, and the background sweep keeps its URL fresh.
+        private static string ClearShadowingGlobalEntry(MCPConfigTarget target)
+        {
+            if (!target.GlobalShadowsProject || !target.ProjectScoped)
+                return null;
+
+            var globalPath = target.GlobalConfigPath;
+            var text = ReadConfigText(globalPath);
+            if (!ConfigHasOurEntry(text))
+                return null;
+
+            if (!RemoveOurEntries(globalPath, text, target))
+                return $" Warning: the global config ({globalPath}) holds a \"{ServerEntryName}\" " +
+                       "entry that shadows this one, but it could not be parsed - remove it by hand.";
+
+            return $" Also removed the \"{ServerEntryName}\" entry from the global config, which was " +
+                   "shadowing this project; re-run Configure in any other project that relied on it.";
+        }
+
+        // JSON only: the sole client that shadows is Antigravity, and Codex is the only TOML target.
+        private static bool RemoveOurEntries(string path, string text, MCPConfigTarget target)
+        {
+            if (!(JsonCodec.Deserialize(text) is Dictionary<string, object> root))
+                return false;
+
+            var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
+            if (!(root.TryGetValue(rootKey, out var serversObj) && serversObj is Dictionary<string, object> servers))
+                return true;
+
+            var removed = servers.Remove(ServerEntryName);
+            removed |= servers.Remove(PinnedServerEntryName());
+            removed |= servers.Remove(ProductServerEntryName());
+            foreach (var legacy in LegacyServerEntryNames())
+                removed |= servers.Remove(legacy);
+
+            if (removed)
+                AtomicFile.WriteAllText(path, JsonCodec.Serialize(root));
+
+            return true;
         }
 
         private bool ConfigureProjectSkillsForPlatform(string platformId)
@@ -670,46 +782,61 @@ namespace KitWright.Editor.MCP.Server
             var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
             var serverName = ServerEntryName;
             var entry = CreateHttpEntry(target);
+
+            var existingJson = ReadConfigText(target.ConfigPath);
+            var json = MergeJsonConfig(existingJson, rootKey, serverName, entry, target.SchemaUrl, target.ConfigPath);
+
+            AtomicFile.WriteAllText(target.ConfigPath, json);
+        }
+
+        internal static string MergeJsonConfig(
+            string existingJson,
+            string rootKey,
+            string serverName,
+            object entry,
+            string schemaUrl,
+            string configPath)
+        {
             Dictionary<string, object> root;
+            var parsed = JsonCodec.Deserialize(existingJson) as Dictionary<string, object>;
 
-            if (File.Exists(target.ConfigPath))
+            // A file we cannot parse that still has content holds servers we cannot see. Rewriting
+            // it would drop every one of them, so stop and let the user fix it. A blank file carries
+            // nothing, so it falls through and gets rebuilt.
+            if (parsed == null && !string.IsNullOrWhiteSpace(existingJson))
+                throw new IOException(
+                    $"{configPath} is not valid JSON. Refusing to overwrite it so other MCP servers " +
+                    "in the file are not lost. Fix or delete the file, then configure again.");
+
+            if (parsed != null && parsed.ContainsKey(rootKey))
             {
-                var existingJson = File.ReadAllText(target.ConfigPath);
-                var parsed = JsonCodec.Deserialize(existingJson) as Dictionary<string, object>;
-
-                if (parsed != null && parsed.ContainsKey(rootKey))
+                root = parsed;
+                var servers = root[rootKey] as Dictionary<string, object>;
+                if (servers != null)
                 {
-                    root = parsed;
-                    var servers = root[rootKey] as Dictionary<string, object>;
-                    if (servers != null)
-                    {
-                        servers.Remove(PinnedServerEntryName());
-                        servers.Remove(ProductServerEntryName());
-                        foreach (var legacy in LegacyServerEntryNames())
-                            servers.Remove(legacy);
-                        servers[serverName] = entry;
-                    }
-                    else
-                        root[rootKey] = new Dictionary<string, object> { [serverName] = entry };
+                    servers.Remove(PinnedServerEntryName());
+                    servers.Remove(ProductServerEntryName());
+                    foreach (var legacy in LegacyServerEntryNames())
+                        servers.Remove(legacy);
+                    servers[serverName] = entry;
                 }
                 else
-                {
-                    root = parsed ?? new Dictionary<string, object>();
                     root[rootKey] = new Dictionary<string, object> { [serverName] = entry };
-                }
             }
             else
             {
-                root = new Dictionary<string, object>
-                {
-                    [rootKey] = new Dictionary<string, object> { [serverName] = entry }
-                };
+                root = parsed ?? new Dictionary<string, object>();
+                root[rootKey] = new Dictionary<string, object> { [serverName] = entry };
             }
 
-            if (!string.IsNullOrEmpty(target.SchemaUrl) && !root.ContainsKey("$schema"))
-                root["$schema"] = target.SchemaUrl;
+            if (!string.IsNullOrEmpty(schemaUrl) && !root.ContainsKey("$schema"))
+                root["$schema"] = schemaUrl;
 
-            File.WriteAllText(target.ConfigPath, JsonCodec.Serialize(root));
+            var json = JsonCodec.Serialize(root);
+            if (string.IsNullOrWhiteSpace(json))
+                throw new IOException($"Serializing the MCP configuration produced no content; {configPath} was left untouched.");
+
+            return json;
         }
 
         private void ConfigureTomlTarget(MCPConfigTarget target)
@@ -725,7 +852,7 @@ namespace KitWright.Editor.MCP.Server
 
             content = EnsureCodexRmcpFeature(content + "\n" + CreateTomlSection(target));
 
-            File.WriteAllText(target.ConfigPath, content);
+            AtomicFile.WriteAllText(target.ConfigPath, content);
         }
 
         private static string RemoveTomlSection(string content, string sectionHeader)
@@ -801,11 +928,16 @@ namespace KitWright.Editor.MCP.Server
             if (!target.ProjectScoped)
                 return string.Empty;
 
-            return "\n\nThis file lives in the project and is machine-specific (it holds this " +
-                   "machine's port and this folder's project pin). Add it to .gitignore rather " +
-                   "than committing it; teammates run Configure to generate their own.\n\n" +
-                   "If you configured this client before, its old entry in your home directory " +
-                   "is now unused and can be deleted.";
+            var note = "\n\nThis file lives in the project and is machine-specific (it holds this " +
+                       "machine's port and this folder's project pin). Add it to .gitignore rather " +
+                       "than committing it; teammates run Configure to generate their own.";
+
+            // Configure clears the shadowing global entry itself for these clients, so telling the
+            // user to go delete it would send them after a file that is already clean.
+            return target.GlobalShadowsProject
+                ? note
+                : note + "\n\nIf you configured this client before, its old entry in your home " +
+                         "directory is now unused and can be deleted.";
         }
 
         // One name for both scopes. A global config is shared by every project, so the entry there
@@ -959,6 +1091,11 @@ namespace KitWright.Editor.MCP.Server
             public string ProjectConfigPath;
             public string GlobalConfigPath;
             public bool UseGlobal;
+
+            // Set only for a client verified to merge its global file over the project one, where a
+            // global entry of ours wins however correct the project file is. Most clients do the
+            // opposite, and there a global entry is the user's deliberate all-projects setup.
+            public bool GlobalShadowsProject;
 
             public bool Supports(bool global)
                 => !string.IsNullOrEmpty(global ? GlobalConfigPath : ProjectConfigPath);

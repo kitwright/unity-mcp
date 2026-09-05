@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using KitWright.Editor.MCP.Server;
@@ -139,6 +140,43 @@ namespace KitWright.Editor.Tests
 
             Assert.IsFalse(ClientConfigPanel.ConfigHasOurEntry(null));
             Assert.IsFalse(ClientConfigPanel.ConfigHasOurEntry(string.Empty));
+        }
+
+        [Test]
+        public void MergeJsonConfig_KeepsForeignServers_AndRefusesCorruptFiles()
+        {
+            var entry = new Dictionary<string, object> { ["url"] = "http://127.0.0.1:8975/" };
+
+            var merged = ClientConfigPanel.MergeJsonConfig(
+                "{\"mcpServers\":{\"claude-mem\":{\"command\":\"node\"}}}",
+                "mcpServers", "kitwright", entry, null, "cfg.json");
+            StringAssert.Contains("claude-mem", merged, "merging must not drop somebody else's server");
+            StringAssert.Contains("8975", merged);
+
+            // The 0-byte file Antigravity chokes on: nothing to lose, so rebuild it.
+            var rebuilt = ClientConfigPanel.MergeJsonConfig(
+                string.Empty, "mcpServers", "kitwright", entry, null, "cfg.json");
+            StringAssert.Contains("kitwright", rebuilt);
+            Assert.IsFalse(string.IsNullOrWhiteSpace(rebuilt), "a write must never produce an empty file");
+
+            // Truncated but not empty: servers we cannot see are still in there.
+            Assert.Throws<IOException>(() => ClientConfigPanel.MergeJsonConfig(
+                "{\"mcpServers\":{\"claude-mem\"", "mcpServers", "kitwright", entry, null, "cfg.json"),
+                "a config we cannot parse must not be overwritten");
+        }
+
+        [Test]
+        public void ConfigProblem_TellsAStalePortApartFromASiblingProject()
+        {
+            const string live = "http://127.0.0.1:8975/p/d156b7e9/";
+
+            StringAssert.Contains("re-run Configure", ClientConfigPanel.DescribeConfigProblem(
+                "{\"mcpServers\":{\"kitwright\":{\"url\":\"http://127.0.0.1:8766/p/d156b7e9/\"}}}", live),
+                "our own entry on a dead port is exactly what Configure repairs");
+
+            StringAssert.Contains("another project", ClientConfigPanel.DescribeConfigProblem(
+                "{\"mcpServers\":{\"kitwright\":{\"url\":\"http://127.0.0.1:8766/p/e39cb4bc/\"}}}", live),
+                "re-running Configure here would steal the sibling project's entry");
         }
     }
 }
