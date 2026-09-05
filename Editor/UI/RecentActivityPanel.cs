@@ -270,10 +270,13 @@ namespace KitWright.Editor.MCP.Server
             ClearPreviewTextures();
             _scrollView.contentContainer.Clear();
 
-            foreach (var entry in _server.InteractionLog.GetEntries())
+            // GetEntries is newest-first; the cards read oldest-first so a live append lands at
+            // the bottom, where stick-to-bottom and ScrollToBottom expect the newest one.
+            var entries = _server.InteractionLog.GetEntries();
+            for (int i = entries.Count - 1; i >= 0; i--)
             {
-                if (PassesFilter(entry.Status))
-                    AddRow(entry);
+                if (PassesFilter(entries[i].Status))
+                    AddRow(entries[i]);
             }
 
             RefreshFilterCounts();
