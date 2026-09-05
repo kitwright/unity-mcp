@@ -12,6 +12,7 @@ using UnityEditor.AddressableAssets.Settings;
 namespace KitWright.Editor.Tools.Builtins
 {
     [ToolProvider("Addressable")]
+    [RequiresPackage("com.unity.addressables")]
     internal static class AddressableFunctions
     {
         private const string NoPackageHint =

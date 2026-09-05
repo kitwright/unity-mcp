@@ -128,6 +128,10 @@ namespace KitWright.Editor.MCP.Server
             if (string.IsNullOrWhiteSpace(toolName))
                 return false;
 
+            // Applies to a hand-picked profile too: a saved list can outlive the package it needs.
+            if (ToolPackageGate.IsUnavailable(toolName))
+                return false;
+
             if (profileConfigured)
                 return ContainsTool(profileTools, toolName);
 
@@ -165,6 +169,7 @@ namespace KitWright.Editor.MCP.Server
         {
             return (allToolNames ?? Enumerable.Empty<string>())
                 .Where(name => !string.IsNullOrWhiteSpace(name)
+                               && !ToolPackageGate.IsUnavailable(name)
                                && (IsInDefaultSet(name, profile) || ToolRegistry.IsCustomTool(name)));
         }
 

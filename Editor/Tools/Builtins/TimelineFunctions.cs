@@ -9,6 +9,7 @@ using UnityEngine;
 namespace KitWright.Editor.Tools.Builtins
 {
     [ToolProvider("Timeline")]
+    [RequiresPackage("com.unity.modules.director")]
     internal static class TimelineFunctions
     {
         // Resolved by FullName over the target's components so this file compiles WITHOUT an

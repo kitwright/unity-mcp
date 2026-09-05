@@ -167,6 +167,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "(see memory_list_full_snapshots). Requires the com.unity.memoryprofiler package. " +
                      "Combine with capture_editor_window('Memory Profiler') to inspect the loaded analysis visually.")]
         [ReadOnlyTool]
+        [RequiresPackage("com.unity.memoryprofiler")]
         public static string MemoryOpenSnapshotInProfiler(
             [ToolParam("Absolute .snap path, or a file name inside the snapshot folder (with or without the .snap extension).")] string snapshot)
         {
@@ -197,6 +198,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "the memory' half of the workflow started by memory_take_full_snapshot. Loads headlessly via the " +
                      "Memory Profiler package's crawler (no window opened); requires the com.unity.memoryprofiler package.")]
         [ReadOnlyTool]
+        [RequiresPackage("com.unity.memoryprofiler")]
         public static string MemoryQueryTopObjects(
             [ToolParam("Absolute .snap path, or a file name inside the snapshot folder (with or without the .snap extension).")] string snapshot,
             [ToolParam("Only include objects whose native type name contains this text (case-insensitive), e.g. 'Texture2D'.", Required = false)] string type_filter = null,
@@ -255,6 +257,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "the com.unity.memoryprofiler package. Only native objects can be looked up directly; the returned " +
                      "reference lists may include managed objects and GC handles as informational entries.")]
         [ReadOnlyTool]
+        [RequiresPackage("com.unity.memoryprofiler")]
         public static string MemoryQueryReferences(
             [ToolParam("Absolute .snap path, or a file name inside the snapshot folder (with or without the .snap extension).")] string snapshot,
             [ToolParam("Native object name (exact match preferred, falls back to a case-insensitive substring match) or the native_object_index from memory_query_top_objects.")] string target,
