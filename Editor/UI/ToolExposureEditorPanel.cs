@@ -38,6 +38,19 @@ namespace KitWright.Editor.MCP.Server
         private static readonly Color SegmentInactive = MCPPalette.Surface;
         private static readonly Color SwitchOnTrack = MCPPalette.AccentGreen;
         private static readonly Color SwitchOffTrack = new Color(0.62f, 0.26f, 0.26f);
+
+        // BindRow runs for every visible row on every scroll, so these are built once rather than
+        // allocated per bind.
+        private static readonly List<StylePropertyName> SwitchTrackProperty = new List<StylePropertyName> { "background-color" };
+        private static readonly List<StylePropertyName> SwitchKnobProperty = new List<StylePropertyName> { "left" };
+        private static readonly List<TimeValue> SwitchSlide = new List<TimeValue> { new TimeValue(0.1f, TimeUnit.Second) };
+        private static readonly List<TimeValue> SwitchInstant = new List<TimeValue> { new TimeValue(0, TimeUnit.Second) };
+        private static readonly List<EasingFunction> SwitchEasing = new List<EasingFunction> { new EasingFunction(EasingMode.EaseOutCubic) };
+
+        // Clicks slide, scrolling snaps -- both land in BindRow, and only a recent click can have
+        // opened this window. Wide enough to cover a rebind that waits for the next layout pass.
+        private const double SlideWindow = 0.2;
+        private double _slideUntil;
         private static readonly Color RowOnBg = new Color(0.17f, 0.21f, 0.17f);
         private static readonly Color RowOffBg = new Color(0.165f, 0.165f, 0.17f);
         private static readonly Color RowOnText = new Color(0.92f, 0.95f, 0.90f);
@@ -589,6 +602,8 @@ namespace KitWright.Editor.MCP.Server
         {
             if (!_editingTools.Remove(toolName))
                 _editingTools.Add(toolName);
+
+            _slideUntil = EditorApplication.timeSinceStartup + SlideWindow;
             RefreshRows();
         }
 
@@ -731,6 +746,9 @@ namespace KitWright.Editor.MCP.Server
             var hasDescription = _toolDescriptions.TryGetValue(entry.Tool, out var description) && !string.IsNullOrWhiteSpace(description);
             view.ToolDescription.text = hasDescription ? description : string.Empty;
             view.ToolRow.tooltip = hasDescription ? description : entry.Tool;
+            var slide = EditorApplication.timeSinceStartup < _slideUntil;
+            view.Switch.style.transitionDuration = slide ? SwitchSlide : SwitchInstant;
+            view.Knob.style.transitionDuration = slide ? SwitchSlide : SwitchInstant;
             view.Switch.style.backgroundColor = isOn ? SwitchOnTrack : SwitchOffTrack;
             view.Knob.style.left = isOn ? 18 : 2;
         }
@@ -750,8 +768,7 @@ namespace KitWright.Editor.MCP.Server
             return $"{before}<color=#FFD54F><b>{match}</b></color>{after}";
         }
 
-        // State (track colour, knob side) is applied in BindRow. No knob transition: a recycled row
-        // rebinding from an on tool to an off one would otherwise animate while scrolling.
+        // State (track colour, knob side) is applied in BindRow, which also sets the duration.
         private static VisualElement CreateSwitch()
         {
             var track = new VisualElement();
@@ -760,6 +777,8 @@ namespace KitWright.Editor.MCP.Server
             track.style.flexShrink = 0;
             track.Rounded(9);
             track.style.justifyContent = Justify.Center;
+            track.style.transitionProperty = SwitchTrackProperty;
+            track.style.transitionDuration = SwitchInstant;
 
             var knob = new VisualElement();
             knob.style.position = Position.Absolute;
@@ -768,6 +787,9 @@ namespace KitWright.Editor.MCP.Server
             knob.style.top = 2;
             knob.style.backgroundColor = Color.white;
             knob.Rounded(7);
+            knob.style.transitionProperty = SwitchKnobProperty;
+            knob.style.transitionDuration = SwitchInstant;
+            knob.style.transitionTimingFunction = SwitchEasing;
             track.Add(knob);
 
             return track;
@@ -799,6 +821,8 @@ namespace KitWright.Editor.MCP.Server
 
         private void SetCategoryTools(IEnumerable<string> categoryTools, bool enabled)
         {
+            _slideUntil = EditorApplication.timeSinceStartup + SlideWindow;
+
             foreach (var toolName in categoryTools)
             {
                 if (enabled)
