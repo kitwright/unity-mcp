@@ -7,6 +7,8 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using KitWright.Editor.Services;
 using KitWright.Editor.Settings;
 using KitWright.Editor.Tools.Helpers;
@@ -347,15 +349,10 @@ namespace KitWright.Editor.MCP.Server
             if (target.IsToml)
                 return CreateTomlSection(target);
 
+            // Built by the same merge the Configure button writes, so what the user copies is byte
+            // for byte what lands in the file.
             var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
-            var root = new Dictionary<string, object>
-            {
-                [rootKey] = new Dictionary<string, object> { [ServerEntryName] = CreateHttpEntry(target) }
-            };
-            if (!string.IsNullOrEmpty(target.SchemaUrl))
-                root["$schema"] = target.SchemaUrl;
-
-            return Newtonsoft.Json.JsonConvert.SerializeObject(root, Newtonsoft.Json.Formatting.Indented);
+            return MergeJsonConfig(null, rootKey, ServerEntryName, CreateHttpEntry(target), target.SchemaUrl, target.ConfigPath);
         }
 
         public void RefreshStatus()
@@ -405,23 +402,6 @@ namespace KitWright.Editor.MCP.Server
                 : $"{problemPath} posts to a URL that is not {liveUrl}. A URL on a stale port, or one " +
                   "written before project pinning, reaches whichever editor now owns that port -- so " +
                   "tool calls can land in a sibling project.";
-        }
-
-        // JsonCodec's reader is lenient by design -- it stops at the first thing it does not
-        // understand and returns what it collected, so a truncated file comes back as a partial
-        // dictionary rather than null. Rewriting that drops every server past the truncation, which
-        // is the loss the callers are guarding against, so validate with the strict reader.
-        private static bool IsWellFormedJson(string json)
-        {
-            try
-            {
-                Newtonsoft.Json.Linq.JToken.Parse(json);
-                return true;
-            }
-            catch (Newtonsoft.Json.JsonException)
-            {
-                return false;
-            }
         }
 
         private static string ReadConfigText(string path)
@@ -759,11 +739,18 @@ namespace KitWright.Editor.MCP.Server
         // JSON only: the sole client that shadows is Antigravity, and Codex is the only TOML target.
         private static bool RemoveOurEntries(string path, string text, MCPConfigTarget target)
         {
-            if (!IsWellFormedJson(text) || !(JsonCodec.Deserialize(text) is Dictionary<string, object> root))
+            JObject root;
+            try
+            {
+                root = JObject.Parse(text);
+            }
+            catch (JsonException)
+            {
                 return false;
+            }
 
             var rootKey = string.IsNullOrEmpty(target.RootKey) ? "mcpServers" : target.RootKey;
-            if (!(root.TryGetValue(rootKey, out var serversObj) && serversObj is Dictionary<string, object> servers))
+            if (!(root[rootKey] is JObject servers))
                 return true;
 
             var removed = servers.Remove(ServerEntryName);
@@ -773,7 +760,7 @@ namespace KitWright.Editor.MCP.Server
                 removed |= servers.Remove(legacy);
 
             if (removed)
-                AtomicFile.WriteAllText(path, JsonCodec.Serialize(root));
+                AtomicFile.WriteAllText(path, root.ToString(Formatting.Indented));
 
             return true;
         }
@@ -814,46 +801,44 @@ namespace KitWright.Editor.MCP.Server
             string schemaUrl,
             string configPath)
         {
-            Dictionary<string, object> root;
-            var parsed = JsonCodec.Deserialize(existingJson) as Dictionary<string, object>;
+            var root = ParseConfigRoot(existingJson, configPath);
 
-            // A file we cannot parse that still has content holds servers we cannot see. Rewriting
-            // it would drop every one of them, so stop and let the user fix it. A blank file carries
-            // nothing, so it falls through and gets rebuilt.
-            if (!string.IsNullOrWhiteSpace(existingJson) && (parsed == null || !IsWellFormedJson(existingJson)))
+            if (!(root[rootKey] is JObject servers))
+            {
+                servers = new JObject();
+                root[rootKey] = servers;
+            }
+
+            servers.Remove(PinnedServerEntryName());
+            servers.Remove(ProductServerEntryName());
+            foreach (var legacy in LegacyServerEntryNames())
+                servers.Remove(legacy);
+            servers[serverName] = JToken.FromObject(entry);
+
+            if (!string.IsNullOrEmpty(schemaUrl) && root["$schema"] == null)
+                root["$schema"] = schemaUrl;
+
+            return root.ToString(Formatting.Indented);
+        }
+
+        // A file we cannot parse that still has content holds servers we cannot see. Rewriting it
+        // would drop every one of them, so stop and let the user fix it. A blank file carries
+        // nothing, so it starts a fresh root.
+        private static JObject ParseConfigRoot(string existingJson, string configPath)
+        {
+            if (string.IsNullOrWhiteSpace(existingJson))
+                return new JObject();
+
+            try
+            {
+                return JObject.Parse(existingJson);
+            }
+            catch (JsonException)
+            {
                 throw new IOException(
                     $"{configPath} is not valid JSON. Refusing to overwrite it so other MCP servers " +
                     "in the file are not lost. Fix or delete the file, then configure again.");
-
-            if (parsed != null && parsed.ContainsKey(rootKey))
-            {
-                root = parsed;
-                var servers = root[rootKey] as Dictionary<string, object>;
-                if (servers != null)
-                {
-                    servers.Remove(PinnedServerEntryName());
-                    servers.Remove(ProductServerEntryName());
-                    foreach (var legacy in LegacyServerEntryNames())
-                        servers.Remove(legacy);
-                    servers[serverName] = entry;
-                }
-                else
-                    root[rootKey] = new Dictionary<string, object> { [serverName] = entry };
             }
-            else
-            {
-                root = parsed ?? new Dictionary<string, object>();
-                root[rootKey] = new Dictionary<string, object> { [serverName] = entry };
-            }
-
-            if (!string.IsNullOrEmpty(schemaUrl) && !root.ContainsKey("$schema"))
-                root["$schema"] = schemaUrl;
-
-            var json = JsonCodec.Serialize(root);
-            if (string.IsNullOrWhiteSpace(json))
-                throw new IOException($"Serializing the MCP configuration produced no content; {configPath} was left untouched.");
-
-            return json;
         }
 
         private void ConfigureTomlTarget(MCPConfigTarget target)
