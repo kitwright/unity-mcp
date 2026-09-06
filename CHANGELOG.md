@@ -175,6 +175,7 @@
 - The CodeDom fallback compiler no longer treats mcs's phantom BOM diagnostic (an entry with no error number) as a compilation failure, and its reference list is deduped.
 - The broker is not stopped when a batch-mode editor quits. Our own CI runs `-batchmode -runTests`, so a test run could kill a broker an interactive editor was using.
 - `set_scriptable_object_properties` returns `PROPERTY_SET_FAILED` when no field applied, as `set_component_properties` now does. Both call the same `ComponentSerializer.WriteProperties`, so the loud failure inherited from the deleted `set_component_property` had closed half the hole: a misspelled field name on a `.asset` still came back as `success`, with "asset saved" attached to a write that landed nothing. A partial write is still a success carrying `failCount`, since that one is diagnosable.
+- Configure and Rewrite write the current `Skills~/<id>/SKILL.md`. The package skill catalog was cached for the domain's lifetime on the grounds that a package change forces a reload - but editing a `Skills~` file forces none, since Unity never imports the folder, so a Rewrite after a skill edit wrote the previous body under the previous hash.
 
 ## [1.0.0] - 2026-08-11
 

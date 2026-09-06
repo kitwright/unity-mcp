@@ -17,15 +17,11 @@ namespace KitWright.Editor.MCP.Server
     /// </summary>
     internal static class PackageSkillCatalog
     {
-        private static List<ProjectSkillsManager.SkillDefinition> _cache;
-
-        /// <summary>
-        /// Adding or removing a package forces a domain reload, which drops this cache, so a
-        /// domain-lifetime cache cannot go stale behind a package change.
-        /// </summary>
+        // Not cached: Skills~ is invisible to the AssetDatabase, so an edited SKILL.md triggers no
+        // reload, and a domain-lifetime cache kept writing the old body on Rewrite.
         internal static IReadOnlyList<ProjectSkillsManager.SkillDefinition> Discover()
         {
-            return _cache ?? (_cache = Scan());
+            return Scan();
         }
 
         private static List<ProjectSkillsManager.SkillDefinition> Scan()
