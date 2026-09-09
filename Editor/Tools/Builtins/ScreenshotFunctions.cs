@@ -223,8 +223,23 @@ namespace KitWright.Editor.Tools.Builtins
             texture.Apply();
         }
 
+        /// <summary>
+        /// Headless (-nographics, CI): there is no device to allocate a render target on, so
+        /// RenderTexture.Create logs "RenderTexture.Create failed" -- an engine error nobody asked for,
+        /// which the test framework then charges to whichever test is running -- and the readback comes
+        /// back blank. A blank PNG is a worse answer than saying there is no frame.
+        /// </summary>
+        internal static void RequireAGraphicsDevice()
+        {
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                throw new InvalidOperationException(
+                    "No graphics device (-nographics): there is no rendered frame to capture.");
+        }
+
         internal static Texture2D ReadTextureToTexture2D(Texture sourceTexture, int width, int height, bool flipVertically)
         {
+            RequireAGraphicsDevice();
+
             RenderTexture readableRenderTexture = null;
             RenderTexture previousActive = null;
             Texture2D screenshot = null;

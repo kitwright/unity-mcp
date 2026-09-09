@@ -38,7 +38,8 @@ namespace KitWright.Editor.Tests
             "set_assembly_platforms",
             "update_assembly_def_settings",
             // arbitrary code or a script edit, same reason
-            "batch_execute",
+            // batch_execute left this list when CoreProfileCoversWhatTheShippedSkillsCall started
+            // naming it; running it in a test is still off the table for the reason above.
             "clear_execute_code_history",
             "edit_script_members",
             "replay_execute_code",
@@ -58,7 +59,8 @@ namespace KitWright.Editor.Tests
             "open_scene",
             "set_active_scene",
             // wipes state that belongs to whoever owns the project
-            "clear_console",
+            // clear_console is named by CoreProfileCoversWhatTheShippedSkillsCall now, so it is off
+            // this list; nothing calls it in a test, and nothing should.
             "delete_all_player_prefs",
             "reset_learned_modal_menu_items",
             "set_tool_profile"

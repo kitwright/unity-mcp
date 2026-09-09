@@ -202,6 +202,8 @@ namespace KitWright.Editor.Tools.Builtins
             Texture2D screenshot = null;
             var overlayCanvases = new List<Canvas>();
 
+            RequireAGraphicsDevice();
+
             try
             {
                 renderTexture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32);
@@ -264,6 +266,8 @@ namespace KitWright.Editor.Tools.Builtins
             RenderTexture previousTarget = null;
             RenderTexture previousActive = null;
             Texture2D screenshot = null;
+
+            RequireAGraphicsDevice();
 
             try
             {
