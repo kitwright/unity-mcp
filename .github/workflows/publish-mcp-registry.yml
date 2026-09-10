@@ -56,24 +56,7 @@ jobs:
               "source": "github"
             },
             "version": "$VERSION",
-            "websiteUrl": "https://kitwright.dev/",
-            "remotes": [
-              {
-                "type": "streamable-http",
-                "url": "http://127.0.0.1:{port}/p/{project_id}/",
-                "variables": {
-                  "port": {
-                    "description": "Port the Unity Editor's MCP server is listening on. The package writes the live value into the client config it manages; 8765 is only the first port it tries.",
-                    "default": "8765",
-                    "isRequired": true
-                  },
-                  "project_id": {
-                    "description": "First 8 hex characters of the project identity the Editor prints in its MCP window - one Unity project per endpoint, so two open projects never collide.",
-                    "isRequired": true
-                  }
-                }
-              }
-            ]
+            "websiteUrl": "https://kitwright.dev/"
           }
           EOF
 
