@@ -76,7 +76,22 @@ namespace KitWright.Editor.MCP.Server
             "reflect_api",
             "fetch_docs",
             "set_tool_profile",
-            "execute_menu_item"
+            "execute_menu_item",
+
+            // The skills shipped with the add-on (/match, /playtest, /agentplay) are step-by-step tool
+            // scripts, and a tool outside the exported set is not merely slower to reach: it is absent
+            // from tools/list, so the agent following the skill gets no error to read and improvises.
+            // Every name below is one a skill instructs the agent to call.
+            "batch_execute",
+            "clear_console",
+            "create_image",
+            "create_prefab",
+            "find_assets",
+            "get_build_settings",
+            "get_scriptable_object",
+            "read_file",
+            "set_asset_import_settings",
+            "set_rect_transform"
         };
 
         // Extended = every registered tool EXCEPT these niche families. Substring match on tool name

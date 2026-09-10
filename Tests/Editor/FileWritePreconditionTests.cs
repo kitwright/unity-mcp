@@ -4,7 +4,6 @@ using System;
 using System.IO;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
-using UnityEditor;
 using UnityEngine;
 
 namespace KitWright.Editor.Tests
@@ -13,19 +12,24 @@ namespace KitWright.Editor.Tests
     {
         private string _folder;
 
+        // Under Temp/, not Assets/: these tests only exercise file preconditions, and every write goes
+        // through AssetDatabase.Refresh. Creating and deleting an asset folder around that had the
+        // project regenerating Assembly-CSharp.csproj while the previous regeneration still held it,
+        // and the run failed on "Sharing violation on Assembly-CSharp.csproj" from TearDown - a fault
+        // of the fixture, reported against whichever test happened to be finishing.
         [SetUp]
         public void SetUp()
         {
-            _folder = "Assets/__KitWrightWritePreconditionTests";
-            if (!AssetDatabase.IsValidFolder(_folder))
-                AssetDatabase.CreateFolder("Assets", "__KitWrightWritePreconditionTests");
+            _folder = "Temp/__KitWrightWritePreconditionTests";
+            Directory.CreateDirectory(ProjectPath(_folder));
         }
 
         [TearDown]
         public void TearDown()
         {
-            if (AssetDatabase.IsValidFolder(_folder))
-                AssetDatabase.DeleteAsset(_folder);
+            var folder = ProjectPath(_folder);
+            if (Directory.Exists(folder))
+                Directory.Delete(folder, true);
         }
 
         [Test]

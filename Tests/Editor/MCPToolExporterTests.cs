@@ -288,6 +288,35 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        // The add-on's skills (/match, /playtest, /agentplay) are tool scripts an agent follows call by
+        // call. A tool the default profile does not export is not in tools/list at all, so the agent
+        // gets no error naming it - it improvises with execute_code, or stops mid-run. The add-on
+        // repository has the doc-driven version of this test (it can read the skills); this one pins
+        // the names here, where the curated set lives.
+        [Test]
+        public void CoreProfileCoversWhatTheShippedSkillsCall()
+        {
+            foreach (var name in new[]
+                     {
+                         "batch_execute",
+                         "clear_console",
+                         "create_image",
+                         "create_prefab",
+                         "find_assets",
+                         "get_build_settings",
+                         "get_scriptable_object",
+                         "read_file",
+                         "set_asset_import_settings",
+                         "set_rect_transform"
+                     })
+            {
+                Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed(
+                    name, MCPToolExportProfile.Core, profileConfigured: false, profileTools: null),
+                    $"'{name}' left the core profile, and a skill that tells the agent to call it now " +
+                    "points at a tool the client was never offered.");
+            }
+        }
+
         [Test]
         public void BuiltInToolOutsideCoreStaysHiddenUnderCore()
         {

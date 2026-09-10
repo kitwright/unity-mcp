@@ -68,6 +68,11 @@ namespace KitWright.Editor.Tests
         [Test]
         public void ReadTextureToTexture2D_WhenFlipRequested_MirrorsUnflippedRows()
         {
+            // The readback needs a device. Headless it used to "pass" by comparing one blank frame with
+            // another, which is no assertion at all, and now the read refuses outright.
+            if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+                Assert.Ignore("No graphics device (-nographics), so there is nothing to read back.");
+
             var sourcePixels = new Texture2D(2, 3, TextureFormat.RGBA32, false);
             var source = new RenderTexture(2, 3, 0, RenderTextureFormat.ARGB32);
             Texture2D unflipped = null;
@@ -452,6 +457,34 @@ namespace KitWright.Editor.Tests
             Assert.IsNotNull(
                 GetMember(deviceViewType, "PreviewTexture"),
                 "DeviceView.PreviewTexture could not be resolved.");
+        }
+
+        // A capture with no device allocated a render target anyway: the engine logged
+        // "RenderTexture.Create failed" - which fails whichever test the framework happens to be
+        // running - and the read came back blank, so the tool answered with an empty PNG.
+        [Test]
+        public void ReadingATextureWithoutAGraphicsDeviceSaysSoRatherThanReturningABlankFrame()
+        {
+            var headless = SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null;
+
+            if (headless)
+            {
+                Assert.Throws<InvalidOperationException>(() =>
+                    ScreenshotFunctions.ReadTextureToTexture2D(Texture2D.whiteTexture, 4, 4, false));
+                return;
+            }
+
+            var read = ScreenshotFunctions.ReadTextureToTexture2D(Texture2D.whiteTexture, 4, 4, false);
+            try
+            {
+                Assert.IsNotNull(read, "With a device the same call has to keep working.");
+                Assert.AreEqual(4, read.width);
+            }
+            finally
+            {
+                if (read != null)
+                    UnityEngine.Object.DestroyImmediate(read);
+            }
         }
     }
 }
