@@ -367,7 +367,7 @@ The current open-source package exposes four high-value capability layers:
 ## Built-in Tools
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity ships **274 tool functions across 57 modules** (`core` profile exposes 43 of them).
+KitWright MCP for Unity ships **274 tool functions across 57 modules** (`core` profile exposes 53 of them).
 
 | Module | Tools | Module | Tools |
 |--------|-------|--------|-------|

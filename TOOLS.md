@@ -13,7 +13,7 @@
 | `add_sorting_layer` | Add a new sorting layer (used to order 2D sprites/renderers). |
 | `add_tag` | Add a new tag to TagManager (no-op if it already exists). |
 | `get_active_tool` | Get the currently active editor manipulation tool (Move/Rotate/Scale/Rect/Transform/View/None/Custom). |
-| `get_build_settings` | Get build settings: enabled scenes (in build order), active build target, scripting backend. |
+| `get_build_settings` *(core)* | Get build settings: enabled scenes (in build order), active build target, scripting backend. |
 | `get_editor_state` *(core)* | Get high-level editor runtime state: which project this editor has open, play mode, paused, compiling, updating, time-since-startup, time scale. |
 | `get_layers` | List all 32 layer slots with their names (empty for unused slots). |
 | `get_prefab_stage` *(core)* | Get info about the currently open prefab stage (if any). |
@@ -104,7 +104,7 @@
 |------|-------------|
 | `apply_prefab_overrides` | Apply a prefab instance's overrides back to its source prefab asset, so the changes become part of the prefab itself. |
 | `close_prefab_stage` | Close the currently open prefab stage and return to the main stage. |
-| `create_prefab` | Create a prefab from a GameObject in the scene |
+| `create_prefab` *(core)* | Create a prefab from a GameObject in the scene |
 | `create_prefab_variant` | Create a prefab variant from an existing prefab asset. |
 | `get_prefab_variant_info` | Get prefab info for a scene instance or prefab asset: prefab type (Regular/Variant/Model), asset path, whether it is a variant, and its base prefab path. |
 | `instantiate_prefab` | Instantiate a prefab in the scene |
@@ -122,7 +122,7 @@
 | `create_folder` | Create a project folder (and any missing parent folders) under Assets. |
 | `create_material` | Create a new material with a specified color |
 | `delete_asset` | Delete an asset by moving it to the OS trash (Recycle Bin). |
-| `find_assets` | Search for assets by type and name. |
+| `find_assets` *(core)* | Search for assets by type and name. |
 | `move_asset` | Move or rename an asset to a new path (creates missing destination folders). |
 | `rename_asset` | Rename an asset |
 
@@ -193,17 +193,17 @@
 |------|-------------|
 | `create_button` | Create a UI Button |
 | `create_canvas` | Create a Canvas in the scene (required for UI elements) |
-| `create_image` | Create a UI Image element |
+| `create_image` *(core)* | Create a UI Image element |
 | `create_text` | Create a UI Text element |
 | `create_ui_element` | Create a compound uGUI control — the same object Unity's GameObject > UI menu creates, with its whole child tree already wired: a Slider's Fill Area/Handle, a Dropdown's Template and item list, a ScrollView's Viewport/Content/Scrollbars, and the built-in UI skin sprites on each. |
 | `raycast_at_point` *(core)* | Diagnose what UI (or physics) elements a click/tap at a screen point would hit, using the live EventSystem's RaycastAll. |
-| `set_rect_transform` | Set RectTransform layout on a UI element: anchor preset, anchored position, size, and pivot. |
+| `set_rect_transform` *(core)* | Set RectTransform layout on a UI element: anchor preset, anchored position, size, and pivot. |
 
 ## Visual (7)
 
 | Tool | Description |
 |------|-------------|
-| `clear_console` | Clear the Unity Editor console. |
+| `clear_console` *(core)* | Clear the Unity Editor console. |
 | `focus_on_object` | Focus the Scene View camera on a specific GameObject |
 | `get_console_logs` *(core)* | Get recent console log messages from Unity. |
 | `log_message` | Log a message to the Unity console |
@@ -283,7 +283,7 @@
 |------|-------------|
 | `exists` | Check if a file or directory exists |
 | `list_directory` | List files and directories directly inside a directory (top level only; use search_files to recurse into subdirectories). |
-| `read_file` | Read the contents of a file. |
+| `read_file` *(core)* | Read the contents of a file. |
 | `search_files` | Search for files by name pattern in the project. |
 | `write_file` | Write content to a file, creating it or overwriting it whole. |
 
@@ -433,7 +433,7 @@
 | Tool | Description |
 |------|-------------|
 | `create_scriptable_object` | Create a new ScriptableObject asset of the given type at the given path. |
-| `get_scriptable_object` | Get all serialized properties of a ScriptableObject asset, including [SerializeField] private fields. |
+| `get_scriptable_object` *(core)* | Get all serialized properties of a ScriptableObject asset, including [SerializeField] private fields. |
 | `set_scriptable_object_properties` | Set one or more serialized properties on a ScriptableObject asset and save it. |
 
 ## Sprite (3)
@@ -465,7 +465,7 @@
 | Tool | Description |
 |------|-------------|
 | `get_asset_import_settings` | Read the import settings of an asset via its AssetImporter. |
-| `set_asset_import_settings` | Apply import settings to an asset. |
+| `set_asset_import_settings` *(core)* | Apply import settings to an asset. |
 
 ## EditorDialog (2)
 
@@ -520,7 +520,7 @@
 
 | Tool | Description |
 |------|-------------|
-| `batch_execute` | Run multiple MCP tool calls sequentially in a single request, on the main thread, saving round-trips. |
+| `batch_execute` *(core)* | Run multiple MCP tool calls sequentially in a single request, on the main thread, saving round-trips. |
 
 ## Hierarchy (1)
 

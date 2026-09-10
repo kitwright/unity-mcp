@@ -369,7 +369,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 ## 内置工具
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity 当前提供 **274 个工具函数，覆盖 57 个模块**（`core` profile 暴露其中 43 个）。
+KitWright MCP for Unity 当前提供 **274 个工具函数，覆盖 57 个模块**（`core` profile 暴露其中 53 个）。
 
 | 模块 | 工具数 | 模块 | 工具数 |
 |------|--------|------|--------|
