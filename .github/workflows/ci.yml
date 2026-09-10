@@ -78,6 +78,11 @@ jobs:
     #     UNITY_SERIAL   : serial key (xxxx-xxxx-xxxx-xxxx-xxxx)
     #
     #   Details: https://game.ci/docs/github/activation
+    #
+    # The action is pinned to v4.3.2, not the floating v4 tag: v4.4.0 moved v4 onto a thin
+    # wrapper around game-ci/cli, which dropped the machine-ID randomisation a Personal .ulf
+    # needs ("Machine bindings don't match") and resolves its CLI over the unauthenticated
+    # GitHub API (403 on a busy runner). Unpin once both are fixed upstream.
     # ────────────────────────────────────────────────────────────────
     test:
         name: Unity EditMode Tests (${{ matrix.unityVersion }})
@@ -165,7 +170,7 @@ jobs:
                   JSON
 
             - name: Run EditMode tests
-              uses: game-ci/unity-test-runner@v4
+              uses: game-ci/unity-test-runner@fa6ced25861c16ef56187828c43f76d00df43a23 # v4.3.2
               env:
                   UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
                   UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
@@ -242,7 +247,7 @@ jobs:
             # Unity licensing.
             - name: Compile package with the modules absent
               continue-on-error: true
-              uses: game-ci/unity-test-runner@v4
+              uses: game-ci/unity-test-runner@fa6ced25861c16ef56187828c43f76d00df43a23 # v4.3.2
               env:
                   UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
                   UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
