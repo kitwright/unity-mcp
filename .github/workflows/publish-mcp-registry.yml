@@ -40,25 +40,6 @@ jobs:
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Wait for NuGet package
-        shell: bash
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          package_url="https://api.nuget.org/v3-flatcontainer/kitwright.unity.mcp/${VERSION}/kitwright.unity.mcp.${VERSION}.nupkg"
-          for attempt in {1..45}; do
-            if curl -fsI "$package_url" >/dev/null; then
-              echo "NuGet package is indexed: $package_url"
-              exit 0
-            fi
-
-            echo "NuGet package is not indexed yet; retry $attempt/45"
-            sleep 20
-          done
-
-          echo "NuGet package was not indexed in time: $package_url" >&2
-          exit 1
-
       - name: Generate server.json
         shell: bash
         env:
@@ -69,19 +50,27 @@ jobs:
             "\$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
             "name": "io.github.kitwright/unity-mcp",
             "title": "KitWright Unity MCP",
-            "description": "stdio bridge for the local Unity Editor MCP server from kitwright/unity-mcp.",
+            "description": "Unity Editor MCP server: execute_code, screenshots, input simulation, play mode automation.",
             "repository": {
               "url": "https://github.com/kitwright/unity-mcp",
               "source": "github"
             },
             "version": "$VERSION",
-            "packages": [
+            "websiteUrl": "https://kitwright.dev/",
+            "remotes": [
               {
-                "registryType": "nuget",
-                "identifier": "kitwright.unity.mcp",
-                "version": "$VERSION",
-                "transport": {
-                  "type": "stdio"
+                "type": "streamable-http",
+                "url": "http://127.0.0.1:{port}/p/{project_id}/",
+                "variables": {
+                  "port": {
+                    "description": "Port the Unity Editor's MCP server is listening on. The package writes the live value into the client config it manages; 8765 is only the first port it tries.",
+                    "default": "8765",
+                    "isRequired": true
+                  },
+                  "project_id": {
+                    "description": "First 8 hex characters of the project identity the Editor prints in its MCP window - one Unity project per endpoint, so two open projects never collide.",
+                    "isRequired": true
+                  }
                 }
               }
             ]
