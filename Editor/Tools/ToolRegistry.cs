@@ -54,7 +54,26 @@ namespace KitWright.Editor.Tools
 
         public static void ScanAssemblies()
         {
-            ScanAssemblies(AppDomain.CurrentDomain.GetAssemblies());
+            ScanAssemblies(AppDomain.CurrentDomain.GetAssemblies().Where(a => !IsTestAssembly(a)));
+        }
+
+        // A [ToolProvider] inside a test assembly is a fixture, not a product tool, and scanning it
+        // would put it in every client's tools/list: the package's own tests compile in any project
+        // that embeds the package, and a project's test asmdef is scanned like any other assembly.
+        // The explicit-list overload does not filter, so a test can still scan its own fixture.
+        internal static bool IsTestAssembly(Assembly assembly)
+        {
+            if (assembly == null) return false;
+
+            try
+            {
+                return assembly.GetReferencedAssemblies()
+                    .Any(reference => string.Equals(reference.Name, "nunit.framework", StringComparison.Ordinal));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
         }
 
         internal static void ScanAssemblies(IEnumerable<Assembly> assemblies)

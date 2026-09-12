@@ -188,17 +188,44 @@ namespace KitWright.Editor.Tests
             Assert.IsNotNull(Tool("reflect_api"));
         }
 
+        // The ambient scan leaves test assemblies out, so the probe has to be scanned deliberately.
+        private static void ScanWithTheProbe() =>
+            ToolRegistry.ScanAssemblies(new[] { typeof(ToolRegistry).Assembly, typeof(MCPToolExporterTests).Assembly });
+
         [Test]
         public void ProjectDeclaredToolIsDiscovered()
         {
-            Assert.IsNotNull(ToolRegistry.GetMethod(ProbeTool));
+            try
+            {
+                ScanWithTheProbe();
+                Assert.IsNotNull(ToolRegistry.GetMethod(ProbeTool));
+            }
+            finally { ToolRegistry.ScanAssemblies(); }
         }
 
         [Test]
         public void ProjectDeclaredToolIsMarkedCustom()
         {
-            Assert.IsTrue(ToolRegistry.IsCustomTool(ProbeTool));
-            Assert.IsFalse(ToolRegistry.IsCustomTool("get_hierarchy"), "Built-in tools are not custom.");
+            try
+            {
+                ScanWithTheProbe();
+                Assert.IsTrue(ToolRegistry.IsCustomTool(ProbeTool));
+                Assert.IsFalse(ToolRegistry.IsCustomTool("get_hierarchy"), "Built-in tools are not custom.");
+            }
+            finally { ToolRegistry.ScanAssemblies(); }
+        }
+
+        // A fixture declared in a test assembly must not reach a client's tools/list: the package's
+        // own tests compile in any project that embeds the package.
+        [Test]
+        public void ATestAssemblysToolsStayOutOfTheAmbientScan()
+        {
+            ToolRegistry.ScanAssemblies();
+
+            Assert.IsNull(ToolRegistry.GetMethod(ProbeTool),
+                "A [ToolProvider] in a test assembly would otherwise ship to every client.");
+            Assert.IsTrue(ToolRegistry.IsTestAssembly(typeof(MCPToolExporterTests).Assembly));
+            Assert.IsFalse(ToolRegistry.IsTestAssembly(typeof(ToolRegistry).Assembly));
         }
 
         [Test]
@@ -222,27 +249,39 @@ namespace KitWright.Editor.Tests
         [Test]
         public void CustomToolIsExposedUnderNonFullProfiles()
         {
-            foreach (var profile in new[]
+            try
             {
-                MCPToolExportProfile.Minimal,
-                MCPToolExportProfile.Core,
-                MCPToolExportProfile.Extended
-            })
-            {
-                Assert.IsTrue(
-                    MCPToolExportPolicy.IsToolAllowed(ProbeTool, profile, profileConfigured: false, profileTools: null),
-                    $"Custom tool should be exposed under the {profile} profile.");
+                ScanWithTheProbe();
+
+                foreach (var profile in new[]
+                {
+                    MCPToolExportProfile.Minimal,
+                    MCPToolExportProfile.Core,
+                    MCPToolExportProfile.Extended
+                })
+                {
+                    Assert.IsTrue(
+                        MCPToolExportPolicy.IsToolAllowed(ProbeTool, profile, profileConfigured: false, profileTools: null),
+                        $"Custom tool should be exposed under the {profile} profile.");
+                }
             }
+            finally { ToolRegistry.ScanAssemblies(); }
         }
 
         [Test]
         public void ExplicitProfileConfigurationStillWinsOverCustomTool()
         {
-            Assert.IsFalse(MCPToolExportPolicy.IsToolAllowed(
-                ProbeTool,
-                MCPToolExportProfile.Core,
-                profileConfigured: true,
-                profileTools: new[] { "execute_code" }));
+            try
+            {
+                ScanWithTheProbe();
+
+                Assert.IsFalse(MCPToolExportPolicy.IsToolAllowed(
+                    ProbeTool,
+                    MCPToolExportProfile.Core,
+                    profileConfigured: true,
+                    profileTools: new[] { "execute_code" }));
+            }
+            finally { ToolRegistry.ScanAssemblies(); }
         }
 
         // The curated sets are hand-written strings; a tool method rename would otherwise
