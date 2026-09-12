@@ -369,7 +369,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 ## 内置工具
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity 当前提供 **274 个工具函数，覆盖 57 个模块**（`core` profile 暴露其中 53 个）。
+KitWright MCP for Unity 当前提供 **273 个工具函数，覆盖 57 个模块**（`core` profile 暴露其中 53 个）。
 
 | 模块 | 工具数 | 模块 | 工具数 |
 |------|--------|------|--------|
@@ -389,13 +389,13 @@ KitWright MCP for Unity 当前提供 **274 个工具函数，覆盖 57 个模块
 | **Visual** | 7 | **EditorDialog** | 2 |
 | **Addressable** | 6 | **EditorWindowInteraction** | 2 |
 | **Audio** | 6 | **Material** | 2 |
-| **Code** | 6 | **MenuItem** | 2 |
-| **InputActions** | 6 | **Performance** | 2 |
-| **NavMesh** | 6 | **ProjectSettings** | 2 |
-| **Shader** | 6 | **References** | 2 |
-| **File** | 5 | **Batch** | 1 |
-| **MemorySnapshot** | 5 | **Hierarchy** | 1 |
-| **SceneView** | 5 | **Interop** | 1 |
+| **Code** | 6 | **Performance** | 2 |
+| **InputActions** | 6 | **ProjectSettings** | 2 |
+| **NavMesh** | 6 | **References** | 2 |
+| **Shader** | 6 | **Batch** | 1 |
+| **File** | 5 | **Hierarchy** | 1 |
+| **MemorySnapshot** | 5 | **Interop** | 1 |
+| **SceneView** | 5 | **MenuItem** | 1 |
 | **Screenshot** | 5 | **Mesh** | 1 |
 | **Volume** | 5 | **Particle** | 1 |
 | **Camera** | 4 | **Reflection** | 1 |

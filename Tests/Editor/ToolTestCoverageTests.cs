@@ -62,7 +62,6 @@ namespace KitWright.Editor.Tests
             // clear_console is named by CoreProfileCoversWhatTheShippedSkillsCall now, so it is off
             // this list; nothing calls it in a test, and nothing should.
             "delete_all_player_prefs",
-            "reset_learned_modal_menu_items",
             "set_tool_profile"
 
             // Nothing is pending here: every other registered tool is named by a test.

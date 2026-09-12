@@ -138,27 +138,13 @@ namespace KitWright.Editor.Tools.Builtins
                     $"Executed menu item '{menu_path}' after {elapsed.TotalSeconds:F0}s.",
                     new { menu_path, seconds = Math.Round(elapsed.TotalSeconds), learned_as_modal = trimmed },
                     "It took long enough that it almost certainly waited on a dialog, so it is now refused by " +
-                    "default like the other modal openers. Pass allow_modal=true to run it again, or call " +
-                    "reset_learned_modal_menu_items if it was merely slow.");
+                    "default like the other modal openers. Pass allow_modal=true to run it again, or clear it with " +
+                    $"delete_editor_pref '{LearnedKey}' if it was merely slow.");
             }
             catch (Exception ex)
             {
                 return Response.Error("MENU_EXECUTION_FAILED", new { message = ex.Message });
             }
-        }
-
-        [Description("List, and optionally clear, the menu paths this project learned open a modal dialog. " +
-                     "A path lands here when execute_menu_item took long enough that it must have waited on a " +
-                     "dialog; clear it if the item was merely slow.")]
-        public static object ResetLearnedModalMenuItems(
-            [ToolParam("Clear the learned list. Omit to only report it.", Required = false)] bool clear = false)
-        {
-            var learned = LearnedModalPaths();
-            if (!clear)
-                return Response.Success($"{learned.Length} learned modal menu path(s).", new { learned });
-
-            ForgetLearnedModalPaths();
-            return Response.Success($"Cleared {learned.Length} learned modal menu path(s).", new { cleared = learned });
         }
     }
 }
