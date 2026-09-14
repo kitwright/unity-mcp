@@ -482,7 +482,7 @@ namespace KitWright.Editor
         }
 
         [UnityTest]
-        public IEnumerator BrokerTransport_RejectsRequestsFromNonLoopbackOrigin()
+        public IEnumerator BrokerTransport_RejectsEveryRequestThatCarriesAnOrigin()
         {
             var root = CreateTempRoot();
             var paths = CreateBrokerPaths(root);
@@ -500,9 +500,17 @@ namespace KitWright.Editor
                 Assert.AreEqual(HttpStatusCode.Forbidden, hostile.Result.StatusCode,
                     "A web page must not be able to drive broker tool calls.");
 
+                // A loopback origin used to be accepted. It is still a web page - anything the user
+                // has open on their own dev server could drive the editor through the broker.
                 var loopback = SendToolCallAsync(port, "execute_code", "http://localhost:" + port);
                 yield return WaitForTask(loopback, 5f);
-                Assert.AreEqual(HttpStatusCode.OK, loopback.Result.StatusCode);
+                Assert.AreEqual(HttpStatusCode.Forbidden, loopback.Result.StatusCode,
+                    "A page served from localhost is a web page too.");
+
+                // Native clients send no Origin at all, and they still get through.
+                var native = SendToolCallAsync(port, "execute_code", null);
+                yield return WaitForTask(native, 5f);
+                Assert.AreEqual(HttpStatusCode.OK, native.Result.StatusCode);
             }
             finally
             {

@@ -836,7 +836,8 @@ namespace KitWright.UnityMcp.Broker
                          "Content-Type: " + contentType + "\r\n" +
                          "Content-Length: " + bodyBytes.Length + "\r\n" +
                          "Connection: close\r\n" +
-                         "Access-Control-Allow-Origin: *\r\n" +
+                         // No CORS header: the broker fronts the same editor endpoint, and letting a
+                         // browser page read its answers was the reachable half of that hole.
                          (extraHeaders ?? string.Empty) +
                          "\r\n";
             var headerBytes = Encoding.ASCII.GetBytes(header);
@@ -1021,11 +1022,11 @@ namespace KitWright.UnityMcp.Broker
         }
 
         // Mirrors HttpMCPTransport.IsValidOrigin: this process cannot reference the package assembly.
-        // An absent origin is allowed for native CLI/IDE clients.
+        // Only a browser sends Origin and no MCP client is one, so any Origin at all is refused --
+        // loopback included, because a page the user has open on localhost is still a web page.
         private static bool IsValidOrigin(string origin)
         {
-            return string.IsNullOrEmpty(origin) ||
-                   (Uri.TryCreate(origin, UriKind.Absolute, out var uri) && uri.IsLoopback);
+            return string.IsNullOrEmpty(origin);
         }
 
         private static bool IsValidHost(string host)

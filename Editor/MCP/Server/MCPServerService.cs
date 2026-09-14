@@ -431,7 +431,7 @@ namespace KitWright.Editor.MCP.Server
                             if (redeliveryResponse != null)
                                 return redeliveryResponse;
 
-                            return await requestHandler.HandleRequestAsync(request, default);
+                            return await requestHandler.HandleRequestAsync(request, callCts.Token);
                         },
                         callCts.Token);
 
@@ -440,7 +440,9 @@ namespace KitWright.Editor.MCP.Server
                     var ceilingMs = ToolRegistry.TimeoutSecondsForRequest(
                         request?.Method, request?.Params, ToolCallTimeoutMs / 1000) * 1000;
 
-                    var completed = await Task.WhenAny(editorThreadTask, Task.Delay(ceilingMs));
+                    using var delayCts = new CancellationTokenSource();
+                    var completed = await Task.WhenAny(editorThreadTask, Task.Delay(ceilingMs, delayCts.Token));
+                    delayCts.Cancel();
                     if (completed != editorThreadTask)
                     {
                         // Cancelling drops a work item still waiting in the queue; one already mid-flight
@@ -607,7 +609,7 @@ namespace KitWright.Editor.MCP.Server
                 MCPBrokerProcessManager.Stop();
             }
 
-            return new HttpMCPTransport(startupPort, projectIdentity);
+            return new HttpMCPTransport(startupPort, projectIdentity, ServerToken.Get());
         }
 
         private string BuildToolExposureSetting()
