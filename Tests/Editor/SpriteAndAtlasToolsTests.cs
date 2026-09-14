@@ -96,6 +96,44 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void APaddingThatStopsTheGridAdvancingIsRefused()
+        {
+            Ok("apply_pattern", "path", Sheet, "pattern", "grid", "width", "64", "height", "32", "pattern_size", "16");
+
+            // Padding is added to the step, so -cell leaves it at zero and anything below walks
+            // backwards. Either way the loop never ends and adds a sprite per turn until the editor
+            // runs out of memory - an input the tool must refuse rather than accept and hang on.
+            Assert.AreEqual("INVALID_PADDING",
+                Code("slice_sprite_grid", "path", Sheet, "cell_width", "16", "cell_height", "16", "padding", "-16"));
+            Assert.AreEqual("INVALID_PADDING",
+                Code("slice_sprite_grid", "path", Sheet, "cell_width", "16", "cell_height", "16", "padding", "-40"));
+
+            // Overlapping cells are a legitimate sheet layout and must still slice.
+            var overlapped = Ok("slice_sprite_grid", "path", Sheet,
+                "cell_width", "16", "cell_height", "16", "padding", "-8");
+            Assert.AreEqual(21, (int)overlapped["data"]["spriteCount"],
+                "A step of 8 over 64x32 gives 7 columns and 3 rows.");
+        }
+
+        [Test]
+        public void SlicingMeasuresTheSourceImageNotTheImportedTexture()
+        {
+            Ok("apply_pattern", "path", Sheet, "pattern", "grid", "width", "128", "height", "128", "pattern_size", "16");
+
+            var importer = Importer(Sheet);
+            importer.maxTextureSize = 32;
+            importer.SaveAndReimport();
+            Assert.AreEqual(32, AssetDatabase.LoadAssetAtPath<Texture2D>(Sheet).width,
+                "Setup: the import has to be downscaled for this to mean anything.");
+
+            // Sprite rects are in source pixels. Measuring the imported Texture2D instead reported a
+            // 128px sheet as too small to hold its own 64px cells.
+            var sliced = Ok("slice_sprite_grid", "path", Sheet, "cell_width", "64", "cell_height", "64");
+
+            Assert.AreEqual(4, (int)sliced["data"]["spriteCount"]);
+        }
+
+        [Test]
         public void AtlasPackablesGoInAndComeOutAndTheSettingsSurviveTheReimport()
         {
             Ok("apply_pattern", "path", Sheet, "pattern", "dots", "width", "32", "height", "32");

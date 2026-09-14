@@ -48,6 +48,15 @@ namespace KitWright.Editor.Tools.Builtins
             if (cell_width <= 0 || cell_height <= 0)
                 return Response.Error("INVALID_CELL_SIZE", new { cell_width, cell_height });
 
+            // Padding is added to the step on both axes, so anything at or below -cell leaves the step
+            // at zero or walking backwards - the loop then never ends and adds a SpriteMetaData per
+            // turn until the editor runs out of memory. Overlapping cells (a small negative) are fine.
+            var smallestCell = Math.Min(cell_width, cell_height);
+            if (padding <= -smallestCell)
+                return Response.Error("INVALID_PADDING", new { padding, cell_width, cell_height },
+                    $"Padding must be greater than -{smallestCell}: at or below that the grid step " +
+                    "stops advancing and the slice never terminates.");
+
             var ti = AssetImporter.GetAtPath(path) as TextureImporter;
             if (ti == null) return Response.Error("NOT_A_TEXTURE", new { path });
 
@@ -60,7 +69,10 @@ namespace KitWright.Editor.Tools.Builtins
             ti.spriteImportMode = SpriteImportMode.Multiple;
             ti.spritePixelsPerUnit = pixels_per_unit;
 
-            int texW = tex.width, texH = tex.height;
+            // The source image's size, not the imported Texture2D's: spritesheet rects live in source
+            // pixels, while the imported texture is whatever maxTextureSize allowed. A 128x128 png
+            // imported at 32 reported a texture too small for its own 64px cells.
+            ti.GetSourceTextureWidthAndHeight(out var texW, out var texH);
             var metas = new List<SpriteMetaData>();
             string baseName = System.IO.Path.GetFileNameWithoutExtension(path);
             int index = 0;
@@ -82,7 +94,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             if (metas.Count == 0)
-                return Response.Error("NO_CELLS_GENERATED", new { path, texW, texH, cell_width, cell_height, hint = "Cell size larger than texture or offset too big." });
+                return Response.Error("NO_CELLS_GENERATED", new { path, texW, texH, cell_width, cell_height, hint = "Cell size larger than the source image, or offset too big." });
 
 #pragma warning disable CS0618
             ti.spritesheet = metas.ToArray();

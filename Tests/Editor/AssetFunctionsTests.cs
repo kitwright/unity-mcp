@@ -47,6 +47,42 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void CreateMaterial_RefusesToReplaceTheMaterialAlreadyAtThatPath()
+        {
+            var name = "KwMat_" + Guid.NewGuid().ToString("N");
+            var path = _folder + "/" + name + ".mat";
+            var setup = AssetFunctions.CreateMaterial(name, "1,0,0,1", "Sprites/Default", _folder + "/");
+            var created = AssetDatabase.LoadAssetAtPath<Material>(path);
+            Assert.IsNotNull(created, "Setup failed: " + setup);
+            created.renderQueue = 3123;
+            AssetDatabase.SaveAssets();
+            var guid = AssetDatabase.AssetPathToGUID(path);
+
+            var refused = AssetFunctions.CreateMaterial(name, "0,1,0,1", "Sprites/Default", _folder + "/");
+
+            // CreateAsset over an existing path rewrites the asset but keeps its GUID, so every
+            // reference silently follows the replacement instead of breaking visibly.
+            StringAssert.Contains("MATERIAL_EXISTS", refused);
+            Assert.AreEqual(3123, AssetDatabase.LoadAssetAtPath<Material>(path).renderQueue);
+            Assert.AreEqual(guid, AssetDatabase.AssetPathToGUID(path));
+
+            AssetFunctions.CreateMaterial(name, "0,1,0,1", "Sprites/Default", _folder + "/", overwrite: true);
+            Assert.AreNotEqual(3123, AssetDatabase.LoadAssetAtPath<Material>(path).renderQueue,
+                "overwrite=true still has to replace it.");
+        }
+
+        [Test]
+        public void CreateMaterial_TakesASavePathWithNoTrailingSlash()
+        {
+            var name = "KwMatNoSlash_" + Guid.NewGuid().ToString("N");
+
+            var result = AssetFunctions.CreateMaterial(name, "1,1,1,1", "Sprites/Default", _folder);
+
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Material>(_folder + "/" + name + ".mat"),
+                "Concatenating the name onto the folder wrote it beside the folder: " + result);
+        }
+
+        [Test]
         public void DeleteSpriteAtlas_MovesTheAtlasToTheTrashInsteadOfUnlinkingIt()
         {
             var path = _folder + "/Doomed_" + Guid.NewGuid().ToString("N") + ".spriteatlas";
