@@ -442,5 +442,29 @@ namespace KitWright.Editor.Tests
             Assert.Throws<ArgumentNullException>(() =>
                 ToolRegistry.Register("some_tool", new ToolDefinition(), null));
         }
+
+        // A comma-decimal locale formatting 1.5 as "1,5" survives the round trip only because both
+        // ends speak invariant: the parser reads that comma as a group separator, so 1.5 lands as 15.
+        [Test]
+        public void ConvertArgumentToString_CommaDecimalLocale_RoundTripsThroughInvoker()
+        {
+            var previous = System.Threading.Thread.CurrentThread.CurrentCulture;
+            try
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture =
+                    new System.Globalization.CultureInfo("de-DE");
+
+                var formatted = MCP.Server.MCPExecutionBridge.ConvertArgumentToString(1.5d);
+
+                Assert.AreEqual("1.5", formatted);
+                Assert.AreEqual(1.5f,
+                    float.Parse(formatted, System.Globalization.CultureInfo.InvariantCulture),
+                    0.0001f);
+            }
+            finally
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture = previous;
+            }
+        }
     }
 }
