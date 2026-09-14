@@ -20,10 +20,25 @@ namespace KitWright.Editor.Tools.Builtins
             if (go == null)
                 return ObjectsHelper.NotFound("game_object_name", game_object_name);
 
-            if (!Directory.Exists(save_path))
-                Directory.CreateDirectory(save_path);
+            // Path.Combine, not concatenation: save_path without a trailing slash used to give
+            // 'Assets/PrefabsCube.prefab'. And the path is resolved before anything is created, so
+            // a save_path of '../..' cannot make directories outside the project.
+            var fullPath = Path.Combine(save_path ?? string.Empty, go.name + ".prefab").Replace('\\', '/');
+            string absolutePath;
+            try
+            {
+                absolutePath = PathSafety.ResolveAssetPath(fullPath);
+            }
+            catch (PathOutsideProjectException ex)
+            {
+                return Response.Error("INVALID_PATH", new { save_path, message = ex.Message },
+                    "save_path must be under Assets/, and must stay there once '..' segments are resolved");
+            }
 
-            var fullPath = $"{save_path}{go.name}.prefab";
+            var directory = Path.GetDirectoryName(absolutePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
             var prefab = PrefabUtility.SaveAsPrefabAssetAndConnect(go, fullPath, InteractionMode.UserAction);
             return prefab != null
                 ? Response.Success($"Created prefab at {fullPath}")
