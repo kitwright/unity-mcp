@@ -124,6 +124,19 @@ namespace KitWright.Editor.MCP.Server.SSE
             }
         }
 
+        /// <summary>Detaches only if <paramref name="stream"/> is still the attached one, so a
+        /// connection that has already been replaced cannot unhook its successor.</summary>
+        public void DetachStream(SSESession session, NetworkStream stream)
+        {
+            if (session == null) return;
+
+            lock (session.StreamLock)
+            {
+                if (ReferenceEquals(session.ActiveStream, stream))
+                    session.ActiveStream = null;
+            }
+        }
+
         public void SetLoggingLevel(string sessionId, string levelName)
         {
             var rank = ParseSeverityRank(levelName);
@@ -250,6 +263,8 @@ namespace KitWright.Editor.MCP.Server.SSE
             }
         }
 
+        // Detaching is left to the connection that owns the stream: this loop only knows the session,
+        // and by the time a stale loop notices, the stream under it may belong to a later connection.
         public async Task RunSsePingLoopAsync(SSESession session, CancellationToken ct)
         {
             var pingBytes = Encoding.UTF8.GetBytes(": ping\n\n");
@@ -264,10 +279,6 @@ namespace KitWright.Editor.MCP.Server.SSE
             }
             catch (OperationCanceledException)
             {
-            }
-            finally
-            {
-                DetachStream(session);
             }
         }
 

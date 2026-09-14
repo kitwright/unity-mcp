@@ -726,8 +726,21 @@ namespace KitWright.Editor.MCP.Server
                 await stream.WriteAsync(headerBytes, 0, headerBytes.Length, ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
 
-                var pingLoop = SSESessionManager.Instance.RunSsePingLoopAsync(session, ct);
-                await Task.WhenAny(pingLoop, WaitForClientEofAsync(stream, ct)).ConfigureAwait(false);
+                // Own token, cancelled the moment either half wins: on ct alone the losing ping loop
+                // outlives this connection, and since it sends to whatever stream the session holds
+                // at the time, a client reconnecting to the same session gets pinged by both loops.
+                using (var connection = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var pingLoop = SSESessionManager.Instance.RunSsePingLoopAsync(session, connection.Token);
+                    try
+                    {
+                        await Task.WhenAny(pingLoop, WaitForClientEofAsync(stream, connection.Token)).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        connection.Cancel();
+                    }
+                }
             }
             catch (Exception ex) when (IsExpectedClientDisconnect(ex, ct))
             {
@@ -739,7 +752,7 @@ namespace KitWright.Editor.MCP.Server
             }
             finally
             {
-                SSESessionManager.Instance.DetachStream(session);
+                SSESessionManager.Instance.DetachStream(session, stream);
             }
         }
 

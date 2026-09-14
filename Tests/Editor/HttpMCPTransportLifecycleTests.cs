@@ -68,6 +68,59 @@ namespace KitWright.Editor
         }
 
         [Test]
+        public void DetachStream_FromAReplacedConnection_LeavesTheLiveStreamAttached()
+        {
+            var manager = SSESessionManager.Instance;
+            var session = manager.CreateSession();
+            var closers = new List<IDisposable>();
+
+            try
+            {
+                var first = LoopbackStream(closers);
+                var second = LoopbackStream(closers);
+
+                Assert.AreEqual(AttachStreamResult.Success, manager.TryAttachStream(session.SessionId, first, out _));
+                manager.DetachStream(session, first);
+                Assert.AreEqual(AttachStreamResult.Success, manager.TryAttachStream(session.SessionId, second, out _),
+                    "a client reconnecting to the same session attaches a new stream");
+
+                // What the first connection's ping loop runs when it finally notices it is done.
+                manager.DetachStream(session, first);
+
+                Assert.AreEqual(AttachStreamResult.StreamAlreadyAttached,
+                    manager.TryAttachStream(session.SessionId, first, out _),
+                    "the stale connection must not unhook the stream that replaced it");
+            }
+            finally
+            {
+                foreach (var closer in closers)
+                    closer.Dispose();
+            }
+        }
+
+        private static NetworkStream LoopbackStream(List<IDisposable> closers)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            closers.Add(new Closer(() => listener.Stop()));
+
+            var client = new TcpClient();
+            client.Connect((IPEndPoint)listener.LocalEndpoint);
+            closers.Add(client);
+
+            var server = listener.AcceptTcpClient();
+            closers.Add(server);
+            return server.GetStream();
+        }
+
+        private sealed class Closer : IDisposable
+        {
+            private readonly Action _close;
+            public Closer(Action close) { _close = close; }
+            public void Dispose() { _close(); }
+        }
+
+        [Test]
         public void ExtractPin_ReadsThePSegmentAndIgnoresTheQuery()
         {
             Assert.AreEqual("aaaa1111", HttpMCPTransport.ExtractPin("/p/aaaa1111/"));
