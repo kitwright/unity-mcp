@@ -85,9 +85,16 @@ namespace KitWright.Editor.Tools.Builtins
                 Undo.CollapseUndoOperations(undoGroup);
             }
 
-            return Response.Success(
-                aborted ? $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error." : $"Batch executed {results.Count} command(s).",
-                new { count = results.Count, total = parsed.Count, aborted, results });
+            var payload = new { count = results.Count, total = parsed.Count, aborted, results };
+
+            // An aborted batch has to read as a failure: MCPRequestHandler derives isError from this
+            // envelope's success field, so reporting true hands the caller - a parent batch, or the
+            // client itself - a green light for steps whose setup never ran.
+            return aborted
+                ? Response.Error("BATCH_ABORTED", payload,
+                    $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error. " +
+                    "Inspect results for the failing step; pass stop_on_error=false to run past failures.")
+                : Response.Success($"Batch executed {results.Count} command(s).", payload);
         }
 
         // Image tools return a bare "data:image/...;base64,..." string that FunctionInvoker passes
