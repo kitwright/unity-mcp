@@ -61,7 +61,8 @@ namespace KitWright.Editor.Threading
             return $"EDITOR_NOT_PUMPING: the Unity editor loop has not ticked for {sinceLastPump.TotalSeconds:F0}s, " +
                    $"so this call is queued and cannot run. {cause} " +
                    "Bring Unity to the front and dismiss it, then retry. " +
-                   "The queued call still runs once the editor resumes.";
+                   "The queued call is dropped rather than left to run once the editor resumes, so a " +
+                   "retry applies it once - unless it had already started, which no cancellation stops.";
         }
 
         public EditorThreadHelper()
@@ -85,7 +86,7 @@ namespace KitWright.Editor.Threading
             _syncContext?.Post(static _ => EditorApplication.QueuePlayerLoopUpdate(), null);
         }
 
-        private static void FailIfEditorIsBlocked<T>(TaskCompletionSource<T> tcs)
+        private static void FailIfEditorIsBlocked<T>(TaskCompletionSource<T> tcs, CancellationTokenSource queuedItem)
         {
             Task.Delay(StallProbeMs).ContinueWith(_ =>
             {
@@ -101,7 +102,13 @@ namespace KitWright.Editor.Threading
                 if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, dialog != null))
                     return;
 
-                tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog)));
+                if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
+                    return;
+
+                // The caller has its answer, so the item must not still be waiting to mutate the
+                // project once the editor resumes - ProcessQueues drops a cancelled item, and the
+                // client's retry is then the only thing that runs.
+                queuedItem.Cancel();
             }, TaskScheduler.Default);
         }
 
@@ -138,9 +145,10 @@ namespace KitWright.Editor.Threading
                 TaskContinuationOptions.ExecuteSynchronously,
                 TaskScheduler.Default);
 
-            _funcQueue.Enqueue((() => func(), tcs, CancellationToken.None));
+            var itemCts = new CancellationTokenSource();
+            _funcQueue.Enqueue((() => func(), tcs, itemCts.Token));
             WakeEditorLoop();
-            FailIfEditorIsBlocked(outerTcs);
+            FailIfEditorIsBlocked(outerTcs, itemCts);
             return outerTcs.Task;
         }
 
@@ -158,6 +166,10 @@ namespace KitWright.Editor.Threading
             var ctRegistration = ct.CanBeCanceled
                 ? ct.Register(() => outerTcs.TrySetCanceled(ct))
                 : default(CancellationTokenRegistration?);
+
+            // Linked, so the caller's own cancellation still drops the queued item, and the stall
+            // watchdog gets a handle to drop it too.
+            var itemCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
 
             var tcs = new TaskCompletionSource<object>();
             tcs.Task.ContinueWith(
@@ -184,13 +196,13 @@ namespace KitWright.Editor.Threading
                         outerTcs.TrySetResult(task.Result);
                 });
                 return (object)null;
-            }, tcs, ct));
+            }, tcs, itemCts.Token));
             WakeEditorLoop();
 
             if (ctRegistration.HasValue)
                 outerTcs.Task.ContinueWith(_ => ctRegistration.Value.Dispose(), TaskContinuationOptions.ExecuteSynchronously);
 
-            FailIfEditorIsBlocked(outerTcs);
+            FailIfEditorIsBlocked(outerTcs, itemCts);
             return outerTcs.Task;
         }
 

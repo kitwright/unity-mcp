@@ -396,6 +396,10 @@ namespace KitWright.Editor.MCP.Server
                     if (string.Equals(request.Method, "initialize", StringComparison.Ordinal))
                     {
                         var newSession = SSESessionManager.Instance.CreateSession();
+                        // The handler keys the negotiated protocol version off request.SessionId, so
+                        // without this the version lands in the sessionless slot and every later call,
+                        // which does carry the header, misses it and falls back to the newest revision.
+                        request.SessionId = newSession.SessionId;
                         extraHeaders = $"Mcp-Session-Id: {newSession.SessionId}\r\n";
                     }
                     else if (!string.IsNullOrEmpty(httpRequest.SessionId)

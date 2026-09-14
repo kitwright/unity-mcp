@@ -73,8 +73,7 @@ namespace KitWright.Editor.Tools.Builtins
                     // deadlocks the editor main thread against that update loop.
                     var raw = await invoker.InvokeAsync(fc);
                     var resultToken = TryParse(raw);
-                    bool ok = (resultToken as JObject)?["success"]?.Type == JTokenType.Boolean
-                              && (resultToken as JObject)["success"].Value<bool>();
+                    bool ok = IsSuccess(raw, resultToken);
 
                     results.Add(new { index = i, name, result = resultToken });
 
@@ -86,9 +85,28 @@ namespace KitWright.Editor.Tools.Builtins
                 Undo.CollapseUndoOperations(undoGroup);
             }
 
-            return Response.Success(
-                aborted ? $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error." : $"Batch executed {results.Count} command(s).",
-                new { count = results.Count, total = parsed.Count, aborted, results });
+            var payload = new { count = results.Count, total = parsed.Count, aborted, results };
+
+            // An aborted batch has to read as a failure: MCPRequestHandler derives isError from this
+            // envelope's success field, so reporting true hands the caller - a parent batch, or the
+            // client itself - a green light for steps whose setup never ran.
+            return aborted
+                ? Response.Error("BATCH_ABORTED", payload,
+                    $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error. " +
+                    "Inspect results for the failing step; pass stop_on_error=false to run past failures.")
+                : Response.Success($"Batch executed {results.Count} command(s).", payload);
+        }
+
+        // Image tools return a bare "data:image/...;base64,..." string that FunctionInvoker passes
+        // through unwrapped, so there is no success field to read: a screenshot is not a failure.
+        internal static bool IsSuccess(string raw, object resultToken)
+        {
+            if (raw != null && raw.StartsWith("data:", System.StringComparison.Ordinal))
+                return true;
+
+            return resultToken is JObject obj
+                   && obj["success"]?.Type == JTokenType.Boolean
+                   && obj["success"].Value<bool>();
         }
 
         private static Dictionary<string, string> ExtractParams(JToken paramsToken)

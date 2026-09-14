@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.Settings;
@@ -44,8 +45,24 @@ namespace KitWright.Editor.MCP.Server
             Dictionary<string, object> arguments,
             CancellationToken ct)
         {
+            // Read before the branch: the off-editor-thread path skips the body below, and a tool the
+            // profile withholds must not be reachable just because it answers from another thread.
+            // Every call here is a locked in-memory read or a cached lookup, so it is safe off-thread.
+            var profile = MCPToolExportPolicy.Parse(_settings.MCPToolExportProfile);
+            var profileKey = MCPToolExportPolicy.ToSettingValue(profile);
+            var isAllowed = MCPToolExportPolicy.IsToolAllowed(
+                toolName,
+                profile,
+                _settings.IsProfileConfigured(profileKey),
+                _settings.GetProfileTools(profileKey));
+
             if (ToolRegistry.RunsOffEditorThread(toolName))
-                return await InvokeOffEditorThreadAsync(toolName, arguments);
+            {
+                // No interaction log: it writes SessionState, which is main-thread only.
+                return isAllowed
+                    ? await InvokeOffEditorThreadAsync(toolName, arguments)
+                    : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey });
+            }
 
             return await _threadHelper.ExecuteAsyncOnEditorThreadAsync(async () =>
             {
@@ -69,18 +86,12 @@ namespace KitWright.Editor.MCP.Server
                         return error;
                     }
 
-                    var profile = MCPToolExportPolicy.Parse(_settings.MCPToolExportProfile);
-                    var profileKey = MCPToolExportPolicy.ToSettingValue(profile);
-                    if (!MCPToolExportPolicy.IsToolAllowed(
-                            toolName,
-                            profile,
-                            _settings.IsProfileConfigured(profileKey),
-                            _settings.GetProfileTools(profileKey)))
+                    if (!isAllowed)
                     {
                         var error = ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new
                         {
                             tool = toolName,
-                            profile = MCPToolExportPolicy.ToSettingValue(profile)
+                            profile = profileKey
                         });
                         _interactionLog?.Add(toolName, MCPToolCallStatus.Error, error);
                         return error;
@@ -134,12 +145,15 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        private string ConvertArgumentToString(object value)
+        internal static string ConvertArgumentToString(object value)
         {
             if (value == null) return string.Empty;
             if (value is string strValue) return strValue;
             if (value is bool boolValue) return boolValue ? "true" : "false";
-            if (value is int || value is long || value is float || value is double) return value.ToString();
+            // FunctionInvoker parses back with InvariantCulture, where a comma-decimal locale's "1,5"
+            // reads as the group-separated 15 instead of failing.
+            if (value is int || value is long || value is float || value is double)
+                return Convert.ToString(value, CultureInfo.InvariantCulture);
             if (value is Dictionary<string, object> dict) return JsonCodec.Serialize(dict);
             if (value is System.Collections.IList list)
             {
