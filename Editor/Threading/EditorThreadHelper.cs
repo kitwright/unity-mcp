@@ -102,14 +102,22 @@ namespace KitWright.Editor.Threading
                 if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, dialog != null))
                     return;
 
-                if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
-                    return;
-
-                // The caller has its answer, so the item must not still be waiting to mutate the
-                // project once the editor resumes - ProcessQueues drops a cancelled item, and the
-                // client's retry is then the only thing that runs.
-                queuedItem.Cancel();
+                FailBlockedCall(tcs, idle, dialog, queuedItem);
             }, TaskScheduler.Default);
+        }
+
+        // Split out of the timer so a test can drive it without waiting StallProbeMs for the probe.
+        internal static bool FailBlockedCall<T>(
+            TaskCompletionSource<T> tcs, TimeSpan idle, string dialog, CancellationTokenSource queuedItem)
+        {
+            if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
+                return false;
+
+            // The caller has its answer, so the item must not still be waiting to mutate the
+            // project once the editor resumes - ProcessQueues drops a cancelled item, and the
+            // client's retry is then the only thing that runs.
+            queuedItem.Cancel();
+            return true;
         }
 
         public Task<T> ExecuteOnEditorThreadAsync<T>(Func<T> func)

@@ -85,6 +85,61 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void FailBlockedCall_CancelsTheItemItJustGaveUpOn()
+        {
+            var tcs = new TaskCompletionSource<string>();
+            using (var queuedItem = new CancellationTokenSource())
+            {
+                Assert.IsTrue(EditorThreadHelper.FailBlockedCall(tcs, TimeSpan.FromSeconds(21), null, queuedItem));
+
+                Assert.IsInstanceOf<TimeoutException>(
+                    tcs.Task.Exception?.InnerException, "the caller has to see why it was given up on");
+                Assert.IsTrue(queuedItem.IsCancellationRequested,
+                    "an item left queued runs once the modal closes - and again on the client's retry");
+            }
+        }
+
+        [Test]
+        public void FailBlockedCall_LeavesAFinishedCallAlone()
+        {
+            var tcs = new TaskCompletionSource<string>();
+            tcs.SetResult("done");
+
+            using (var queuedItem = new CancellationTokenSource())
+            {
+                Assert.IsFalse(EditorThreadHelper.FailBlockedCall(tcs, TimeSpan.FromSeconds(21), null, queuedItem));
+                Assert.IsFalse(queuedItem.IsCancellationRequested,
+                    "the work already ran, so cancelling would only report a lie to the caller");
+            }
+        }
+
+        [Test]
+        public void ProcessQueues_DropsAnItemTheCallerAlreadyGaveUpOn()
+        {
+            using (var helper = new EditorThreadHelper())
+            using (var callerCts = new CancellationTokenSource())
+            {
+                var ran = 0;
+
+                // Off the main thread, or the helper runs the body inline instead of queueing it.
+                var queued = Task.Run(() => helper.ExecuteAsyncOnEditorThreadAsync<string>(
+                    () =>
+                    {
+                        Interlocked.Increment(ref ran);
+                        return Task.FromResult("ran");
+                    },
+                    callerCts.Token));
+                queued.Wait(TimeSpan.FromSeconds(5));
+
+                callerCts.Cancel();
+                helper.ProcessQueues();
+
+                Assert.AreEqual(0, Volatile.Read(ref ran),
+                    "the body must not run after the caller was told the call failed");
+            }
+        }
+
+        [Test]
         public void BlockingDialog_ReportsNothingWhileTheEditorIsUnblocked()
         {
             Assert.IsNull(Win32Dialogs.BlockingDialog(),
