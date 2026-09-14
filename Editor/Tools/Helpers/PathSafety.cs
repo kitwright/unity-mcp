@@ -36,6 +36,26 @@ namespace KitWright.Editor.Tools.Helpers
             return resolved;
         }
 
+        /// Absolute path for an asset path written as "Assets/...". Checking the text alone is not
+        /// enough: "Assets/../../x.png" starts with Assets/ and lands two directories outside the
+        /// project, and a tool that writes before Unity imports writes it there.
+        public static string ResolveAssetPath(string path)
+        {
+            var normalized = path?.Replace('\\', '/');
+            if (string.IsNullOrEmpty(normalized)
+                || !normalized.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
+                throw new PathOutsideProjectException(
+                    $"Path '{path}' must be under Assets/.", nameof(path));
+
+            var resolved = ResolveProjectPath(normalized);
+            if (!IsInsideDirectory(resolved, ApplicationPaths.AssetsPath))
+                throw new PathOutsideProjectException(
+                    $"Path '{path}' resolves to '{resolved}', which is outside the project's Assets folder.",
+                    nameof(path));
+
+            return resolved;
+        }
+
         private static string EnsureTrailingSeparator(string path)
         {
             if (string.IsNullOrEmpty(path))

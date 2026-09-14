@@ -32,5 +32,27 @@ namespace KitWright.Editor.Tests
                 Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, expectedRelative)),
                 PathSafety.ResolveProjectPath(requested));
         }
+
+        // Every one of these starts with "Assets/", which is all the write tools used to check.
+        [TestCase("Assets/../../outside.png")]
+        [TestCase("Assets/../Library/sneak.png")]
+        [TestCase("Assets/Textures/../../../escape.png")]
+        [TestCase("NotAssets/x.png")]
+        [TestCase("")]
+        [TestCase(null)]
+        public void ResolveAssetPath_LandingOutsideAssets_Throws(string requested)
+        {
+            Assert.Throws<PathOutsideProjectException>(() => PathSafety.ResolveAssetPath(requested));
+        }
+
+        [TestCase("Assets/Textures/white.png", "Assets/Textures/white.png")]
+        [TestCase("Assets\\Textures\\white.png", "Assets/Textures/white.png")]
+        [TestCase("Assets/Textures/../white.png", "Assets/white.png")]
+        public void ResolveAssetPath_StayingUnderAssets_Resolves(string requested, string expectedRelative)
+        {
+            Assert.AreEqual(
+                Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, expectedRelative)),
+                PathSafety.ResolveAssetPath(requested));
+        }
     }
 }

@@ -26,9 +26,9 @@ namespace KitWright.Editor.Tools.Builtins
             return Generate(path, width, height, tex =>
             {
                 var c = ParseColor(color);
-                var pixels = Enumerable.Repeat(c, width * height).ToArray();
+                var pixels = Enumerable.Repeat(c, tex.width * tex.height).ToArray();
                 tex.SetPixels32(pixels);
-            }, as_sprite, $"Solid texture created at '{path}' ({width}x{height}).");
+            }, as_sprite, $"Solid texture created at '{path}'");
         }
 
         [Description("Create a procedural pattern .png texture. Patterns: checkerboard, stripes (or stripes_v/stripes_h/stripes_diag), dots, grid, brick.")]
@@ -46,10 +46,10 @@ namespace KitWright.Editor.Tools.Builtins
 
             return Generate(path, width, height, tex =>
             {
-                for (int y = 0; y < height; y++)
-                    for (int x = 0; x < width; x++)
+                for (int y = 0; y < tex.height; y++)
+                    for (int x = 0; x < tex.width; x++)
                         tex.SetPixel(x, y, PatternColor(x, y, pattern, colors, size));
-            }, as_sprite, $"Pattern '{pattern}' texture created at '{path}' ({width}x{height}).");
+            }, as_sprite, $"Pattern '{pattern}' texture created at '{path}'");
         }
 
         [Description("Create a gradient .png texture. Type 'linear' (with angle in degrees) or 'radial'. Colors interpolate across the palette.")]
@@ -69,10 +69,10 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 if (radial)
                 {
-                    float cx = width / 2f, cy = height / 2f;
+                    float cx = tex.width / 2f, cy = tex.height / 2f;
                     float maxDist = Mathf.Sqrt(cx * cx + cy * cy);
-                    for (int y = 0; y < height; y++)
-                        for (int x = 0; x < width; x++)
+                    for (int y = 0; y < tex.height; y++)
+                        for (int x = 0; x < tex.width; x++)
                         {
                             float dist = Mathf.Sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
                             tex.SetPixel(x, y, LerpPalette(colors, Mathf.Clamp01(dist / maxDist)));
@@ -82,15 +82,13 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     float rad = angle * Mathf.Deg2Rad;
                     var dir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
-                    float denomX = Mathf.Max(1, width - 1), denomY = Mathf.Max(1, height - 1);
-                    for (int y = 0; y < height; y++)
-                        for (int x = 0; x < width; x++)
-                        {
-                            float t = Vector2.Dot(new Vector2(x / denomX, y / denomY), dir);
-                            tex.SetPixel(x, y, LerpPalette(colors, Mathf.Clamp01((t + 1f) / 2f)));
-                        }
+                    float denomX = Mathf.Max(1, tex.width - 1), denomY = Mathf.Max(1, tex.height - 1);
+                    for (int y = 0; y < tex.height; y++)
+                        for (int x = 0; x < tex.width; x++)
+                            tex.SetPixel(x, y,
+                                LerpPalette(colors, LinearGradientT(new Vector2(x / denomX, y / denomY), dir)));
                 }
-            }, as_sprite, $"{(radial ? "Radial" : "Linear")} gradient texture created at '{path}' ({width}x{height}).");
+            }, as_sprite, $"{(radial ? "Radial" : "Linear")} gradient texture created at '{path}'");
         }
 
         [Description("Create a Perlin-noise .png texture, mapping the noise value through the palette. Higher octaves add detail.")]
@@ -109,8 +107,8 @@ namespace KitWright.Editor.Tools.Builtins
 
             return Generate(path, width, height, tex =>
             {
-                for (int y = 0; y < height; y++)
-                    for (int x = 0; x < width; x++)
+                for (int y = 0; y < tex.height; y++)
+                    for (int x = 0; x < tex.width; x++)
                     {
                         float noise = 0f, amp = 1f, freq = 1f, max = 0f;
                         for (int o = 0; o < oct; o++)
@@ -122,13 +120,21 @@ namespace KitWright.Editor.Tools.Builtins
                         }
                         tex.SetPixel(x, y, LerpPalette(colors, Mathf.Clamp01(noise / max)));
                     }
-            }, as_sprite, $"Noise texture created at '{path}' ({width}x{height}).");
+            }, as_sprite, $"Noise texture created at '{path}'");
         }
 
         private static object Generate(string path, int width, int height, Action<Texture2D> paint, bool asSprite, string successMessage)
         {
-            if (string.IsNullOrEmpty(path) || !path.Replace('\\', '/').StartsWith("Assets/", StringComparison.OrdinalIgnoreCase))
-                return Response.Error("INVALID_PATH", new { path, hint = "path must be under Assets/" });
+            string absolutePath;
+            try
+            {
+                absolutePath = PathSafety.ResolveAssetPath(path);
+            }
+            catch (PathOutsideProjectException ex)
+            {
+                return Response.Error("INVALID_PATH", new { path, message = ex.Message },
+                    "path must be under Assets/, and must stay there once '..' segments are resolved");
+            }
 
             width = Mathf.Clamp(width, 1, MaxDimension);
             height = Mathf.Clamp(height, 1, MaxDimension);
@@ -145,11 +151,11 @@ namespace KitWright.Editor.Tools.Builtins
                     : tex.EncodeToPNG();
                 UnityEngine.Object.DestroyImmediate(tex);
 
-                var dir = Path.GetDirectoryName(path);
+                var dir = Path.GetDirectoryName(absolutePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
 
-                File.WriteAllBytes(path, bytes);
+                File.WriteAllBytes(absolutePath, bytes);
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
 
                 if (asSprite && AssetImporter.GetAtPath(path) is TextureImporter importer)
@@ -158,12 +164,23 @@ namespace KitWright.Editor.Tools.Builtins
                     importer.SaveAndReimport();
                 }
 
-                return Response.Success(successMessage, new { path, width, height, sprite = asSprite });
+                return Response.Success($"{successMessage} ({width}x{height}).", new { path, width, height, sprite = asSprite });
             }
             catch (Exception e)
             {
                 return Response.Error("TEXTURE_WRITE_FAILED", new { path, message = e.Message });
             }
+        }
+
+        /// Where a point of the unit square falls along the gradient: 0 at the first palette colour,
+        /// 1 at the last. The span is the projection of that square onto dir, so the whole palette is
+        /// used at every angle. The old (t+1)/2 assumed a [-1,1] square, so at 0 degrees the gradient
+        /// started half way through the palette and black -> white came out grey -> white.
+        internal static float LinearGradientT(Vector2 uv, Vector2 dir)
+        {
+            float lo = Mathf.Min(0f, dir.x) + Mathf.Min(0f, dir.y);
+            float span = Mathf.Max(1e-5f, Mathf.Max(0f, dir.x) + Mathf.Max(0f, dir.y) - lo);
+            return Mathf.Clamp01((Vector2.Dot(uv, dir) - lo) / span);
         }
 
         internal static Color32 PatternColor(int x, int y, string pattern, List<Color32> palette, int size)
