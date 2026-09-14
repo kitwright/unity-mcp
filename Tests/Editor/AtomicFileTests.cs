@@ -49,6 +49,21 @@ namespace KitWright.Editor.Tests
             AssertNoSiblings(path);
         }
 
+        [Test]
+        public void WriteAllText_LeavesAnUnrelatedTmpSiblingAlone()
+        {
+            var path = Path.Combine(_root, "Player.cs");
+            var neighbour = path + ".tmp";
+            AtomicFile.WriteAllText(path, "// one\n");
+            File.WriteAllText(neighbour, "// someone else's draft\n");
+
+            AtomicFile.WriteAllText(path, "// two\n");
+
+            Assert.AreEqual("// two\n", File.ReadAllText(path));
+            Assert.AreEqual("// someone else's draft\n", File.ReadAllText(neighbour),
+                "the swap wrote through a file that was never ours");
+        }
+
         private static void AssertNoSiblings(string path)
         {
             Assert.AreEqual(new[] { path }, Directory.GetFiles(Path.GetDirectoryName(path)),
