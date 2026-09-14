@@ -2,6 +2,9 @@
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.DI;
+using KitWright.Editor.MCP.Server;
+using KitWright.Editor.Settings;
 using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -62,6 +65,17 @@ namespace KitWright.Editor.Tools.Builtins
                         continue;
                     }
 
+                    // This runs its own invoker, so MCPExecutionBridge never sees the sub-commands:
+                    // without this check a batch reaches tools that a direct call answers with
+                    // TOOL_NOT_EXPOSED.
+                    if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
+                    {
+                        results.Add(new { index = i, name, result = JToken.Parse(
+                            ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = name, profile = profileKey })) });
+                        if (stop_on_error) { aborted = true; break; }
+                        continue;
+                    }
+
                     var fc = new FunctionCall
                     {
                         FunctionName = name,
@@ -96,6 +110,9 @@ namespace KitWright.Editor.Tools.Builtins
                     "Inspect results for the failing step; pass stop_on_error=false to run past failures.")
                 : Response.Success($"Batch executed {results.Count} command(s).", payload);
         }
+
+        private static SettingsController Settings() =>
+            RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
 
         // Image tools return a bare "data:image/...;base64,..." string that FunctionInvoker passes
         // through unwrapped, so there is no success field to read: a screenshot is not a failure.
