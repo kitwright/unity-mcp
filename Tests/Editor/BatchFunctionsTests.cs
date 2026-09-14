@@ -8,6 +8,7 @@ using KitWright.Editor.Tools.Builtins;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 using UnityEngine.TestTools;
 
@@ -31,6 +32,13 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(BatchFunctions.IsSuccess("{\"success\":false}", JToken.Parse("{\"success\":false}")));
             Assert.IsFalse(BatchFunctions.IsSuccess("not json", "not json"));
         }
+
+        // BatchExecute collapses every undo step it sees down to the group that was current when it
+        // started. Run without this, it swallows the test runner's own group, and the runner's
+        // Undo.RevertAllDownToGroup after the run then reverts into a group that no longer exists -
+        // which takes the editor down natively, not as a test failure.
+        [SetUp]
+        public void IsolateUndoGroup() => Undo.IncrementCurrentGroup();
 
         [UnityTest]
         public IEnumerator BatchExecute_StoppedByAFailingCommand_ReportsFailure()
