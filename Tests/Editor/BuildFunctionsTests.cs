@@ -54,5 +54,29 @@ namespace KitWright.Editor.Tests
             var path = BuildFunctions.DefaultOutputPath(BuildTarget.WebGL, "MyGame");
             Assert.AreEqual("Builds/WebGL/MyGame", path);
         }
+
+        [Test]
+        public void ABuildOutsideTheProjectIsFine_ButNotOverTheOperatingSystem()
+        {
+            // A build folder outside the project is the ordinary case, not an attack: confining
+            // output to the project root would break every team that keeps builds elsewhere.
+            Assert.IsFalse(BuildFunctions.IsSystemLocation(@"C:\Builds\MyGame.exe"));
+            Assert.IsFalse(BuildFunctions.IsSystemLocation("/home/ci/out/MyGame"));
+            Assert.IsFalse(BuildFunctions.IsSystemLocation(
+                System.IO.Path.GetFullPath("Builds/StandaloneWindows64/MyGame.exe")));
+
+            var windows = System.Environment.GetFolderPath(System.Environment.SpecialFolder.Windows);
+            if (!string.IsNullOrEmpty(windows))
+            {
+                Assert.IsTrue(BuildFunctions.IsSystemLocation(windows + @"\System32\evil.exe"));
+                Assert.IsTrue(BuildFunctions.IsSystemLocation(windows.Replace('\\', '/') + "/notepad.exe"));
+            }
+
+            Assert.IsTrue(BuildFunctions.IsSystemLocation("/usr/bin/MyGame"));
+            Assert.IsTrue(BuildFunctions.IsSystemLocation("/System/Library/x"));
+
+            // A folder that merely starts with the same letters is not inside it.
+            Assert.IsFalse(BuildFunctions.IsSystemLocation("/usrlocal/MyGame"));
+        }
     }
 }

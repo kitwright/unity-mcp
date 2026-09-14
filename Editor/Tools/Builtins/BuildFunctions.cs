@@ -39,6 +39,14 @@ namespace KitWright.Editor.Tools.Builtins
                 ? DefaultOutputPath(buildTarget, PlayerSettings.productName)
                 : output_path;
 
+            // Deliberately NOT confined to the project: builds land in C:\Builds or a CI output
+            // directory as a matter of course, and that is the tool's job. What it must never do is
+            // write a player over the operating system.
+            outputPath = System.IO.Path.GetFullPath(outputPath);
+            if (IsSystemLocation(outputPath))
+                return Response.Error("OUTPUT_PATH_REFUSED", new { outputPath },
+                    "That path is inside a system directory. Pick a build folder.");
+
             var options = new BuildPlayerOptions
             {
                 target = buildTarget,
@@ -178,6 +186,48 @@ namespace KitWright.Editor.Tools.Builtins
                 default:
                     return Enum.TryParse(name, true, out target) && Enum.IsDefined(typeof(BuildTarget), target);
             }
+        }
+
+        /// <summary>
+        /// Whether a build would be written into the operating system's own directories. This is the
+        /// only containment the tool applies: a build output lives wherever the team keeps builds,
+        /// which is routinely outside the project, so confining it to the project root would break
+        /// the ordinary case to guard against a caller that can already run arbitrary code.
+        /// </summary>
+        internal static bool IsSystemLocation(string fullPath)
+        {
+            var path = (fullPath ?? string.Empty).Replace('\\', '/').TrimEnd('/');
+            if (path.Length == 0)
+                return false;
+
+            foreach (var folder in new[]
+                     {
+                         Environment.SpecialFolder.Windows,
+                         Environment.SpecialFolder.System,
+                         Environment.SpecialFolder.SystemX86,
+                         Environment.SpecialFolder.ProgramFiles,
+                         Environment.SpecialFolder.ProgramFilesX86
+                     })
+            {
+                var root = Environment.GetFolderPath(folder);
+                if (!string.IsNullOrEmpty(root) && IsInside(path, root))
+                    return true;
+            }
+
+            // macOS and Linux have no SpecialFolder for these.
+            foreach (var root in new[] { "/System", "/usr", "/bin", "/sbin", "/etc", "/Library" })
+                if (IsInside(path, root))
+                    return true;
+
+            return false;
+        }
+
+        private static bool IsInside(string path, string root)
+        {
+            var normalized = root.Replace('\\', '/').TrimEnd('/');
+            return normalized.Length > 0 &&
+                   (path.Equals(normalized, StringComparison.OrdinalIgnoreCase) ||
+                    path.StartsWith(normalized + "/", StringComparison.OrdinalIgnoreCase));
         }
 
         internal static string DefaultOutputPath(BuildTarget target, string productName)

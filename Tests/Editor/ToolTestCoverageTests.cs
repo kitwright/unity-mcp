@@ -29,7 +29,6 @@ namespace KitWright.Editor.Tests
             "cancel_test_run",
             "run_tests",
             // a package resolve, which reloads the domain the run is living in
-            "install_package",
             "remove_package",
             // an assembly definition change, which recompiles and reloads it too
             "add_assembly_references",
