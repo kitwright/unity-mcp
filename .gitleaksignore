@@ -1,0 +1,11 @@
+# Findings gitleaks has already been shown to be test fixtures, not credentials.
+# The scan walks the whole history, so a commit that once held a literal keeps
+# reporting even after the file stopped containing it - the fingerprint pins the
+# finding to that commit rather than switching the rule off everywhere.
+#
+# Both are the same thing: a 32-character hex string standing in for a project
+# access token in a test. Nothing to rotate; the tokens they imitate are minted
+# per project at runtime and never written to the repository. Later commits build
+# these fixtures from a repeated character so no new finding is raised.
+4812db1800d228f1b8e839282f7a6698e249ecac:Tests/Editor/ServerTokenTests.cs:generic-api-key:10
+4812db1800d228f1b8e839282f7a6698e249ecac:Tests/Editor/HttpMCPTransportLifecycleTests.cs:generic-api-key:728
