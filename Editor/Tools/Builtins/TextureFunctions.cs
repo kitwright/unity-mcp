@@ -140,16 +140,16 @@ namespace KitWright.Editor.Tools.Builtins
             height = Mathf.Clamp(height, 1, MaxDimension);
             path = path.Replace('\\', '/');
 
+            Texture2D tex = null;
             try
             {
-                var tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                tex = new Texture2D(width, height, TextureFormat.RGBA32, false);
                 paint(tex);
                 tex.Apply();
 
                 var bytes = path.EndsWith(".jpg", StringComparison.OrdinalIgnoreCase) || path.EndsWith(".jpeg", StringComparison.OrdinalIgnoreCase)
                     ? tex.EncodeToJPG()
                     : tex.EncodeToPNG();
-                UnityEngine.Object.DestroyImmediate(tex);
 
                 var dir = Path.GetDirectoryName(absolutePath);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
@@ -169,6 +169,11 @@ namespace KitWright.Editor.Tools.Builtins
             catch (Exception e)
             {
                 return Response.Error("TEXTURE_WRITE_FAILED", new { path, message = e.Message });
+            }
+            finally
+            {
+                if (tex != null)
+                    UnityEngine.Object.DestroyImmediate(tex);
             }
         }
 
