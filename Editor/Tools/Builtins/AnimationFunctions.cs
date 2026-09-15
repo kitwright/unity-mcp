@@ -344,15 +344,20 @@ namespace KitWright.Editor.Tools.Builtins
             if (stateMachine.states.Any(s => s.state.name == state_name))
                 return ToolResultFormatter.Error("STATE_EXISTS", new { controller_path, state_name, layer });
 
-            var state = stateMachine.AddState(state_name);
-
+            // Loaded before the state exists. AddState writes to the controller, so returning
+            // ANIMATION_CLIP_NOT_FOUND afterwards left the state behind, and the retry with a
+            // corrected clip_path then answered STATE_EXISTS - no way forward through the tool.
+            AnimationClip clip = null;
             if (!string.IsNullOrWhiteSpace(clip_path))
             {
-                var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clip_path);
+                clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clip_path);
                 if (clip == null)
                     return ToolResultFormatter.Error("ANIMATION_CLIP_NOT_FOUND", new { clip_path });
-                state.motion = clip;
             }
+
+            var state = stateMachine.AddState(state_name);
+            if (clip != null)
+                state.motion = clip;
 
             if (make_default)
                 stateMachine.defaultState = state;

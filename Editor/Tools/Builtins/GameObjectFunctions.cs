@@ -17,16 +17,22 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Parent GameObject identifier (instance id, name, or path)", Required = false)] string parent = null,
             [ToolParam("How to resolve parent (by_id, by_name, by_path, by_id_or_name_or_path)", Required = false)] string find_method = null)
         {
+            // Resolved before the object exists, so a bad parent cannot leave one behind - the order
+            // CreatePrimitive below already uses. Creating first meant PARENT_NOT_FOUND came back
+            // with an orphan sitting at the scene root.
+            GameObject parentGo = null;
+            if (!string.IsNullOrEmpty(parent))
+            {
+                parentGo = ObjectsHelper.FindObject(parent, find_method);
+                if (parentGo == null)
+                    return Response.Error("PARENT_NOT_FOUND", new { parent, find_method });
+            }
+
             var go = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
 
-            if (!string.IsNullOrEmpty(parent))
-            {
-                var parentGo = ObjectsHelper.FindObject(parent, find_method);
-                if (parentGo == null)
-                    return Response.Error("PARENT_NOT_FOUND", new { parent, find_method });
+            if (parentGo != null)
                 Undo.SetTransformParent(go.transform, parentGo.transform, $"Set parent of {name}");
-            }
 
             Selection.activeGameObject = go;
             return Response.Success($"Created GameObject '{name}'.", GameObjectSerializer.DescribeCreated(go));

@@ -125,6 +125,28 @@ namespace KitWright.Editor.Tests
             Assert.IsNotNull(subject.GetComponent<AudioListener>());
         }
 
+        // The clip and the mixer group used to be resolved after Undo.AddComponent, so a path typo
+        // answered CLIP_NOT_FOUND with a bare AudioSource left on an object that had none - a change
+        // the caller was told had failed.
+        [Test]
+        public void AnAudioSourceRefusedForItsClipIsNotAddedAtAll()
+        {
+            var subject = CreateSubject();
+
+            Assert.AreEqual("CLIP_NOT_FOUND",
+                Code("add_audio_source", "target", Subject, "clip", "Assets/__KitWrightNoSuchClip.wav"));
+            Assert.IsNull(subject.GetComponent<AudioSource>(),
+                "A refused add must not leave the component behind.");
+
+            Assert.AreEqual("MIXER_GROUP_NOT_FOUND",
+                Code("add_audio_source", "target", Subject, "mixer_group", "Assets/__KitWrightNoSuchMixer.mixer/Master"));
+            Assert.IsNull(subject.GetComponent<AudioSource>());
+
+            // The retry a caller would actually make still works.
+            Ok("add_audio_source", "target", Subject, "volume", "0.5");
+            Assert.IsNotNull(subject.GetComponent<AudioSource>());
+        }
+
         [Test]
         public void GlobalAudioSetsTheMasterVolumeAndThePreviewRefusesAClipThatIsNotThere()
         {

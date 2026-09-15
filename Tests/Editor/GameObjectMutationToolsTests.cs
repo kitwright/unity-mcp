@@ -17,6 +17,7 @@ namespace KitWright.Editor.Tests
         private const string Subject = "KwMutationSubject";
         private const string Copy = "KwMutationCopy";
         private const string Renamed = "KwMutationRenamed";
+        private const string Orphan = "KwOrphanCandidate";
 
         private GameObject subject;
 
@@ -32,7 +33,7 @@ namespace KitWright.Editor.Tests
         [TearDown]
         public void DestroyEverythingCreated()
         {
-            foreach (var name in new[] { Subject, Copy, Renamed })
+            foreach (var name in new[] { Subject, Copy, Renamed, Orphan })
             {
                 var leftover = GameObject.Find(name);
                 if (leftover != null)
@@ -118,6 +119,18 @@ namespace KitWright.Editor.Tests
 
             Refused("remove_component", "target", Subject, "component_type", "Camera");
             Refused("remove_component", "target", Subject, "component_type", "Transform");
+        }
+
+        // create_primitive already resolved its parent first, and carries a comment saying why. Its
+        // sibling did not: the object was created, then the parent looked up, so a name nobody owns
+        // came back as PARENT_NOT_FOUND with an orphan left at the scene root.
+        [Test]
+        public void CreateGameObjectRefusedForItsParentLeavesNoOrphanBehind()
+        {
+            Assert.AreEqual("PARENT_NOT_FOUND",
+                Code("create_game_object", "name", Orphan, "parent", "KwParentNobodyCreated"));
+
+            Assert.IsNull(GameObject.Find(Orphan), "A refused create must not leave the object in the scene.");
         }
     }
 }
