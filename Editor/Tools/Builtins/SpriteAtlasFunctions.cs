@@ -25,6 +25,11 @@ namespace KitWright.Editor.Tools.Builtins
             path = path.Replace('\\', '/');
             if (!path.EndsWith(".spriteatlas", StringComparison.OrdinalIgnoreCase))
                 path += ".spriteatlas";
+
+            try { PathSafety.ResolveAssetPath(path); }
+            catch (PathOutsideProjectException ex)
+            { return Response.Error("INVALID_PATH", new { path, message = ex.Message }); }
+
             if (File.Exists(path)) return Response.Error("ATLAS_EXISTS", new { path });
 
             var dir = Path.GetDirectoryName(path);

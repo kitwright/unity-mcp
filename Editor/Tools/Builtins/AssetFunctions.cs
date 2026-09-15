@@ -164,6 +164,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Source asset path")] string source_path,
             [ToolParam("Destination asset path")] string destination_path)
         {
+            try { PathSafety.ResolveAssetPath(destination_path); }
+            catch (PathOutsideProjectException ex)
+            { return ToolResultFormatter.Error("INVALID_PATH", new { destination_path, message = ex.Message }); }
+
             var dir = Path.GetDirectoryName(destination_path);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
