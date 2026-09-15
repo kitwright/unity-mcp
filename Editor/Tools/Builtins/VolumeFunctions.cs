@@ -98,6 +98,17 @@ namespace KitWright.Editor.Tools.Builtins
             Undo.RegisterCompleteObjectUndo(profile, "Add Volume Override");
             var comp = (VolumeComponent)profile.Add(type, overrides: true);
             comp.active = true;
+
+            // The override is a ScriptableObject of its own. Unless it is stored inside the profile
+            // asset, no file owns it: the profile serializes a reference to an object that is
+            // nowhere on disk, that reads back as null, and the override is gone after a reload -
+            // having reported success. Unity's own profile editor stores it the same way.
+            if (AssetDatabase.Contains(profile))
+            {
+                AssetDatabase.AddObjectToAsset(comp, profile);
+                AssetDatabase.SaveAssets();
+            }
+
             EditorUtility.SetDirty(profile);
 
             return Response.Success($"Added '{type.Name}' to '{target}'.", new { override_type = type.Name });
@@ -121,6 +132,16 @@ namespace KitWright.Editor.Tools.Builtins
 
             Undo.RegisterCompleteObjectUndo(profile, "Remove Volume Override");
             profile.Remove(type);
+
+            // Remove() only drops it from the list. The sub-asset the add stored in the file has to
+            // go too, or every add/remove round leaves another orphan inside the .asset.
+            if (AssetDatabase.Contains(comp))
+            {
+                AssetDatabase.RemoveObjectFromAsset(comp);
+                AssetDatabase.SaveAssets();
+            }
+            UnityEngine.Object.DestroyImmediate(comp, true);
+
             EditorUtility.SetDirty(profile);
 
             return Response.Success($"Removed '{type.Name}' from '{target}'.", new { override_type = type.Name });
@@ -162,10 +183,14 @@ namespace KitWright.Editor.Tools.Builtins
             if (!TryCoerce(value, valueProp.PropertyType, out var coerced))
                 return Response.Error("VALUE_COERCION_FAILED", new { value, expected = valueProp.PropertyType.Name });
 
-            Undo.RegisterCompleteObjectUndo(profile, "Set Volume Override Property");
+            // comp, not profile: the profile owns only the list, and every field written below lives
+            // on the override, which is a separate ScriptableObject. Recording the profile left Undo
+            // with nothing of the value to restore - changing Bloom intensity and undoing kept it.
+            Undo.RecordObject(comp, "Set Volume Override Property");
             valueProp.SetValue(param, coerced);
             param.overrideState = true;
             comp.active = true;
+            EditorUtility.SetDirty(comp);
             EditorUtility.SetDirty(profile);
 
             return Response.Success($"Set {type.Name}.{property} = {value}.", new { override_type = type.Name, property, value });
