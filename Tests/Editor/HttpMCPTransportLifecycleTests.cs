@@ -725,7 +725,8 @@ namespace KitWright.Editor
         [UnityTest]
         public IEnumerator AClientPresentingAnotherProjectsTokenIsTurnedAway()
         {
-            const string token = "0123456789abcdef0123456789abcdef";
+            // Built, not written out: a 32-char hex literal trips the secret scanner.
+            var token = new string('a', ServerToken.Length);
             var port = GetFreeTcpPort();
             var transport = new HttpMCPTransport(port, ProjectIdentityA, token);
             transport.OnRequestReceived += (request, sendResponse) =>

@@ -416,7 +416,7 @@
 
 | Tool | Description |
 |------|-------------|
-| `install_package` | Install a Unity package by name |
+| `install_package` | Install a Unity package by name. |
 | `list_packages` | List all installed packages |
 | `remove_package` | Remove a Unity package |
 

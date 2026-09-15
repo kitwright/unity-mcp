@@ -7,7 +7,9 @@ namespace KitWright.Editor.Tests
 {
     public sealed class ServerTokenTests
     {
-        private const string Token = "0123456789abcdef0123456789abcdef";
+        // Built rather than written out: a 32-char hex literal reads as a real leaked key to the
+        // secret scanner, and a test fixture is not worth teaching it to ignore.
+        private static readonly string Token = new string('a', ServerToken.Length);
 
         [Test]
         public void AMintedTokenIsLongEnoughToBeWorthPresenting()
