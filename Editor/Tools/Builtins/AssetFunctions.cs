@@ -18,7 +18,8 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Name of the material")] string name,
             [ToolParam("Color as 'r,g,b,a' or hex '#RRGGBB'", Required = false)] string color = "1,1,1,1",
             [ToolParam("Shader name (default: Standard)", Required = false)] string shader = "Standard",
-            [ToolParam("Save path (e.g. 'Assets/Materials/')", Required = false)] string save_path = "Assets/Materials/")
+            [ToolParam("Save path (e.g. 'Assets/Materials/')", Required = false)] string save_path = "Assets/Materials/",
+            [ToolParam("Replace the material already at that path instead of refusing", Required = false)] bool overwrite = false)
         {
             string actualShader = shader;
             string colorProperty = "_Color";
@@ -63,7 +64,19 @@ namespace KitWright.Editor.Tools.Builtins
             if (!Directory.Exists(save_path))
                 Directory.CreateDirectory(save_path);
 
-            var fullPath = $"{save_path}{name}.mat";
+            var fullPath = $"{save_path.TrimEnd('/', '\\')}/{name}.mat";
+
+            // CreateAsset over an existing path REPLACES the asset's contents but keeps its GUID, so
+            // every prefab and scene referencing that material silently gets this new one instead.
+            // Refusing is recoverable; a reset material across a project is not.
+            if (!overwrite && AssetDatabase.LoadAssetAtPath<Material>(fullPath) != null)
+            {
+                UnityEngine.Object.DestroyImmediate(material);
+                return ToolResultFormatter.Error("MATERIAL_EXISTS", new { path = fullPath },
+                    "A material already lives there and everything referencing it would be overwritten " +
+                    "in place. Pass overwrite=true, or pick another name.");
+            }
+
             AssetDatabase.CreateAsset(material, fullPath);
             AssetDatabase.Refresh();
 

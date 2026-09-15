@@ -94,6 +94,13 @@ namespace KitWright.Editor.Tools.Builtins
                 ["testsCompleted"] = 0,
                 ["hasFilters"] = hasFilters
             };
+            if (hasFilters)
+                job["filters"] = new JObject
+                {
+                    ["testNames"] = JArrayOrNull(filter.testNames),
+                    ["categoryNames"] = JArrayOrNull(filter.categoryNames),
+                    ["assemblyNames"] = JArrayOrNull(filter.assemblyNames)
+                };
             SaveJob(job);
 
             return Response.Success(
@@ -119,6 +126,14 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("JOB_NOT_FOUND", new { job_id, activeJobId = storedId, hint = "Only the most recent run is tracked." });
 
             AnnotateIfPossiblyStuck(job);
+            // A filter that matches nothing still finishes as Passed, which reads as a green run to
+            // anything that only looks at resultState - a misspelt name or the wrong list separator
+            // would silently test nothing at all.
+            if (MatchedNothing(job))
+                return Response.Error("NO_TESTS_MATCHED", job,
+                    "The filter matched no tests, so nothing ran. Each filter is a comma-separated string, " +
+                    "not a list, and test names must be fully qualified (Namespace.Class.Method).");
+
             return Response.Success($"Test job {job.Value<string>("status")}.", job);
         }
 
@@ -256,6 +271,14 @@ namespace KitWright.Editor.Tools.Builtins
         {
             SessionState.SetString(ActiveJobKey, job.ToString(Newtonsoft.Json.Formatting.None));
         }
+
+        internal static bool MatchedNothing(JObject job) =>
+            job.Value<string>("status") == "finished" &&
+            job.Value<bool?>("hasFilters") == true &&
+            (job.Value<int?>("totalTests") ?? 0) == 0;
+
+        private static JToken JArrayOrNull(string[] values) =>
+            values == null || values.Length == 0 ? (JToken)JValue.CreateNull() : new JArray(values);
 
         private static string[] SplitList(string csv)
         {

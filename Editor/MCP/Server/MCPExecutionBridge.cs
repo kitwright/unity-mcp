@@ -48,13 +48,7 @@ namespace KitWright.Editor.MCP.Server
             // Read before the branch: the off-editor-thread path skips the body below, and a tool the
             // profile withholds must not be reachable just because it answers from another thread.
             // Every call here is a locked in-memory read or a cached lookup, so it is safe off-thread.
-            var profile = MCPToolExportPolicy.Parse(_settings.MCPToolExportProfile);
-            var profileKey = MCPToolExportPolicy.ToSettingValue(profile);
-            var isAllowed = MCPToolExportPolicy.IsToolAllowed(
-                toolName,
-                profile,
-                _settings.IsProfileConfigured(profileKey),
-                _settings.GetProfileTools(profileKey));
+            var isAllowed = MCPToolExportPolicy.IsToolAllowed(toolName, _settings, out var profileKey);
 
             if (ToolRegistry.RunsOffEditorThread(toolName))
             {

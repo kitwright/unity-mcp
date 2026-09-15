@@ -15,6 +15,15 @@ namespace KitWright.Editor.Tools.Helpers
             return $"{bytes} B";
         }
 
+        // The editor runs under the OS culture, not InvariantCulture, and float.Parse(string) allows
+        // group separators: on a de-DE machine "0.5" reads as 5 with no exception to catch. Tool
+        // arguments arrive as JSON text and are always invariant, so they must be read that way.
+        public static bool TryParseFloat(string value, out float result) =>
+            float.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out result);
+
+        public static bool TryParseInt(string value, out int result) =>
+            int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out result);
+
         public static Color ParseColor(string value, Color fallback)
         {
             if (string.IsNullOrEmpty(value)) return fallback;

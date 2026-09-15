@@ -137,6 +137,137 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        private enum Difficulty { Easy = 0, Normal = 1, Hard = 5 }
+
+        private sealed class RoundTripFixture : ScriptableObject
+        {
+            public int[] Numbers = { 10, 20, 30 };
+            public double Precise;
+            public ulong Unsigned;
+            public Difficulty Level;
+        }
+
+        // A failed field is reported as failed; the object must also look like it was never touched.
+        [Test]
+        public void WriteProperties_ArrayElementRejected_LeavesTheArrayAsItWas()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                var results = ComponentSerializer.WriteProperties(asset, new JObject
+                {
+                    ["Numbers"] = new JArray(99, "bad")
+                });
+
+                Assert.IsFalse(results[0].Success, "a string is not an int, so the write has to fail");
+                Assert.AreEqual(new[] { 10, 20, 30 }, asset.Numbers,
+                    "the array was resized and half filled before the element that failed");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void WriteProperties_OneFieldFailing_KeepsTheFieldsThatSucceeded()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                var results = ComponentSerializer.WriteProperties(asset, new JObject
+                {
+                    ["Precise"] = 1.5,
+                    ["Numbers"] = new JArray(1, "bad")
+                });
+
+                Assert.IsTrue(results[0].Success, results[0].Error);
+                Assert.IsFalse(results[1].Success);
+                Assert.AreEqual(1.5, asset.Precise, "rolling back the bad field must not roll back the good one");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        // 16777217 is the first integer a float cannot hold: it rounds to 16777216.
+        [Test]
+        public void DoubleFields_KeepThePrecisionAFloatWouldLose()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                var results = ComponentSerializer.WriteProperties(asset, new JObject { ["Precise"] = 16777217.0 });
+
+                Assert.IsTrue(results[0].Success, results[0].Error);
+                Assert.AreEqual(16777217.0, asset.Precise);
+                Assert.AreEqual(16777217.0,
+                    ComponentSerializer.ReadProperties(asset, out _).First(p => p.Name == "Precise").Value);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void WriteProperties_UnsignedAboveLongMaxValue_IsAccepted()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                var results = ComponentSerializer.WriteProperties(asset,
+                    new JObject { ["Unsigned"] = ulong.MaxValue });
+
+                Assert.IsTrue(results[0].Success, results[0].Error);
+                Assert.AreEqual(ulong.MaxValue, asset.Unsigned, "read reports it, so write has to accept it back");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        // -1 still has to mean every bit, which is how a mask is written.
+        [Test]
+        public void WriteProperties_MinusOneOnAnUnsignedField_SetsEveryBit()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                ComponentSerializer.WriteProperties(asset, new JObject { ["Unsigned"] = -1 });
+
+                Assert.AreEqual(ulong.MaxValue, asset.Unsigned);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
+        [Test]
+        public void EnumValue_CanBeWrittenBackInTheShapeItWasReadIn()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                asset.Level = Difficulty.Hard;
+                var read = ComponentSerializer.ReadProperties(asset, out _).First(p => p.Name == "Level").Value;
+                asset.Level = Difficulty.Easy;
+
+                var results = ComponentSerializer.WriteProperties(asset,
+                    new JObject { ["Level"] = JToken.FromObject(read) });
+
+                Assert.IsTrue(results[0].Success, results[0].Error);
+                Assert.AreEqual(Difficulty.Hard, asset.Level);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
         // Settings singletons keep writable fields off the inspector, and NextVisible skips exactly
         // those — so the dump used to omit properties set_project_settings can write.
         [Test]

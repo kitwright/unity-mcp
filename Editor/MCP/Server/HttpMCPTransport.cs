@@ -70,13 +70,53 @@ namespace KitWright.Editor.MCP.Server
         public bool IsAttachedToExistingServer => false;
         public event Action<MCPRequest, Action<MCPResponse>> OnRequestReceived;
 
-        public HttpMCPTransport(int port, string expectedProjectIdentity = null)
+        public HttpMCPTransport(int port, string expectedProjectIdentity = null, string expectedToken = null)
         {
             _port = port;
             _projectPin = string.IsNullOrEmpty(expectedProjectIdentity) ||
                           expectedProjectIdentity.Length < ProjectIdentity.PinLength
                 ? string.Empty
                 : expectedProjectIdentity.Substring(0, ProjectIdentity.PinLength);
+            _expectedToken = expectedToken ?? string.Empty;
+        }
+
+        private readonly string _expectedToken;
+        private bool _warnedAboutMissingToken;
+
+        /// <summary>
+        /// Whether to serve a request that presents no token, or the wrong one.
+        ///
+        /// A WRONG token is refused outright: no legitimate client invents one, so it is either a
+        /// config left over from a token this project no longer uses or somebody guessing. The
+        /// config sweep repairs a stale URL on the next editor start, so the window is short.
+        ///
+        /// A MISSING token is served, once with a warning: configs written before tokens existed are
+        /// out there, the same compatibility problem the project pin has, and refusing them would
+        /// break working installs before the sweep has had a chance to repair them. Tightening this
+        /// to a refusal is the second half of the change, once a release has been out long enough
+        /// for the sweep to have run everywhere.
+        /// </summary>
+        private bool ShouldServe(string path)
+        {
+            switch (ServerToken.Check(path, _expectedToken))
+            {
+                case ServerToken.Verdict.Ok:
+                    return true;
+
+                case ServerToken.Verdict.Missing:
+                    if (!_warnedAboutMissingToken)
+                    {
+                        _warnedAboutMissingToken = true;
+                        Debug.LogWarning(
+                            "[KitWright MCP Server] A client connected without this project's access token. " +
+                            "Any process on this machine can reach the editor that way. Press Configure in the " +
+                            "KitWright window, or restart the editor, to write the current URL into the client's config.");
+                    }
+                    return true;
+
+                default:
+                    return false;
+            }
         }
 
         // A client configured for THIS project posts to /p/<pin>/. Ports are assigned by
@@ -350,6 +390,14 @@ namespace KitWright.Editor.MCP.Server
                         return;
                     }
 
+                    if (!ShouldServe(httpRequest.Path))
+                    {
+                        await SendHtmlStatusAsync(stream, HttpStatusCode.Unauthorized, "Unauthorized",
+                            "That access token is not this project's. Press Configure in the KitWright window " +
+                            "to rewrite the client's config with the current URL.", ct);
+                        return;
+                    }
+
                     if (httpRequest.Method == "GET")
                     {
                         if (httpRequest.AcceptsEventStream)
@@ -540,8 +588,10 @@ namespace KitWright.Editor.MCP.Server
                 var name = lines[i].Substring(0, separator).Trim();
                 if (string.Equals(name, "Content-Length", StringComparison.OrdinalIgnoreCase))
                 {
-                    int.TryParse(lines[i].Substring(separator + 1).Trim(), out contentLength);
-                    if (contentLength < 0 || contentLength > MaxBodyBytes)
+                    // A header that will not parse is a malformed request, not a request with no body:
+                    // reading it as zero serves the client a parse error about an empty body instead.
+                    if (!int.TryParse(lines[i].Substring(separator + 1).Trim(), out contentLength) ||
+                        contentLength < 0 || contentLength > MaxBodyBytes)
                         return null;
                 }
                 else if (string.Equals(name, "Accept", StringComparison.OrdinalIgnoreCase))
@@ -663,21 +713,14 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        internal static bool IsValidOrigin(string origin)
-        {
-            if (string.IsNullOrEmpty(origin))
-                return true; // Absent origin is allowed for native CLI/IDE clients
-
-            if (Uri.TryCreate(origin, UriKind.Absolute, out var uri))
-            {
-                var host = uri.Host;
-                return string.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(host, "127.0.0.1", StringComparison.OrdinalIgnoreCase) ||
-                       string.Equals(host, "[::1]", StringComparison.OrdinalIgnoreCase);
-            }
-
-            return false;
-        }
+        /// <summary>
+        /// Only a browser sends Origin, and no MCP client is a browser page: the CLI and IDE clients
+        /// are native and send none. Loopback origins used to be allowed, which meant any web app the
+        /// user happened to have open on localhost could drive this editor — and the wildcard CORS
+        /// header alongside it let that page read the answers. The runtime server in the Pro package
+        /// has refused every Origin from the start; this is the same rule.
+        /// </summary>
+        internal static bool IsValidOrigin(string origin) => string.IsNullOrEmpty(origin);
 
         internal static bool IsValidHost(string hostHeader)
         {
@@ -716,9 +759,6 @@ namespace KitWright.Editor.MCP.Server
                               "Content-Type: text/event-stream; charset=utf-8\r\n" +
                               "Cache-Control: no-cache, no-transform\r\n" +
                               "Connection: keep-alive\r\n" +
-                              "Access-Control-Allow-Origin: *\r\n" +
-                              "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                              "Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Session-Id\r\n" +
                               $"Mcp-Session-Id: {session.SessionId}\r\n" +
                               "\r\n";
 
@@ -726,8 +766,21 @@ namespace KitWright.Editor.MCP.Server
                 await stream.WriteAsync(headerBytes, 0, headerBytes.Length, ct).ConfigureAwait(false);
                 await stream.FlushAsync(ct).ConfigureAwait(false);
 
-                var pingLoop = SSESessionManager.Instance.RunSsePingLoopAsync(session, ct);
-                await Task.WhenAny(pingLoop, WaitForClientEofAsync(stream, ct)).ConfigureAwait(false);
+                // Own token, cancelled the moment either half wins: on ct alone the losing ping loop
+                // outlives this connection, and since it sends to whatever stream the session holds
+                // at the time, a client reconnecting to the same session gets pinged by both loops.
+                using (var connection = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                {
+                    var pingLoop = SSESessionManager.Instance.RunSsePingLoopAsync(session, connection.Token);
+                    try
+                    {
+                        await Task.WhenAny(pingLoop, WaitForClientEofAsync(stream, connection.Token)).ConfigureAwait(false);
+                    }
+                    finally
+                    {
+                        connection.Cancel();
+                    }
+                }
             }
             catch (Exception ex) when (IsExpectedClientDisconnect(ex, ct))
             {
@@ -739,7 +792,7 @@ namespace KitWright.Editor.MCP.Server
             }
             finally
             {
-                SSESessionManager.Instance.DetachStream(session);
+                SSESessionManager.Instance.DetachStream(session, stream);
             }
         }
 
@@ -871,9 +924,8 @@ namespace KitWright.Editor.MCP.Server
                 $"Content-Type: {contentType}\r\n" +
                 $"Content-Length: {bodyBytes.Length}\r\n" +
                 "Connection: close\r\n" +
-                "Access-Control-Allow-Origin: *\r\n" +
-                "Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n" +
-                "Access-Control-Allow-Headers: Content-Type, Accept, Mcp-Session-Id\r\n" +
+                // No CORS headers at all: a browser has no business here, and IsValidOrigin already
+                // refuses anything that carries an Origin.
                 extraHeaders +
                 "\r\n";
             var headerBytes = Encoding.ASCII.GetBytes(header);

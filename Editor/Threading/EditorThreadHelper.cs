@@ -17,7 +17,7 @@ namespace KitWright.Editor.Threading
         private readonly SynchronizationContext _syncContext;
         private bool _disposed;
 
-        private static long s_lastPumpUtcTicks = DateTime.UtcNow.Ticks;
+        private static long s_lastPumpTicks = System.Diagnostics.Stopwatch.GetTimestamp();
 
         // Under the 30s most MCP clients allow, so our explanation beats their bare timeout.
         private const int StallProbeMs = 20_000;
@@ -28,7 +28,7 @@ namespace KitWright.Editor.Threading
         public bool IsMainThread => Thread.CurrentThread.ManagedThreadId == _mainThreadId;
 
         internal static TimeSpan SinceLastPump =>
-            TimeSpan.FromTicks(DateTime.UtcNow.Ticks - Interlocked.Read(ref s_lastPumpUtcTicks));
+            TimeSpan.FromSeconds((double)(System.Diagnostics.Stopwatch.GetTimestamp() - Interlocked.Read(ref s_lastPumpTicks)) / System.Diagnostics.Stopwatch.Frequency);
 
         private static int s_workItemDepth;
 
@@ -102,14 +102,22 @@ namespace KitWright.Editor.Threading
                 if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, dialog != null))
                     return;
 
-                if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
-                    return;
-
-                // The caller has its answer, so the item must not still be waiting to mutate the
-                // project once the editor resumes - ProcessQueues drops a cancelled item, and the
-                // client's retry is then the only thing that runs.
-                queuedItem.Cancel();
+                FailBlockedCall(tcs, idle, dialog, queuedItem);
             }, TaskScheduler.Default);
+        }
+
+        // Split out of the timer so a test can drive it without waiting StallProbeMs for the probe.
+        internal static bool FailBlockedCall<T>(
+            TaskCompletionSource<T> tcs, TimeSpan idle, string dialog, CancellationTokenSource queuedItem)
+        {
+            if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
+                return false;
+
+            // The caller has its answer, so the item must not still be waiting to mutate the
+            // project once the editor resumes - ProcessQueues drops a cancelled item, and the
+            // client's retry is then the only thing that runs.
+            queuedItem.Cancel();
+            return true;
         }
 
         public Task<T> ExecuteOnEditorThreadAsync<T>(Func<T> func)
@@ -186,7 +194,24 @@ namespace KitWright.Editor.Threading
 
             _funcQueue.Enqueue((() =>
             {
-                asyncFunc().ContinueWith(task =>
+                var running = asyncFunc();
+
+                // ProcessQueues' own count drops the moment this returns, which for a tool that
+                // awaits is its first real await rather than its end. The stall watchdog reads that
+                // count to tell a blocked editor from a tool still working, so carry it until this
+                // one finishes. A tool that already finished inside asyncFunc needs none of this,
+                // and must not be left counted after ProcessQueues returns.
+                if (!running.IsCompleted)
+                {
+                    Interlocked.Increment(ref s_workItemDepth);
+                    running.ContinueWith(
+                        _ => Interlocked.Decrement(ref s_workItemDepth),
+                        CancellationToken.None,
+                        TaskContinuationOptions.ExecuteSynchronously,
+                        TaskScheduler.Default);
+                }
+
+                running.ContinueWith(task =>
                 {
                     if (task.IsFaulted)
                         outerTcs.TrySetException(task.Exception?.InnerException ?? task.Exception ?? new Exception("Unknown error"));
@@ -199,6 +224,13 @@ namespace KitWright.Editor.Threading
             }, tcs, itemCts.Token));
             WakeEditorLoop();
 
+            // Dispose the linked CTS when the operation completes to avoid leaking the callback
+            // registration on the parent token for the lifetime of the server.
+            outerTcs.Task.ContinueWith(_ =>
+            {
+                try { itemCts.Dispose(); } catch { /* best effort */ }
+            }, TaskContinuationOptions.ExecuteSynchronously);
+
             if (ctRegistration.HasValue)
                 outerTcs.Task.ContinueWith(_ => ctRegistration.Value.Dispose(), TaskContinuationOptions.ExecuteSynchronously);
 
@@ -208,7 +240,7 @@ namespace KitWright.Editor.Threading
 
         internal void ProcessQueues()
         {
-            Interlocked.Exchange(ref s_lastPumpUtcTicks, DateTime.UtcNow.Ticks);
+            Interlocked.Exchange(ref s_lastPumpTicks, System.Diagnostics.Stopwatch.GetTimestamp());
             if (_disposed) return;
 
             int processedCount = 0;

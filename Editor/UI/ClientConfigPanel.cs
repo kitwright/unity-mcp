@@ -997,7 +997,12 @@ namespace KitWright.Editor.MCP.Server
         // 404, but only if the client actually sends one, which is what this path segment is for.
         internal static string BuildServerUrl(int port)
         {
-            return $"http://127.0.0.1:{port}/p/{ProjectIdentity.PinFromProjectPath(GetProjectRootPath())}/";
+            // The token segment is what stops any other process on the machine from driving this
+            // editor. It travels in the URL because the config auto-rewrite already repairs URLs,
+            // so an existing install picks it up with no user action and no client needs header
+            // support. Loopback-bound and closed to browsers, so the URL goes nowhere else.
+            return $"http://127.0.0.1:{port}/p/{ProjectIdentity.PinFromProjectPath(GetProjectRootPath())}" +
+                   $"/{ServerToken.Marker}/{ServerToken.Get()}/";
         }
 
         private static string GetProjectRootPath()

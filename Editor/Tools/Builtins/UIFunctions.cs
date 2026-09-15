@@ -102,6 +102,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (parent == null)
                 return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
 
+            // Before the GameObject exists: failing after it is created leaves an orphan behind.
+            if (!ValueConverter.TryParseInt(font_size, out var fontSize))
+                return ToolResultFormatter.Error("INVALID_FONT_SIZE", new { font_size });
+
             var textGo = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(textGo, $"Create Text {name}");
             textGo.transform.SetParent(parent, false);
@@ -115,7 +119,7 @@ namespace KitWright.Editor.Tools.Builtins
             textComp.text = text;
             textComp.alignment = TextAnchor.MiddleCenter;
             textComp.color = Color.white;
-            textComp.fontSize = int.Parse(font_size);
+            textComp.fontSize = fontSize;
             textComp.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
             Selection.activeGameObject = textGo;

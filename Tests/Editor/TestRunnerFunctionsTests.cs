@@ -44,5 +44,27 @@ namespace KitWright.Editor.Tests
         {
             Assert.IsNull(TestRunnerFunctions.AssessStuckState(Now.AddSeconds(60), null, Now));
         }
+
+        private static Newtonsoft.Json.Linq.JObject Job(string status, bool hasFilters, int totalTests) =>
+            new Newtonsoft.Json.Linq.JObject
+            {
+                ["status"] = status,
+                ["hasFilters"] = hasFilters,
+                ["totalTests"] = totalTests
+            };
+
+        [Test]
+        public void AFilteredRunThatMatchedNothingIsNotAPass()
+        {
+            // NUnit finishes an empty run as Passed, so a misspelt name or the wrong separator would
+            // otherwise report a green run that tested nothing.
+            Assert.IsTrue(TestRunnerFunctions.MatchedNothing(Job("finished", hasFilters: true, totalTests: 0)));
+
+            Assert.IsFalse(TestRunnerFunctions.MatchedNothing(Job("finished", hasFilters: true, totalTests: 1)));
+            Assert.IsFalse(TestRunnerFunctions.MatchedNothing(Job("running", hasFilters: true, totalTests: 0)),
+                "A filtered run reports no total until it finishes.");
+            Assert.IsFalse(TestRunnerFunctions.MatchedNothing(Job("finished", hasFilters: false, totalTests: 0)),
+                "An unfiltered run of a project with no tests is not the caller's mistake.");
+        }
     }
 }

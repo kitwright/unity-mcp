@@ -51,6 +51,24 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(255, palette[1].r);
         }
 
+        // A gradient that never reaches 0 loses the first colour of the palette outright: black to
+        // white renders as grey to white.
+        [TestCase(0f, 0f, 0.5f, 0f)]
+        [TestCase(0f, 1f, 0.5f, 1f)]
+        [TestCase(180f, 0f, 0.5f, 1f)]
+        [TestCase(180f, 1f, 0.5f, 0f)]
+        [TestCase(45f, 0f, 0f, 0f)]
+        [TestCase(45f, 1f, 1f, 1f)]
+        [TestCase(90f, 0.5f, 0f, 0f)]
+        [TestCase(90f, 0.5f, 1f, 1f)]
+        public void LinearGradientT_SpansThePaletteAtEveryAngle(float angle, float u, float v, float expected)
+        {
+            var rad = angle * Mathf.Deg2Rad;
+            var dir = new Vector2(Mathf.Cos(rad), Mathf.Sin(rad));
+
+            Assert.AreEqual(expected, TextureFunctions.LinearGradientT(new Vector2(u, v), dir), 0.0001f);
+        }
+
         [Test]
         public void LerpPalette_ClampsEnds()
         {

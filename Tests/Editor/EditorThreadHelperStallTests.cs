@@ -58,6 +58,43 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(EditorThreadHelper.WorkItemRunning, "The finally must clear it again.");
         }
 
+        // The pump's count drops when the queued lambda returns, which for an async tool is its first
+        // real await, not its end. Read naively the watchdog then sees "nothing of ours is running"
+        // over a stale pump and fails a call that was only waiting on a compile.
+        [Test]
+        public void WorkItemRunning_StaysTrueWhileAnAsyncToolIsStillAwaiting()
+        {
+            using (var helper = new EditorThreadHelper())
+            {
+                var gate = new TaskCompletionSource<bool>();
+
+                using (var handoff = new ManualResetEventSlim())
+                {
+                    Task.Run(() =>
+                    {
+                        helper.ExecuteAsyncOnEditorThreadAsync(async () => await gate.Task);
+                        handoff.Set();
+                    });
+
+                    Assert.IsTrue(handoff.Wait(TimeSpan.FromSeconds(5)), "The work item was never queued.");
+                }
+
+                helper.ProcessQueues();
+
+                Assert.IsTrue(EditorThreadHelper.WorkItemRunning,
+                    "The tool is still awaiting, so the watchdog must not read the editor as idle.");
+
+                gate.SetResult(true);
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (EditorThreadHelper.WorkItemRunning && DateTime.UtcNow < deadline)
+                    Thread.Sleep(10);
+
+                Assert.IsFalse(EditorThreadHelper.WorkItemRunning,
+                    "The count has to come back down once the tool finishes, or nothing ever looks blocked again.");
+            }
+        }
+
         private static bool Blocked(TimeSpan sinceLastPump) =>
             EditorThreadHelper.LooksBlocked(false, sinceLastPump, false, false);
 
@@ -82,6 +119,61 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("Scene(s) Have Been Modified [buttons: Save | Don't Save | Cancel]", message);
             Assert.IsFalse(message.Contains("The usual cause"),
                 "A named dialog must replace the guess, not sit next to it.");
+        }
+
+        [Test]
+        public void FailBlockedCall_CancelsTheItemItJustGaveUpOn()
+        {
+            var tcs = new TaskCompletionSource<string>();
+            using (var queuedItem = new CancellationTokenSource())
+            {
+                Assert.IsTrue(EditorThreadHelper.FailBlockedCall(tcs, TimeSpan.FromSeconds(21), null, queuedItem));
+
+                Assert.IsInstanceOf<TimeoutException>(
+                    tcs.Task.Exception?.InnerException, "the caller has to see why it was given up on");
+                Assert.IsTrue(queuedItem.IsCancellationRequested,
+                    "an item left queued runs once the modal closes - and again on the client's retry");
+            }
+        }
+
+        [Test]
+        public void FailBlockedCall_LeavesAFinishedCallAlone()
+        {
+            var tcs = new TaskCompletionSource<string>();
+            tcs.SetResult("done");
+
+            using (var queuedItem = new CancellationTokenSource())
+            {
+                Assert.IsFalse(EditorThreadHelper.FailBlockedCall(tcs, TimeSpan.FromSeconds(21), null, queuedItem));
+                Assert.IsFalse(queuedItem.IsCancellationRequested,
+                    "the work already ran, so cancelling would only report a lie to the caller");
+            }
+        }
+
+        [Test]
+        public void ProcessQueues_DropsAnItemTheCallerAlreadyGaveUpOn()
+        {
+            using (var helper = new EditorThreadHelper())
+            using (var callerCts = new CancellationTokenSource())
+            {
+                var ran = 0;
+
+                // Off the main thread, or the helper runs the body inline instead of queueing it.
+                var queued = Task.Run(() => helper.ExecuteAsyncOnEditorThreadAsync<string>(
+                    () =>
+                    {
+                        Interlocked.Increment(ref ran);
+                        return Task.FromResult("ran");
+                    },
+                    callerCts.Token));
+                queued.Wait(TimeSpan.FromSeconds(5));
+
+                callerCts.Cancel();
+                helper.ProcessQueues();
+
+                Assert.AreEqual(0, Volatile.Read(ref ran),
+                    "the body must not run after the caller was told the call failed");
+            }
         }
 
         [Test]

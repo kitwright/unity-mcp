@@ -68,6 +68,59 @@ namespace KitWright.Editor
         }
 
         [Test]
+        public void DetachStream_FromAReplacedConnection_LeavesTheLiveStreamAttached()
+        {
+            var manager = SSESessionManager.Instance;
+            var session = manager.CreateSession();
+            var closers = new List<IDisposable>();
+
+            try
+            {
+                var first = LoopbackStream(closers);
+                var second = LoopbackStream(closers);
+
+                Assert.AreEqual(AttachStreamResult.Success, manager.TryAttachStream(session.SessionId, first, out _));
+                manager.DetachStream(session, first);
+                Assert.AreEqual(AttachStreamResult.Success, manager.TryAttachStream(session.SessionId, second, out _),
+                    "a client reconnecting to the same session attaches a new stream");
+
+                // What the first connection's ping loop runs when it finally notices it is done.
+                manager.DetachStream(session, first);
+
+                Assert.AreEqual(AttachStreamResult.StreamAlreadyAttached,
+                    manager.TryAttachStream(session.SessionId, first, out _),
+                    "the stale connection must not unhook the stream that replaced it");
+            }
+            finally
+            {
+                foreach (var closer in closers)
+                    closer.Dispose();
+            }
+        }
+
+        private static NetworkStream LoopbackStream(List<IDisposable> closers)
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0);
+            listener.Start();
+            closers.Add(new Closer(() => listener.Stop()));
+
+            var client = new TcpClient();
+            client.Connect((IPEndPoint)listener.LocalEndpoint);
+            closers.Add(client);
+
+            var server = listener.AcceptTcpClient();
+            closers.Add(server);
+            return server.GetStream();
+        }
+
+        private sealed class Closer : IDisposable
+        {
+            private readonly Action _close;
+            public Closer(Action close) { _close = close; }
+            public void Dispose() { _close(); }
+        }
+
+        [Test]
         public void ExtractPin_ReadsThePSegmentAndIgnoresTheQuery()
         {
             Assert.AreEqual("aaaa1111", HttpMCPTransport.ExtractPin("/p/aaaa1111/"));
@@ -551,13 +604,18 @@ namespace KitWright.Editor
         }
 
         [Test]
-        public void OriginValidation_AcceptsAbsentAndLocalhost_RejectsExternalDomain()
+        public void OriginValidation_AcceptsOnlyAnAbsentOrigin()
         {
             Assert.IsTrue(HttpMCPTransport.IsValidOrigin(null), "Absent origin must be allowed.");
             Assert.IsTrue(HttpMCPTransport.IsValidOrigin(""), "Empty origin must be allowed.");
-            Assert.IsTrue(HttpMCPTransport.IsValidOrigin("http://localhost:8765"));
-            Assert.IsTrue(HttpMCPTransport.IsValidOrigin("http://127.0.0.1:8765"));
-            Assert.IsTrue(HttpMCPTransport.IsValidOrigin("http://[::1]:8765"));
+
+            // Loopback origins used to pass. A page the user has open on their own dev server is
+            // still a web page, and it could drive this editor and - with the wildcard CORS header
+            // that used to sit on every response - read the answers back.
+            Assert.IsFalse(HttpMCPTransport.IsValidOrigin("http://localhost:3000"));
+            Assert.IsFalse(HttpMCPTransport.IsValidOrigin("http://127.0.0.1:8765"));
+            Assert.IsFalse(HttpMCPTransport.IsValidOrigin("http://[::1]:8765"));
+
             Assert.IsFalse(HttpMCPTransport.IsValidOrigin("http://evil-site.com"));
             Assert.IsFalse(HttpMCPTransport.IsValidOrigin("http://attacker.local"));
         }
@@ -612,6 +670,104 @@ namespace KitWright.Editor
                 transport.Dispose();
             }
         }
+
+        [UnityTest]
+        public IEnumerator ARequestFromABrowserIsRefusedAndNoResponseInvitesOne()
+        {
+            var port = GetFreeTcpPort();
+            var transport = new HttpMCPTransport(port, ProjectIdentityA);
+            transport.OnRequestReceived += (request, sendResponse) =>
+                HandleInitializeRequest(request, sendResponse, ProjectIdentityA);
+
+            try
+            {
+                var startTask = transport.StartAsync();
+                yield return WaitForTask(startTask);
+                Assert.IsTrue(startTask.Result);
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+                {
+                    // A page on the user's own dev server is still a web page. This used to be
+                    // allowed, and the wildcard CORS header let it read the answers as well.
+                    var fromAPage = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/")
+                    {
+                        Content = new StringContent(
+                            "{\"jsonrpc\":\"2.0\",\"id\":\"init-1\",\"method\":\"initialize\",\"params\":{}}",
+                            Encoding.UTF8, "application/json")
+                    };
+                    fromAPage.Headers.Add("Origin", "http://localhost:3000");
+
+                    var refusedTask = client.SendAsync(fromAPage);
+                    yield return WaitForTask(refusedTask, 3f);
+                    Assert.AreEqual(HttpStatusCode.Forbidden, refusedTask.Result.StatusCode,
+                        "A request carrying an Origin must not reach the editor.");
+
+                    // Nothing hands a browser permission to read a response either, on any path.
+                    using (var content = new StringContent(
+                        "{\"jsonrpc\":\"2.0\",\"id\":\"init-2\",\"method\":\"initialize\",\"params\":{}}",
+                        Encoding.UTF8, "application/json"))
+                    {
+                        var okTask = client.PostAsync("http://127.0.0.1:" + port + "/", content);
+                        yield return WaitForTask(okTask, 3f);
+
+                        Assert.AreEqual(HttpStatusCode.OK, okTask.Result.StatusCode);
+                        Assert.IsFalse(okTask.Result.Headers.Contains("Access-Control-Allow-Origin"),
+                            "No response may carry a CORS grant.");
+                    }
+                }
+            }
+            finally
+            {
+                transport.Dispose();
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator AClientPresentingAnotherProjectsTokenIsTurnedAway()
+        {
+            // Built, not written out: a 32-char hex literal trips the secret scanner.
+            var token = new string('a', ServerToken.Length);
+            var port = GetFreeTcpPort();
+            var transport = new HttpMCPTransport(port, ProjectIdentityA, token);
+            transport.OnRequestReceived += (request, sendResponse) =>
+                HandleInitializeRequest(request, sendResponse, ProjectIdentityA);
+
+            try
+            {
+                var startTask = transport.StartAsync();
+                yield return WaitForTask(startTask);
+                Assert.IsTrue(startTask.Result);
+
+                var pin = ProjectIdentityA.Substring(0, ProjectIdentity.PinLength);
+                var root = "http://127.0.0.1:" + port + "/p/" + pin;
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+                {
+                    var wrong = client.PostAsync(root + "/t/deadbeef/", Body("init-1"));
+                    yield return WaitForTask(wrong, 3f);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized, wrong.Result.StatusCode,
+                        "A token that is not this project's must not reach the editor.");
+
+                    var right = client.PostAsync(root + "/t/" + token + "/", Body("init-2"));
+                    yield return WaitForTask(right, 3f);
+                    Assert.AreEqual(HttpStatusCode.OK, right.Result.StatusCode);
+
+                    // Configs written before tokens existed carry none, and are still served so the
+                    // sweep gets a chance to repair them rather than breaking a working install.
+                    var legacy = client.PostAsync(root + "/", Body("init-3"));
+                    yield return WaitForTask(legacy, 3f);
+                    Assert.AreEqual(HttpStatusCode.OK, legacy.Result.StatusCode);
+                }
+            }
+            finally
+            {
+                transport.Dispose();
+            }
+        }
+
+        private static StringContent Body(string id) => new StringContent(
+            "{\"jsonrpc\":\"2.0\",\"id\":\"" + id + "\",\"method\":\"initialize\",\"params\":{}}",
+            Encoding.UTF8, "application/json");
 
         [UnityTest]
         public IEnumerator GetStream_WithoutValidSession_Returns404()

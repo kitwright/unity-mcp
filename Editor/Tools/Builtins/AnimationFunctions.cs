@@ -22,6 +22,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Name of the controller")] string name,
             [ToolParam("Save path", Required = false)] string save_path = "Assets/Animations/")
         {
+            try { PathSafety.ResolveAssetPath(save_path.TrimEnd('/', '\\') + "/x"); }
+            catch (PathOutsideProjectException ex)
+            { return ToolResultFormatter.Error("INVALID_PATH", new { save_path, message = ex.Message }); }
+
             if (!Directory.Exists(save_path))
                 Directory.CreateDirectory(save_path);
 
@@ -35,6 +39,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Name of the animation clip")] string name,
             [ToolParam("Save path", Required = false)] string save_path = "Assets/Animations/")
         {
+            try { PathSafety.ResolveAssetPath(save_path.TrimEnd('/', '\\') + "/x"); }
+            catch (PathOutsideProjectException ex)
+            { return ToolResultFormatter.Error("INVALID_PATH", new { save_path, message = ex.Message }); }
+
             if (!Directory.Exists(save_path))
                 Directory.CreateDirectory(save_path);
 
@@ -278,19 +286,26 @@ namespace KitWright.Editor.Tools.Builtins
                 // The property hands back a copy of the array, so the edit only lands on assignment back.
                 var parameters = controller.parameters;
                 var added = parameters[parameters.Length - 1];
-                try
+                var parsed = true;
+                switch (parameterType)
                 {
-                    switch (parameterType)
-                    {
-                        case AnimatorControllerParameterType.Float: added.defaultFloat = float.Parse(default_value); break;
-                        case AnimatorControllerParameterType.Int: added.defaultInt = int.Parse(default_value); break;
-                        case AnimatorControllerParameterType.Bool: added.defaultBool = bool.Parse(default_value); break;
-                    }
+                    case AnimatorControllerParameterType.Float:
+                        parsed = ValueConverter.TryParseFloat(default_value, out var floatDefault);
+                        added.defaultFloat = floatDefault;
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        parsed = ValueConverter.TryParseInt(default_value, out var intDefault);
+                        added.defaultInt = intDefault;
+                        break;
+                    case AnimatorControllerParameterType.Bool:
+                        parsed = bool.TryParse(default_value, out var boolDefault);
+                        added.defaultBool = boolDefault;
+                        break;
                 }
-                catch (Exception ex) when (ex is FormatException || ex is OverflowException)
-                {
+
+                if (!parsed)
                     return ToolResultFormatter.Error("INVALID_DEFAULT_VALUE", new { default_value, type });
-                }
+
                 controller.parameters = parameters;
             }
 

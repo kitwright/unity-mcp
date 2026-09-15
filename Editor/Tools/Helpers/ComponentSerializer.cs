@@ -94,7 +94,12 @@ namespace KitWright.Editor.Tools.Helpers
             {
                 case SerializedPropertyType.Integer: return ReadInteger(p);
                 case SerializedPropertyType.Boolean: return p.boolValue;
-                case SerializedPropertyType.Float: return p.floatValue;
+                // Reading a double through floatValue loses the precision the field actually holds,
+                // so the value handed back is not the value stored.
+                case SerializedPropertyType.Float:
+                    return p.numericType == SerializedPropertyNumericType.Double
+                        ? (object)p.doubleValue
+                        : p.floatValue;
                 case SerializedPropertyType.String: return p.stringValue;
                 case SerializedPropertyType.Color:
                     var c = p.colorValue;
@@ -194,15 +199,26 @@ namespace KitWright.Editor.Tools.Helpers
                     }
                     else if (TryWriteSerializedProperty(serializedProperty, prop.Value, out var writeError))
                     {
+                        // Committed per field, so the rollback below can throw away a half-written
+                        // one without taking the fields that already succeeded with it.
+                        so.ApplyModifiedProperties();
                         fr.Success = true;
                     }
                     else
                     {
+                        // A failed write is not always a write that did nothing: an array is resized
+                        // and filled element by element, so [99,"bad"] over [10,20,30] left [99,20]
+                        // behind and still reported failure. Update() re-reads the object, dropping
+                        // whatever this field managed to change.
+                        so.Update();
                         fr.Error = writeError;
                     }
                 }
                 catch (Exception ex)
                 {
+                    // Same reason as the failure branch: a throw mid-write leaves the property part
+                    // way through the change it was asked for.
+                    so.Update();
                     fr.Error = ex.Message;
                 }
                 results.Add(fr);
@@ -225,7 +241,7 @@ namespace KitWright.Editor.Tools.Helpers
                     p.uintValue = unchecked((uint)value.ToObject<long>());
                     break;
                 case SerializedPropertyNumericType.UInt64:
-                    p.ulongValue = unchecked((ulong)value.ToObject<long>());
+                    p.ulongValue = ToUnsigned64(value);
                     break;
                 case SerializedPropertyNumericType.Int64:
                     p.longValue = value.ToObject<long>();
@@ -233,6 +249,21 @@ namespace KitWright.Editor.Tools.Helpers
                 default:
                     p.intValue = value.ToObject<int>();
                     break;
+            }
+        }
+
+        // Anything above long.MaxValue only exists as a ulong, and going through long threw on it -
+        // so ulong.MaxValue could be read out of a field and not written back. A mask written as -1
+        // still has to mean "every bit", which is what the signed fallback preserves.
+        private static ulong ToUnsigned64(JToken value)
+        {
+            try
+            {
+                return value.ToObject<ulong>();
+            }
+            catch (Exception)
+            {
+                return unchecked((ulong)value.ToObject<long>());
             }
         }
 
@@ -248,7 +279,13 @@ namespace KitWright.Editor.Tools.Helpers
                     case SerializedPropertyType.Boolean:
                         p.boolValue = value.ToObject<bool>(); return true;
                     case SerializedPropertyType.Float:
-                        p.floatValue = value.ToObject<float>(); return true;
+                        // A double field is also SerializedPropertyType.Float, and floatValue rounds
+                        // it on the way in: 16777217 was stored as 16777216 and reported as written.
+                        if (p.numericType == SerializedPropertyNumericType.Double)
+                            p.doubleValue = value.ToObject<double>();
+                        else
+                            p.floatValue = value.ToObject<float>();
+                        return true;
                     case SerializedPropertyType.String:
                         p.stringValue = value.ToObject<string>() ?? string.Empty; return true;
                     case SerializedPropertyType.LayerMask:
@@ -309,6 +346,13 @@ namespace KitWright.Editor.Tools.Helpers
                         { p.vector3IntValue = new Vector3Int(Mathf.RoundToInt(v3int[0]), Mathf.RoundToInt(v3int[1]), Mathf.RoundToInt(v3int[2])); return true; }
                         break;
                     case SerializedPropertyType.Enum:
+                        // The read side answers {name, value}; handing that straight back was refused
+                        // as "Could not parse value for Enum: Object", so reading a component and
+                        // writing it back could not round-trip. The underlying value wins over the
+                        // display name, which only names single-valued enums.
+                        if (value is JObject enumObject)
+                            value = enumObject["value"] ?? enumObject["name"] ?? value;
+
                         if (value.Type == JTokenType.Integer)
                         {
                             // A number is the enum's underlying value (a [Flags] mask included), not a

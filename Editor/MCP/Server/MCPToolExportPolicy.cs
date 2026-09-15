@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using KitWright.Editor.Settings;
 using KitWright.Editor.Tools;
 
 namespace KitWright.Editor.MCP.Server
@@ -132,6 +133,22 @@ namespace KitWright.Editor.MCP.Server
                 case MCPToolExportProfile.Full: return "full";
                 default: return "core";
             }
+        }
+
+        /// Same question asked from the settings object, for call sites that reach the invoker
+        /// without going through MCPExecutionBridge. No settings means no policy to enforce.
+        public static bool IsToolAllowed(string toolName, SettingsController settings, out string profileKey)
+        {
+            if (settings == null)
+            {
+                profileKey = null;
+                return true;
+            }
+
+            var profile = Parse(settings.MCPToolExportProfile);
+            profileKey = ToSettingValue(profile);
+            return IsToolAllowed(
+                toolName, profile, settings.IsProfileConfigured(profileKey), settings.GetProfileTools(profileKey));
         }
 
         public static bool IsToolAllowed(
