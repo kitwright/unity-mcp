@@ -3,12 +3,46 @@
 using System.Collections.Generic;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
+using UnityEditor;
 using UnityEngine;
 
 namespace KitWright.Editor.Tests
 {
     public sealed class TextureFunctionsTests
     {
+        private const string FolderName = "__KitWrightTextureSizeTests";
+        private const string Folder = "Assets/" + FolderName;
+
+        [TearDown]
+        public void DeleteFolder()
+        {
+            if (AssetDatabase.IsValidFolder(Folder))
+                AssetDatabase.DeleteAsset(Folder);
+        }
+
+        /// <summary>
+        /// The paint callbacks used to close over the caller's own width and height, which Generate
+        /// never clamped - it clamped only the locals it built the Texture2D from. At the top end that
+        /// meant a request for 8192 allocated 67M Color32 for a 4096 texture and threw; the same line
+        /// is reachable from the bottom end for the price of one pixel, because the clamp floor is 1.
+        /// Reverting the fix turns this red as TEXTURE_WRITE_FAILED: SetPixels32 gets an empty array
+        /// for a 1x1 texture.
+        /// </summary>
+        [Test]
+        public void GenerateFillsTheTextureItActuallyMadeNotTheSizeThatWasAskedFor()
+        {
+            if (!AssetDatabase.IsValidFolder(Folder))
+                AssetDatabase.CreateFolder("Assets", FolderName);
+
+            var path = Folder + "/KwClamped.png";
+            ToolCall.Ok("create_texture", "path", path, "width", "0", "height", "0", "color", "#ff0000ff");
+
+            var texture = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+            Assert.IsNotNull(texture, "A size below the clamp floor still has to produce an asset.");
+            Assert.AreEqual(1, texture.width);
+            Assert.AreEqual(1, texture.height);
+        }
+
         [Test]
         public void ParseColor_HexRgba()
         {
