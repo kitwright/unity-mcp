@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 #if KITWRIGHT_ANIMATION
+using System.Globalization;
 using System.Linq;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
@@ -43,6 +44,33 @@ namespace KitWright.Editor.Tests
             var parameter = Controller().parameters.Single(p => p.name == "Speed");
             Assert.AreEqual(AnimatorControllerParameterType.Float, parameter.type);
             Assert.AreEqual(0.5f, parameter.defaultFloat, 0.0001f);
+        }
+
+        // The editor runs under the OS culture, and float.Parse(string) allows group separators, so on a
+        // German machine "0.5" used to land as 5 with no exception to catch. The test above only passes
+        // because the machine running it happens to use a dot.
+        [Test]
+        public void AddAnimatorParameter_ReadsItsDefaultValueTheSameUnderAnyCulture()
+        {
+            var previous = CultureInfo.CurrentCulture;
+            CultureInfo.CurrentCulture = new CultureInfo("de-DE");
+            try
+            {
+                AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float", "0.5");
+
+                Assert.AreEqual(0.5f, Controller().parameters.Single(p => p.name == "Speed").defaultFloat, 0.0001f);
+            }
+            finally
+            {
+                CultureInfo.CurrentCulture = previous;
+            }
+        }
+
+        [Test]
+        public void AddAnimatorParameter_RejectsADefaultValueThatIsNotANumber()
+        {
+            StringAssert.Contains("INVALID_DEFAULT_VALUE",
+                AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float", "fast"));
         }
 
         [Test]
