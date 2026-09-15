@@ -58,6 +58,43 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(EditorThreadHelper.WorkItemRunning, "The finally must clear it again.");
         }
 
+        // The pump's count drops when the queued lambda returns, which for an async tool is its first
+        // real await, not its end. Read naively the watchdog then sees "nothing of ours is running"
+        // over a stale pump and fails a call that was only waiting on a compile.
+        [Test]
+        public void WorkItemRunning_StaysTrueWhileAnAsyncToolIsStillAwaiting()
+        {
+            using (var helper = new EditorThreadHelper())
+            {
+                var gate = new TaskCompletionSource<bool>();
+
+                using (var handoff = new ManualResetEventSlim())
+                {
+                    Task.Run(() =>
+                    {
+                        helper.ExecuteAsyncOnEditorThreadAsync(async () => await gate.Task);
+                        handoff.Set();
+                    });
+
+                    Assert.IsTrue(handoff.Wait(TimeSpan.FromSeconds(5)), "The work item was never queued.");
+                }
+
+                helper.ProcessQueues();
+
+                Assert.IsTrue(EditorThreadHelper.WorkItemRunning,
+                    "The tool is still awaiting, so the watchdog must not read the editor as idle.");
+
+                gate.SetResult(true);
+
+                var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(5);
+                while (EditorThreadHelper.WorkItemRunning && DateTime.UtcNow < deadline)
+                    Thread.Sleep(10);
+
+                Assert.IsFalse(EditorThreadHelper.WorkItemRunning,
+                    "The count has to come back down once the tool finishes, or nothing ever looks blocked again.");
+            }
+        }
+
         private static bool Blocked(TimeSpan sinceLastPump) =>
             EditorThreadHelper.LooksBlocked(false, sinceLastPump, false, false);
 
