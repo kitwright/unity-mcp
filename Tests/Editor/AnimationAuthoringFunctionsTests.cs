@@ -74,6 +74,21 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void AddAnimatorParameter_RefusedForItsDefaultValue_LeavesNoParameterBehind()
+        {
+            AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float", "fast");
+
+            // The parameter used to be added before the value was parsed, so the refusal left it on
+            // the controller - and the retry below answered PARAMETER_EXISTS, with no way forward
+            // through the tool at all.
+            Assert.IsEmpty(Controller().parameters.Where(p => p.name == "Speed"));
+
+            AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float", "0.5");
+
+            Assert.AreEqual(0.5f, Controller().parameters.Single(p => p.name == "Speed").defaultFloat, 0.0001f);
+        }
+
+        [Test]
         public void AddAnimatorParameter_RejectsADuplicateInsteadOfAddingASecond()
         {
             AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float");
@@ -137,6 +152,33 @@ namespace KitWright.Editor.Tests
 
             StringAssert.Contains("PARAMETER_NOT_FOUND", message);
         }
+
+        [Test]
+        public void AddAnimatorTransition_RefusedForItsConditions_LeavesNoTransitionBehind()
+        {
+            AnimationFunctions.AddAnimatorState(ControllerPath, "Idle");
+            AnimationFunctions.AddAnimatorState(ControllerPath, "Run");
+            AnimationFunctions.AddAnimatorParameter(ControllerPath, "Speed", "float");
+
+            // The first condition is good and the second names nothing. The transition used to be
+            // created before any of this was read, so the refusal left it in place carrying the
+            // first condition alone - a rule nobody asked for, on a call that reported failure.
+            var message = AnimationFunctions.AddAnimatorTransition(ControllerPath, "Idle", "Run",
+                "[{\"parameter\":\"Speed\",\"mode\":\"Greater\",\"threshold\":0.1}," +
+                "{\"parameter\":\"Ghost\",\"mode\":\"If\"}]");
+
+            StringAssert.Contains("PARAMETER_NOT_FOUND", message);
+            Assert.IsEmpty(FindState(StateMachine(), "Idle").transitions,
+                "A refused call must not leave a transition on the source state.");
+
+            // Malformed JSON has to behave the same way.
+            StringAssert.Contains("INVALID_CONDITIONS_JSON",
+                AnimationFunctions.AddAnimatorTransition(ControllerPath, "Idle", "Run", "not json"));
+            Assert.IsEmpty(FindState(StateMachine(), "Idle").transitions);
+        }
+
+        private static AnimatorState FindState(AnimatorStateMachine machine, string name) =>
+            machine.states.Single(s => s.state.name == name).state;
 
         [Test]
         public void AddAnimatorTransition_AnyStateTransitionAttachesToTheMachineNotAState()

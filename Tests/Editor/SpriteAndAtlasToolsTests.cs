@@ -158,6 +158,15 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("INVALID_FILTER_MODE",
                 Code("set_sprite_atlas_settings", "path", AtlasPath, "filter_mode", "Wobble"));
 
+            // A refused call must change nothing. filter_mode used to be parsed last, so the
+            // settings named before it were already applied to the asset by the time the answer
+            // said the call had failed - and they reach disk on whatever saves the atlas next.
+            Assert.AreEqual("INVALID_FILTER_MODE",
+                Code("set_sprite_atlas_settings", "path", AtlasPath,
+                    "include_in_build", "true", "padding", "16", "filter_mode", "Wobble"));
+            Assert.IsFalse(Atlas().IsIncludeInBuild(), "include_in_build was applied before the refusal.");
+            Assert.AreEqual(8, Atlas().GetPackingSettings().padding, "padding was applied before the refusal.");
+
             Ok("remove_from_sprite_atlas", "path", AtlasPath, "asset_paths", Sheet);
             Assert.AreEqual(0, Atlas().GetPackables().Length);
         }

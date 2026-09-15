@@ -4,6 +4,7 @@
 #if KITWRIGHT_ANIMATION
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using KitWright.Editor.Tools.Helpers;
@@ -279,33 +280,47 @@ namespace KitWright.Editor.Tools.Builtins
                     valid = Enum.GetNames(typeof(AnimatorControllerParameterType))
                 });
 
-            controller.AddParameter(name, parameterType);
-
-            if (!string.IsNullOrWhiteSpace(default_value))
+            // Parsed before the parameter is added, not after. AddParameter writes to the controller
+            // asset, so returning INVALID_DEFAULT_VALUE afterwards left the parameter behind - and
+            // the retry with a corrected value then answered PARAMETER_EXISTS, leaving no way
+            // forward through the tool at all.
+            var hasDefault = !string.IsNullOrWhiteSpace(default_value);
+            float floatDefault = 0f;
+            int intDefault = 0;
+            bool boolDefault = false;
+            if (hasDefault)
             {
-                // The property hands back a copy of the array, so the edit only lands on assignment back.
-                var parameters = controller.parameters;
-                var added = parameters[parameters.Length - 1];
                 var parsed = true;
                 switch (parameterType)
                 {
                     case AnimatorControllerParameterType.Float:
-                        parsed = ValueConverter.TryParseFloat(default_value, out var floatDefault);
-                        added.defaultFloat = floatDefault;
+                        parsed = ValueConverter.TryParseFloat(default_value, out floatDefault);
                         break;
                     case AnimatorControllerParameterType.Int:
-                        parsed = ValueConverter.TryParseInt(default_value, out var intDefault);
-                        added.defaultInt = intDefault;
+                        parsed = ValueConverter.TryParseInt(default_value, out intDefault);
                         break;
                     case AnimatorControllerParameterType.Bool:
-                        parsed = bool.TryParse(default_value, out var boolDefault);
-                        added.defaultBool = boolDefault;
+                        parsed = bool.TryParse(default_value, out boolDefault);
                         break;
                 }
 
                 if (!parsed)
                     return ToolResultFormatter.Error("INVALID_DEFAULT_VALUE", new { default_value, type });
+            }
 
+            controller.AddParameter(name, parameterType);
+
+            if (hasDefault)
+            {
+                // The property hands back a copy of the array, so the edit only lands on assignment back.
+                var parameters = controller.parameters;
+                var added = parameters[parameters.Length - 1];
+                switch (parameterType)
+                {
+                    case AnimatorControllerParameterType.Float: added.defaultFloat = floatDefault; break;
+                    case AnimatorControllerParameterType.Int: added.defaultInt = intDefault; break;
+                    case AnimatorControllerParameterType.Bool: added.defaultBool = boolDefault; break;
+                }
                 controller.parameters = parameters;
             }
 
@@ -376,6 +391,14 @@ namespace KitWright.Editor.Tools.Builtins
                     return ToolResultFormatter.Error("STATE_NOT_FOUND", new { state = to_state, layer, controller_path });
             }
 
+            // Parsed before anything is created. Applying conditions to a transition that already
+            // existed meant a bad entry halfway down the list left the transition behind carrying
+            // the entries before it - a rule nobody asked for, on a call that reported failure.
+            List<ParsedCondition> parsedConditions = null;
+            if (!string.IsNullOrWhiteSpace(conditions) &&
+                !TryParseConditions(controller, conditions, out parsedConditions, out var conditionError))
+                return conditionError;
+
             AnimatorStateTransition transition;
             if (from == "any" || from == "anystate")
             {
@@ -402,13 +425,11 @@ namespace KitWright.Editor.Tools.Builtins
             transition.hasExitTime = has_exit_time;
             transition.duration = duration;
 
-            var conditionCount = 0;
-            if (!string.IsNullOrWhiteSpace(conditions))
-            {
-                if (!TryApplyConditions(controller, transition, conditions, out var conditionError))
-                    return conditionError;
-                conditionCount = transition.conditions.Length;
-            }
+            if (parsedConditions != null)
+                foreach (var condition in parsedConditions)
+                    transition.AddCondition(condition.Mode, condition.Threshold, condition.Parameter);
+
+            var conditionCount = transition.conditions.Length;
 
             SaveController(controller);
             return $"Added transition {from_state} -> {to_state} on layer {layer} of '{controller_path}' " +
@@ -511,8 +532,23 @@ namespace KitWright.Editor.Tools.Builtins
             return null;
         }
 
-        private static bool TryApplyConditions(AnimatorController controller, AnimatorStateTransition transition, string conditions, out string error)
+        private struct ParsedCondition
         {
+            public AnimatorConditionMode Mode;
+            public float Threshold;
+            public string Parameter;
+        }
+
+        /// <summary>
+        /// Every condition validated before any of them is written. Applying them straight onto the
+        /// transition meant a list whose second entry named a missing parameter left the first one
+        /// applied and the transition in place - a rule the caller never asked for, on a transition
+        /// the error said had failed.
+        /// </summary>
+        private static bool TryParseConditions(
+            AnimatorController controller, string conditions, out List<ParsedCondition> result, out string error)
+        {
+            result = new List<ParsedCondition>();
             error = null;
 
             JArray parsed;
@@ -556,7 +592,12 @@ namespace KitWright.Editor.Tools.Builtins
                     return false;
                 }
 
-                transition.AddCondition(mode, entry["threshold"]?.Value<float>() ?? 0f, parameter);
+                result.Add(new ParsedCondition
+                {
+                    Mode = mode,
+                    Threshold = entry["threshold"]?.Value<float>() ?? 0f,
+                    Parameter = parameter
+                });
             }
 
             return true;

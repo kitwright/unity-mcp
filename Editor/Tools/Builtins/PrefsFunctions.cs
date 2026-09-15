@@ -23,6 +23,9 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("KEY_NOT_FOUND", new { key });
 
             var resolved = ResolvePrefType(type);
+            if (resolved == "auto")
+                resolved = DetectEditorPrefType(key);
+
             object value = resolved switch
             {
                 "int" => EditorPrefs.GetInt(key),
@@ -77,6 +80,8 @@ namespace KitWright.Editor.Tools.Builtins
             var resolved = ResolvePrefType(type);
             // PlayerPrefs has no bool; treat bool hint as int.
             if (resolved == "bool") resolved = "int";
+            if (resolved == "auto")
+                resolved = DetectPlayerPrefType(key);
 
             object value = resolved switch
             {
@@ -126,6 +131,41 @@ namespace KitWright.Editor.Tools.Builtins
             PlayerPrefs.DeleteAll();
             PlayerPrefs.Save();
             return Response.Success("Deleted all PlayerPrefs keys.");
+        }
+
+        /// <summary>
+        /// Which type a stored key actually holds. Neither prefs API will say, but both return the
+        /// default you pass when the key is not of that type - so asking twice with two different
+        /// defaults answers it: two identical results mean the value came from the store.
+        ///
+        /// Order matters. EditorPrefs stores a bool as an int, so bool is asked for first and only
+        /// accepted when the int is 0 or 1; anything else is a plain int. Without this, "auto" read
+        /// every key as a string, which is what the tool's own description promised it would not do.
+        /// </summary>
+        internal static string DetectEditorPrefType(string key)
+        {
+            if (EditorPrefs.GetInt(key, int.MinValue) == EditorPrefs.GetInt(key, int.MaxValue))
+            {
+                var stored = EditorPrefs.GetInt(key);
+                return stored == 0 || stored == 1 ? "bool" : "int";
+            }
+
+            if (EditorPrefs.GetFloat(key, float.MinValue) == EditorPrefs.GetFloat(key, float.MaxValue))
+                return "float";
+
+            return "string";
+        }
+
+        internal static string DetectPlayerPrefType(string key)
+        {
+            // No bool in PlayerPrefs, so an int stays an int.
+            if (PlayerPrefs.GetInt(key, int.MinValue) == PlayerPrefs.GetInt(key, int.MaxValue))
+                return "int";
+
+            if (PlayerPrefs.GetFloat(key, float.MinValue) == PlayerPrefs.GetFloat(key, float.MaxValue))
+                return "float";
+
+            return "string";
         }
 
         internal static string ResolvePrefType(string type)
