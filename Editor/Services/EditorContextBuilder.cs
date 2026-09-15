@@ -397,7 +397,9 @@ namespace KitWright.Editor.Services
                 if (!int.TryParse(match.Groups["line"].Value, out var lineNumber))
                     lineNumber = 1;
 
-                var lines = File.ReadAllLines(fullPath);
+                string[] lines;
+                try { lines = File.ReadAllLines(fullPath); }
+                catch (Exception) { continue; }
                 var start = Math.Max(1, lineNumber - snippetRadius);
                 var end = Math.Min(lines.Length, lineNumber + snippetRadius);
                 var sb = new StringBuilder();
