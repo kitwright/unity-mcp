@@ -67,17 +67,25 @@ namespace KitWright.Editor.Services
                 {
                     return true;
                 }
-            }
-            // Raw flag on purpose: this await is timeout-bounded, so a compile queued in a fresh
-            // domain (where compilationStarted never fired) must still be waited out.
-            else if (!EditorApplication.isCompiling)
-            {
-                return true;
-            }
 
+                // What the pipeline saw start may have been an import, which queues the compile it
+                // triggers a few frames later with the raw flag clear in between. Polling it here
+                // waits for a compile about to begin instead of reporting it as already finished.
+                if (!EditorApplication.isCompiling)
+                    await WaitForCompilationToStartAsync(timeoutSeconds).ConfigureAwait(false);
+            }
             TaskCompletionSource<bool> waitSource;
             lock (SyncRoot)
             {
+                // Raw flag on purpose: this await is timeout-bounded, so a compile queued in a fresh
+                // domain (where compilationStarted never fired) must still be waited out.
+                // Checked inside the lock so a compile that finishes between here and the lock
+                // cannot leave a fresh TCS nothing will complete.
+                // An import fires no compilationFinished, so a refresh that only imported has to
+                // answer here rather than spend the whole timeout on a source nothing completes.
+                if (!EditorApplication.isCompiling)
+                    return true;
+
                 if (_compilationFinishedTcs == null || _compilationFinishedTcs.Task.IsCompleted)
                 {
                     _compilationFinishedTcs = CreateCompletionSource();
@@ -169,7 +177,12 @@ namespace KitWright.Editor.Services
             lock (SyncRoot)
             {
                 LatestMessages.Clear();
-                _compilationFinishedTcs = CreateCompletionSource();
+
+                // A waiter that got here first is holding the current source, and only the source
+                // live when compilationFinished fires is completed - replacing it would leave that
+                // waiter timing out on a compile that in fact finished.
+                if (_compilationFinishedTcs == null || _compilationFinishedTcs.Task.IsCompleted)
+                    _compilationFinishedTcs = CreateCompletionSource();
             }
         }
 

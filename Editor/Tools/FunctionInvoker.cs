@@ -18,9 +18,18 @@ namespace KitWright.Editor.Tools
     /// </summary>
     internal class FunctionInvoker
     {
+        /// <summary>For tools that answer without awaiting. A tool whose body awaits resumes on
+        /// EditorApplication.update, which blocking here stops, so it refuses instead of hanging the
+        /// editor for good. Everything else calls <see cref="InvokeAsync"/>.</summary>
         public string Invoke(FunctionCall functionCall)
         {
-            return InvokeAsync(functionCall).GetAwaiter().GetResult();
+            var pending = InvokeAsync(functionCall);
+            if (!pending.IsCompleted)
+                throw new InvalidOperationException(
+                    $"'{functionCall?.FunctionName}' did not answer synchronously. Await InvokeAsync instead: " +
+                    "blocking here stops the editor update loop the tool resumes on.");
+
+            return pending.GetAwaiter().GetResult();
         }
 
         public async Task<string> InvokeAsync(FunctionCall functionCall)

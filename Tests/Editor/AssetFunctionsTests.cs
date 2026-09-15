@@ -82,6 +82,19 @@ namespace KitWright.Editor.Tests
                 "Concatenating the name onto the folder wrote it beside the folder: " + result);
         }
 
+        // The name is half the path written, so validating only the folder leaves a name free to
+        // walk out of it.
+        [Test]
+        public void CreateMaterial_RefusesANameThatWalksOutOfTheSavePath()
+        {
+            var name = "../../Escaped_" + Guid.NewGuid().ToString("N");
+
+            var result = AssetFunctions.CreateMaterial(name, "1,1,1,1", "Sprites/Default", _folder);
+
+            StringAssert.Contains("INVALID_PATH", result);
+            Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(_folder + "/" + name + ".mat"));
+        }
+
         [Test]
         public void DeleteSpriteAtlas_MovesTheAtlasToTheTrashInsteadOfUnlinkingIt()
         {
