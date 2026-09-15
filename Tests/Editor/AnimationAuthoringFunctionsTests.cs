@@ -205,6 +205,23 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(3, AnimationUtility.GetEditorCurve(clip, binding).length);
         }
 
+        // Fourth tool in this shape: add_animator_parameter and add_animator_transition wrote before
+        // validating too. AddState lands on the controller, so a clip_path typo used to leave the
+        // state behind - and the retry with a corrected path then answered STATE_EXISTS, which left
+        // no way forward through the tool at all.
+        [Test]
+        public void AddAnimatorState_RefusedForItsClip_LeavesNoStateBehind()
+        {
+            StringAssert.Contains("ANIMATION_CLIP_NOT_FOUND",
+                AnimationFunctions.AddAnimatorState(ControllerPath, "Walk", Folder + "/NoSuch.anim"));
+
+            Assert.IsEmpty(StateMachine().states, "A refused add must not leave the state on the controller.");
+
+            // The retry a caller would actually make has to work.
+            AnimationFunctions.AddAnimatorState(ControllerPath, "Walk", ClipPath);
+            Assert.AreEqual("Walk", FindState(StateMachine(), "Walk").name);
+        }
+
         [Test]
         public void SetClipCurve_MalformedKeysAreRejectedInsteadOfWritingAnEmptyCurve()
         {

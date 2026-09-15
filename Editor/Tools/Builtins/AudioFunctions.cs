@@ -35,23 +35,29 @@ namespace KitWright.Editor.Tools.Builtins
             // component so that dereferencing it reports "there is no X attached" instead of a bare
             // NullReferenceException. Unity's == operator calls that stub null; ?? compares references
             // and does not, so the component was never added and the first write below threw.
+            // Both resolved before the component is added: a typo in either left a bare AudioSource
+            // on an object that had none, on a call whose answer said it had failed.
+            AudioClip loadedClip = null;
+            if (clip != null)
+            {
+                loadedClip = AssetDatabase.LoadAssetAtPath<AudioClip>(clip);
+                if (loadedClip == null) return Response.Error("CLIP_NOT_FOUND", new { clip });
+            }
+
+            AudioMixerGroup group = null;
+            if (mixer_group != null)
+            {
+                group = LoadMixerGroup(mixer_group);
+                if (group == null) return Response.Error("MIXER_GROUP_NOT_FOUND", new { mixer_group });
+            }
+
             var src = go.GetComponent<AudioSource>();
             if (src == null)
                 src = Undo.AddComponent<AudioSource>(go);
             Undo.RecordObject(src, "Configure AudioSource");
 
-            if (clip != null)
-            {
-                var loaded = AssetDatabase.LoadAssetAtPath<AudioClip>(clip);
-                if (loaded == null) return Response.Error("CLIP_NOT_FOUND", new { clip });
-                src.clip = loaded;
-            }
-            if (mixer_group != null)
-            {
-                var group = LoadMixerGroup(mixer_group);
-                if (group == null) return Response.Error("MIXER_GROUP_NOT_FOUND", new { mixer_group });
-                src.outputAudioMixerGroup = group;
-            }
+            if (loadedClip != null) src.clip = loadedClip;
+            if (group != null) src.outputAudioMixerGroup = group;
             if (volume.HasValue) src.volume = Mathf.Clamp01(volume.Value);
             if (pitch.HasValue) src.pitch = pitch.Value;
             if (loop.HasValue) src.loop = loop.Value;
