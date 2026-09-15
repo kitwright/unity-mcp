@@ -118,6 +118,18 @@ namespace KitWright.Editor.Tools.Builtins
             var atlas = LoadAtlas(path, out var error);
             if (atlas == null) return error;
 
+            // Validated before anything is written. filter_mode used to be parsed last, after
+            // include_in_build and the packing settings had already been applied, so a typo there
+            // left half the call's changes on an asset the answer said had failed - and they reach
+            // disk on whatever saves the atlas next, not here.
+            FilterMode? filterMode = null;
+            if (filter_mode != null)
+            {
+                if (!Enum.TryParse<FilterMode>(filter_mode, true, out var parsed))
+                    return Response.Error("INVALID_FILTER_MODE", new { filter_mode, valid = new[] { "Point", "Bilinear", "Trilinear" } });
+                filterMode = parsed;
+            }
+
             if (include_in_build.HasValue) atlas.SetIncludeInBuild(include_in_build.Value);
 
             if (enable_rotation.HasValue || enable_tight_packing.HasValue || padding.HasValue)
@@ -135,12 +147,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (readable.HasValue) texture.readable = readable.Value;
                 if (generate_mip_maps.HasValue) texture.generateMipMaps = generate_mip_maps.Value;
                 if (srgb.HasValue) texture.sRGB = srgb.Value;
-                if (filter_mode != null)
-                {
-                    if (!Enum.TryParse<FilterMode>(filter_mode, true, out var fm))
-                        return Response.Error("INVALID_FILTER_MODE", new { filter_mode, valid = new[] { "Point", "Bilinear", "Trilinear" } });
-                    texture.filterMode = fm;
-                }
+                if (filterMode.HasValue) texture.filterMode = filterMode.Value;
                 atlas.SetTextureSettings(texture);
             }
 
