@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -64,6 +65,34 @@ namespace KitWright.Editor.Tests
                 Assert.IsNull(response.Error, "ping must not come back as an error");
                 Assert.IsNotNull(response.Result);
                 Assert.AreEqual(7, response.Id);
+            }
+        }
+
+        // The profile lookup used to sit below the off-editor-thread branch, so a [OffEditorThread]
+        // tool went straight to the invoker whatever the profile said. dismiss_editor_dialog is one
+        // of them, and it clicks buttons on a modal - 'Don't Save' among them.
+        [Test]
+        public async Task AToolThatAnswersOffTheEditorThreadStillObeysToolExposure()
+        {
+            Assert.IsTrue(ToolRegistry.RunsOffEditorThread("get_editor_dialog"),
+                "Setup: this test only means anything while get_editor_dialog takes the off-thread path.");
+
+            var settings = new SettingsController(_tempRoot);
+            using (var threadHelper = new EditorThreadHelper())
+            {
+                var bridge = new MCPExecutionBridge(
+                    threadHelper, settings, new StateController(), new FunctionInvoker(), null);
+
+                settings.MCPToolExportProfile = "minimal";
+                var refused = await bridge.ExecuteToolAsync(
+                    "get_editor_dialog", new Dictionary<string, object>(), CancellationToken.None);
+                StringAssert.Contains("TOOL_NOT_EXPOSED", refused);
+
+                settings.MCPToolExportProfile = "full";
+                var allowed = await bridge.ExecuteToolAsync(
+                    "get_editor_dialog", new Dictionary<string, object>(), CancellationToken.None);
+                StringAssert.DoesNotContain("TOOL_NOT_EXPOSED", allowed,
+                    "A profile that exposes the tool must still reach it.");
             }
         }
 
