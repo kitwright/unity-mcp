@@ -160,6 +160,25 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        /// <summary>
+        /// The pointer counterpart of <see cref="RequireWorkingGamepadInjection"/>, and the same
+        /// question: is the device unreachable here, or is the tool wrong? Under the default
+        /// PointersAndKeyboardsRespectGameViewFocus, Unity resets pointer devices every frame when no
+        /// Game View has focus, and a batchmode run has no Game View at all - so an injected pointer
+        /// is gone before the player loop samples it and nothing spanning frames can be asserted.
+        /// Lifting the rule instead is not an option here: it routes the real mouse of whoever runs
+        /// the editor into the same device these tests read.
+        /// </summary>
+        private static void RequirePointersRoutedToAGameView()
+        {
+            if (Application.isBatchMode)
+            {
+                Assert.Ignore("A batchmode run has no Game View to route pointer input to, so an injected " +
+                              "mouse or touch is reset before the player loop reads it. The single-tick " +
+                              "assertions above still cover the injection path itself.");
+            }
+        }
+
         private static void WriteSouth(Gamepad gamepad, float value)
         {
             using (StateEvent.From(gamepad, out var eventPtr))
@@ -194,6 +213,8 @@ namespace KitWright.Editor.Tests
 
             InputSimulationFunctions.SimulateTouch(120, 140, "release");
             Assert.IsFalse(Touchscreen.current.primaryTouch.press.isPressed, "a release should lift it");
+
+            RequirePointersRoutedToAGameView();
 
             var probe = new GameObject("KwTouchSwipeProbe");
             var sampler = probe.AddComponent<InputSampler>();
@@ -236,6 +257,8 @@ namespace KitWright.Editor.Tests
         public IEnumerator SimulateMouseDrag_LetsTheButtonGoAndSpendsTheDurationItWasGiven()
         {
             yield return new EnterPlayMode();
+
+            RequirePointersRoutedToAGameView();
 
             var probe = new GameObject("KwMouseDragProbe");
             var sampler = probe.AddComponent<InputSampler>();
