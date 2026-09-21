@@ -202,7 +202,7 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Added tag '{tag}'.");
         }
 
-        [Description("Remove a tag from TagManager. Errors if the tag is still in use.")]
+        [Description("Remove a tag from TagManager. Warning: does not check whether any GameObject is still using the tag.")]
         public static object RemoveTag(
             [ToolParam("Tag name to remove")] string tag)
         {

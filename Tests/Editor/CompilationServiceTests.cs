@@ -3,6 +3,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
+using System.Threading.Tasks;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
 using KitWright.Editor.State;
@@ -142,6 +143,46 @@ namespace KitWright.Editor.Tests
 
             CompilationService.IsCompilingOverride = false;
             Assert.IsFalse(ExternalSyncRecoveryTracker.ShouldWaitForCompilation());
+        }
+
+        // A waiter enters while the raw flag is already true and holds whatever source is current,
+        // which can be a tick or two before compilationStarted fires. Only the source live when
+        // compilationFinished fires is completed, so replacing it there strands that waiter on a
+        // compile that in fact finished.
+        [Test]
+        public void CompilationStarted_KeepsTheSourceAWaiterIsAlreadyHolding()
+        {
+            var field = typeof(CompilationService).GetField("_compilationFinishedTcs",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var started = typeof(CompilationService).GetMethod("HandleCompilationStarted",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var finished = typeof(CompilationService).GetMethod("HandleCompilationFinished",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.IsNotNull(field, "_compilationFinishedTcs was renamed; update this test.");
+            Assert.IsNotNull(started, "HandleCompilationStarted was renamed; update this test.");
+            Assert.IsNotNull(finished, "HandleCompilationFinished was renamed; update this test.");
+
+            var backup = field.GetValue(null);
+            try
+            {
+                var held = new TaskCompletionSource<bool>();
+                field.SetValue(null, held);
+
+                started.Invoke(null, new object[] { null });
+                Assert.AreSame(held, field.GetValue(null));
+
+                finished.Invoke(null, new object[] { null });
+                Assert.IsTrue(held.Task.IsCompletedSuccessfully, "The waiter would have timed out instead.");
+
+                // A source nobody is waiting on any more is stale, so the next compile does get a fresh one.
+                started.Invoke(null, new object[] { null });
+                Assert.AreNotSame(held, field.GetValue(null));
+                finished.Invoke(null, new object[] { null });
+            }
+            finally
+            {
+                field.SetValue(null, backup);
+            }
         }
     }
 }

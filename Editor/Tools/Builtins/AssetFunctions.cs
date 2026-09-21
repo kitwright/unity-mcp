@@ -21,6 +21,13 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Save path (e.g. 'Assets/Materials/')", Required = false)] string save_path = "Assets/Materials/",
             [ToolParam("Replace the material already at that path instead of refusing", Required = false)] bool overwrite = false)
         {
+            // Before anything is allocated, and on the path actually written: the name is part of it,
+            // so validating the directory alone leaves "../../x" as a name unchecked.
+            var fullPath = $"{save_path.TrimEnd('/', '\\')}/{name}.mat";
+            try { PathSafety.ResolveAssetPath(fullPath); }
+            catch (PathOutsideProjectException ex)
+            { return ToolResultFormatter.Error("INVALID_PATH", new { path = fullPath, message = ex.Message }); }
+
             string actualShader = shader;
             string colorProperty = "_Color";
 
@@ -63,8 +70,6 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (!Directory.Exists(save_path))
                 Directory.CreateDirectory(save_path);
-
-            var fullPath = $"{save_path.TrimEnd('/', '\\')}/{name}.mat";
 
             // CreateAsset over an existing path REPLACES the asset's contents but keeps its GUID, so
             // every prefab and scene referencing that material silently gets this new one instead.
@@ -159,6 +164,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Source asset path")] string source_path,
             [ToolParam("Destination asset path")] string destination_path)
         {
+            try { PathSafety.ResolveAssetPath(destination_path); }
+            catch (PathOutsideProjectException ex)
+            { return ToolResultFormatter.Error("INVALID_PATH", new { destination_path, message = ex.Message }); }
+
             var dir = Path.GetDirectoryName(destination_path);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
