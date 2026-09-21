@@ -1,15 +1,95 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+using System.Collections;
 using System.Linq;
 using System.Reflection;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
+using UnityEditor;
+using UnityEngine;
+using UnityEngine.TestTools;
+using UnityEngine.UIElements;
 
 namespace KitWright.Editor.Tests
 {
     public sealed class EditorWindowInteractionFunctionsTests
     {
+        private const string ProbeTitle = "KitWrightClickProbe";
+
+        private sealed class ClickProbeWindow : EditorWindow
+        {
+            internal int Clicks;
+
+            public void CreateGUI()
+            {
+                var button = new Button(() => Clicks++) { text = "probe" };
+                button.style.position = Position.Absolute;
+                button.style.left = 0;
+                button.style.top = 0;
+                button.style.width = 280;
+                button.style.height = 40;
+                rootVisualElement.Add(button);
+
+                // Both bands are deep enough that the tool's pixelsPerPoint division cannot land a
+                // click in the wrong one on a HiDPI editor.
+                var imgui = new IMGUIContainer(() => GUILayout.Label("imgui"));
+                imgui.style.position = Position.Absolute;
+                imgui.style.left = 0;
+                imgui.style.top = 60;
+                imgui.style.width = 280;
+                imgui.style.height = 140;
+                rootVisualElement.Add(imgui);
+            }
+        }
+
+        // The tool used to post a legacy Event into the window's GUIView, which never reaches the
+        // window's UI Toolkit panel: every click reported success and did nothing.
+        [UnityTest]
+        public IEnumerator SimulateEditorWindowClick_ActivatesAUIToolkitButton_AndRefusesIMGUI()
+        {
+            var window = ScriptableObject.CreateInstance<ClickProbeWindow>();
+            try
+            {
+                window.titleContent = new GUIContent(ProbeTitle);
+                window.position = new Rect(120, 120, 300, 300);
+
+                // A batchmode run has no graphics device, and Show() says so as an error the test
+                // framework would otherwise fail on before the check below can skip the test.
+                LogAssert.ignoreFailingMessages = true;
+                window.Show();
+                window.Repaint();
+
+                // The panel lays the probe out on an editor tick, and a click before that would be
+                // picked against a root that is still zero-sized.
+                yield return null;
+                yield return null;
+
+                // Without a real view the panel hit-tests nothing, and a click that picks nothing
+                // proves nothing either way, so skip rather than assert against an empty panel.
+                var root = window.rootVisualElement;
+                var probeButton = root?.Q<Button>();
+                var pickPoint = new Vector2(40f, 20f) / EditorGUIUtility.pixelsPerPoint;
+                var picked = root?.panel?.Pick(root.LocalToWorld(pickPoint));
+                if (probeButton == null || picked == null || (picked != probeButton && !probeButton.Contains(picked)))
+                    Assert.Ignore("This editor session has no rendered view, so the panel cannot hit-test the probe.");
+
+                var clicked = EditorWindowInteractionFunctions.SimulateEditorWindowClick(ProbeTitle, 40, 20);
+                Assert.AreEqual(1, window.Clicks, clicked);
+
+                var refused = EditorWindowInteractionFunctions.SimulateEditorWindowClick(ProbeTitle, 40, 180);
+                StringAssert.Contains("IMGUI_CLICK_UNSUPPORTED", refused);
+                Assert.AreEqual(1, window.Clicks, "A refused click must not dispatch anything either.");
+            }
+            finally
+            {
+                // Close() logs the same missing-device error as Show(), so it has to run while
+                // failing messages are still ignored.
+                window.Close();
+                LogAssert.ignoreFailingMessages = false;
+            }
+        }
+
         [Test]
         public void SimulateEditorWindowClick_ExposesWindowAndPixelParameters()
         {

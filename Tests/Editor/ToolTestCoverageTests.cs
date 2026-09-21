@@ -50,7 +50,6 @@ namespace KitWright.Editor.Tests
             "memory_take_full_snapshot",
             // pins rendering, or drives the real editor GUI
             "frame_debugger_enable",
-            "simulate_editor_window_click",
             "simulate_editor_window_key",
             // replaces the scene the run is in
             "close_scene",
