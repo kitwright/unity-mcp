@@ -4,6 +4,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Threading;
 using System.Threading.Tasks;
+using KitWright.Editor.Services;
 using UnityEditor;
 
 namespace KitWright.Editor.Threading
@@ -34,16 +35,31 @@ namespace KitWright.Editor.Threading
 
         internal static bool WorkItemRunning => Volatile.Read(ref s_workItemDepth) > 0;
 
+        private static bool s_busyAtLastPump;
+
+        // Sampled on the editor thread because the probe runs off it, where these are unreadable.
+        internal static bool EditorBusyAtLastPump => Volatile.Read(ref s_busyAtLastPump);
+
         // A tool blocking the main thread synchronously (BuildPlayer, SwitchActiveBuildTarget)
         // stalls the pump exactly like a modal does. Failing it here would defeat its
         // [LongRunningTool] budget and make the client retry into a second build (CoplayDev #1130).
+        // An import, a domain reload or a play-mode transition stops the pump exactly like a modal
+        // does, and leaves no work item counted when whatever started it has already returned.
+        // Resolved compile state on purpose: a deferred reload's raw isCompiling never clears, and
+        // reading it here would suppress the probe for good.
         internal static bool LooksBlocked(
-            bool alreadyCompleted, TimeSpan sinceLastPump, bool workItemRunning, bool dialogOpen)
+            bool alreadyCompleted, TimeSpan sinceLastPump, bool workItemRunning, bool dialogOpen,
+            bool busyAtLastPump = false)
         {
             if (alreadyCompleted || sinceLastPump.TotalMilliseconds < PumpStaleMs)
                 return false;
 
-            return dialogOpen || !workItemRunning;
+            // A dialog that was actually found still wins: it owns the loop until someone clicks it,
+            // whatever the editor was doing on the way in.
+            if (dialogOpen)
+                return true;
+
+            return !workItemRunning && !busyAtLastPump;
         }
 
         internal static string BlockedMessage(TimeSpan sinceLastPump)
@@ -95,11 +111,11 @@ namespace KitWright.Editor.Threading
                 // Reading window titles is the expensive half and it talks to the editor thread's
                 // message loop, so ask the free questions first: a finished request or a pump that
                 // ticked recently rules a block out on its own, whatever any dialog says.
-                if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, true))
+                if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, true, EditorBusyAtLastPump))
                     return;
 
                 var dialog = Win32Dialogs.BlockingDialog();
-                if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, dialog != null))
+                if (!LooksBlocked(tcs.Task.IsCompleted, idle, WorkItemRunning, dialog != null, EditorBusyAtLastPump))
                     return;
 
                 FailBlockedCall(tcs, idle, dialog, queuedItem);
@@ -241,6 +257,8 @@ namespace KitWright.Editor.Threading
         internal void ProcessQueues()
         {
             Interlocked.Exchange(ref s_lastPumpTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+            Volatile.Write(ref s_busyAtLastPump,
+                CompilationService.IsActuallyCompiling || EditorApplication.isUpdating);
             if (_disposed) return;
 
             int processedCount = 0;

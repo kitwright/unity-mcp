@@ -46,6 +46,24 @@ namespace KitWright.Editor.Tests
                 "Nothing of ours is running, so a stale pump is someone else blocking the editor.");
         }
 
+        // An import, a domain reload or a play-mode transition stops the pump exactly like a modal
+        // does, and leaves nothing of ours counted once whatever started it has returned.
+        [Test]
+        public void LooksBlocked_LeavesTheEditorAloneWhileItIsImportingOrReloading()
+        {
+            Assert.IsTrue(
+                EditorThreadHelper.LooksBlocked(false, TimeSpan.FromSeconds(24), false, false, false),
+                "Baseline: a stale pump with nothing of ours running is the case this guards.");
+
+            Assert.IsFalse(
+                EditorThreadHelper.LooksBlocked(false, TimeSpan.FromSeconds(24), false, false, true),
+                "The editor stopped pumping to do its own work, so nobody is blocking it.");
+
+            Assert.IsTrue(
+                EditorThreadHelper.LooksBlocked(false, TimeSpan.FromSeconds(24), false, true, true),
+                "A dialog that was actually found owns the loop whatever the editor was doing.");
+        }
+
         [Test]
         public void WorkItemRunning_IsTrueInsideTheWorkItemAndFalseOutsideIt()
         {
@@ -214,15 +232,16 @@ namespace KitWright.Editor.Tests
             // also a "no" under the real one.
             foreach (var completed in new[] { true, false })
             foreach (var running in new[] { true, false })
+            foreach (var busy in new[] { true, false })
             foreach (var idle in new[] { TimeSpan.Zero, TimeSpan.FromSeconds(4), TimeSpan.FromMinutes(2) })
             {
-                if (EditorThreadHelper.LooksBlocked(completed, idle, running, true))
+                if (EditorThreadHelper.LooksBlocked(completed, idle, running, true, busy))
                     continue;
 
                 Assert.IsFalse(
-                    EditorThreadHelper.LooksBlocked(completed, idle, running, false),
-                    $"completed={completed} running={running} idle={idle}: ruled out with a dialog " +
-                    "assumed open, so it must stay ruled out without one.");
+                    EditorThreadHelper.LooksBlocked(completed, idle, running, false, busy),
+                    $"completed={completed} running={running} busy={busy} idle={idle}: ruled out with " +
+                    "a dialog assumed open, so it must stay ruled out without one.");
             }
         }
 
