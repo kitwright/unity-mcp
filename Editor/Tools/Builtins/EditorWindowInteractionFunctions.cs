@@ -3,21 +3,20 @@
 using System;
 using System.ComponentModel;
 using System.Linq;
-using System.Reflection;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace KitWright.Editor.Tools.Builtins
 {
     [ToolProvider("EditorWindowInteraction")]
     internal static class EditorWindowInteractionFunctions
     {
-        private const BindingFlags InstanceFlags = BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance;
-
         [Description("Click inside any open EditorWindow (Inspector, Console, Project, custom tool windows...) as a real user would. " +
                      "Coordinates are in pixels with 0,0 at the TOP-LEFT of the window, matching what capture_editor_window returns. " +
-                     "Dispatches a real mouse-down + mouse-up event into the window's internal GUIView so IMGUI/UI Toolkit controls react.")]
+                     "Dispatches pointer-down + pointer-up into the window's UI Toolkit panel, so UI Toolkit controls react. " +
+                     "A point that lands on legacy IMGUI is refused with IMGUI_CLICK_UNSUPPORTED rather than reported as a click that did nothing.")]
         public static string SimulateEditorWindowClick(
             [ToolParam("Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). Case-insensitive.")] string window,
             [ToolParam("X coordinate in pixels from the window's left edge")] int x,
@@ -26,7 +25,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Number of clicks (2 for a double-click)", Required = false)] int click_count = 1,
             [ToolParam("Focus the window before clicking", Required = false)] bool focus = true)
         {
-            if (!TryResolveView(window, focus, out var target, out var parent, out var error))
+            if (!TryResolvePanel(window, focus, out var target, out var root, out var error))
                 return error;
 
             try
@@ -36,11 +35,42 @@ namespace KitWright.Editor.Tools.Builtins
                 var mouseButton = ParseButton(button);
                 var clicks = Mathf.Max(1, click_count);
 
-                SendEvent(parent, MakeMouseEvent(EventType.MouseDown, point, mouseButton, clicks));
-                SendEvent(parent, MakeMouseEvent(EventType.MouseUp, point, mouseButton, clicks));
+                // Panel coordinates belong to the whole host view, so a docked window's own origin sits
+                // below the tab bar: (0,0) in the window is not (0,0) in the panel.
+                var world = root.LocalToWorld(point);
+                var tree = root.panel.visualTree;
+
+                var picked = root.panel.Pick(world);
+
+                // ponytail: IMGUI is refused, not driven. Driving it needs the panel's own pointer
+                // position to follow the synthesized event (PointerDeviceState, internal).
+                var imgui = FindIMGUIContainer(picked, root);
+                if (imgui != null)
+                {
+                    return ToolResultFormatter.Error("IMGUI_CLICK_UNSUPPORTED", new
+                    {
+                        window = target.titleContent.text,
+                        element = string.IsNullOrEmpty(imgui.name) ? nameof(IMGUIContainer) : imgui.name,
+                        hint = "That point lands on legacy IMGUI, which reads the real OS cursor rather than the " +
+                               "position of a synthesized event, so the control would not react. Drive this window " +
+                               "through its UI Toolkit controls, or through a menu item."
+                    });
+                }
+
+                // A real pointer-down moves focus on its way through the panel; a synthesized one does not,
+                // so a click followed by simulate_editor_window_key would type into nothing.
+                FocusPicked(picked);
+
+                for (var i = 0; i < clicks; i++)
+                {
+                    using (var down = PointerDownEvent.GetPooled(MakeMouseEvent(EventType.MouseDown, world, mouseButton, i + 1)))
+                        tree.SendEvent(down);
+                    using (var up = PointerUpEvent.GetPooled(MakeMouseEvent(EventType.MouseUp, world, mouseButton, i + 1)))
+                        tree.SendEvent(up);
+                }
                 target.Repaint();
 
-                return $"{button} click x{clicks} at pixel ({x}, {y}) -> point ({point.x:F1}, {point.y:F1}) in '{target.titleContent.text}'";
+                return $"{button} click x{clicks} at pixel ({x}, {y}) -> panel point ({world.x:F1}, {world.y:F1}) in '{target.titleContent.text}'";
             }
             catch (Exception ex)
             {
@@ -49,7 +79,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Type text or send a key into any open EditorWindow as a real user would (e.g. into a focused text field after clicking it). " +
-                     "Dispatches real key-down + key-up events into the window's internal GUIView. " +
+                     "Dispatches real key-down + key-up events to the panel's focused element. " +
                      "Either provide 'text' to type a string character-by-character, or 'key' for a single named key (Return, Escape, Tab, Backspace, Delete, LeftArrow...).")]
         public static string SimulateEditorWindowKey(
             [ToolParam("Window title or type name. Case-insensitive.")] string window,
@@ -60,25 +90,28 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(key))
                 return ToolResultFormatter.ErrorMessage("INVALID_INPUT", "Provide either 'text' or 'key'.");
 
-            if (!TryResolveView(window, focus, out var target, out var parent, out var error))
+            if (!TryResolvePanel(window, focus, out var target, out var root, out var error))
                 return error;
 
             try
             {
+                // Keys go to whatever holds focus, and only fall back to the tree when nothing does.
+                var keyTarget = root.panel.focusController?.focusedElement as VisualElement ?? root.panel.visualTree;
+
                 var sent = 0;
                 if (!string.IsNullOrEmpty(text))
                 {
                     foreach (var c in text)
                     {
-                        SendEvent(parent, MakeCharEvent(EventType.KeyDown, c));
-                        SendEvent(parent, MakeCharEvent(EventType.KeyUp, c));
+                        SendKey(keyTarget, MakeCharEvent(EventType.KeyDown, c));
+                        SendKey(keyTarget, MakeCharEvent(EventType.KeyUp, c));
                         sent++;
                     }
                 }
                 else if (Enum.TryParse<KeyCode>(key, ignoreCase: true, out var keyCode))
                 {
-                    SendEvent(parent, MakeKeyEvent(EventType.KeyDown, keyCode));
-                    SendEvent(parent, MakeKeyEvent(EventType.KeyUp, keyCode));
+                    SendKey(keyTarget, MakeKeyEvent(EventType.KeyDown, keyCode));
+                    SendKey(keyTarget, MakeKeyEvent(EventType.KeyUp, keyCode));
                     sent = 1;
                 }
                 else
@@ -95,10 +128,10 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static bool TryResolveView(string window, bool focus, out EditorWindow target, out object parent, out string error)
+        private static bool TryResolvePanel(string window, bool focus, out EditorWindow target, out VisualElement root, out string error)
         {
             target = null;
-            parent = null;
+            root = null;
             error = null;
 
             if (string.IsNullOrWhiteSpace(window))
@@ -119,31 +152,19 @@ namespace KitWright.Editor.Tools.Builtins
                 return false;
             }
 
-            var guiViewType = typeof(EditorWindow).Assembly.GetType("UnityEditor.GUIView");
-            var sendEvent = guiViewType?.GetMethod("SendEvent", InstanceFlags, null, new[] { typeof(Event) }, null);
-            var parentField = typeof(EditorWindow).GetField("m_Parent", InstanceFlags);
-            if (sendEvent == null || parentField == null)
-            {
-                error = ToolResultFormatter.Error("EDITOR_WINDOW_INPUT_UNSUPPORTED", new
-                {
-                    hint = "UnityEditor.GUIView.SendEvent is not available in this Unity version."
-                });
-                return false;
-            }
-
             if (focus)
             {
                 target.Focus();
                 target.Repaint();
             }
 
-            parent = parentField.GetValue(target);
-            if (parent == null || !guiViewType.IsInstanceOfType(parent))
+            root = target.rootVisualElement;
+            if (root?.panel == null)
             {
                 error = ToolResultFormatter.Error("EDITOR_WINDOW_NOT_RENDERED", new
                 {
                     window = target.titleContent.text,
-                    hint = "The window has no host GUIView yet. Make sure it is open and visible, then retry."
+                    hint = "The window has no UI Toolkit panel yet. Make sure it is open and visible, then retry."
                 });
                 return false;
             }
@@ -151,10 +172,44 @@ namespace KitWright.Editor.Tools.Builtins
             return true;
         }
 
-        private static void SendEvent(object guiView, Event evt)
+        // Stops at the window's own root: a docked window hangs under the DockArea's tab-bar
+        // IMGUIContainer, and walking past the root would call every window IMGUI.
+        private static IMGUIContainer FindIMGUIContainer(VisualElement element, VisualElement root)
         {
-            var method = guiView.GetType().GetMethod("SendEvent", InstanceFlags, null, new[] { typeof(Event) }, null);
-            method.Invoke(guiView, new object[] { evt });
+            for (var e = element; e != null; e = e.parent)
+            {
+                if (e is IMGUIContainer imgui)
+                    return imgui;
+                if (e == root)
+                    break;
+            }
+            return null;
+        }
+
+        private static void FocusPicked(VisualElement element)
+        {
+            for (var e = element; e != null; e = e.parent)
+            {
+                if (e.focusable)
+                {
+                    e.Focus();
+                    return;
+                }
+            }
+        }
+
+        private static void SendKey(VisualElement element, Event evt)
+        {
+            if (evt.type == EventType.KeyDown)
+            {
+                using (var e = KeyDownEvent.GetPooled(evt))
+                    element.SendEvent(e);
+            }
+            else
+            {
+                using (var e = KeyUpEvent.GetPooled(evt))
+                    element.SendEvent(e);
+            }
         }
 
         private static Event MakeMouseEvent(EventType type, Vector2 point, int button, int clickCount)
