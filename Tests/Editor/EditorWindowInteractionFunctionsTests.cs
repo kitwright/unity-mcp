@@ -53,6 +53,10 @@ namespace KitWright.Editor.Tests
             {
                 window.titleContent = new GUIContent(ProbeTitle);
                 window.position = new Rect(120, 120, 300, 300);
+
+                // A batchmode run has no graphics device, and Show() says so as an error the test
+                // framework would otherwise fail on before the check below can skip the test.
+                LogAssert.ignoreFailingMessages = true;
                 window.Show();
                 window.Repaint();
 
@@ -61,8 +65,9 @@ namespace KitWright.Editor.Tests
                 yield return null;
                 yield return null;
 
-                if (window.rootVisualElement?.panel == null)
-                    Assert.Ignore("This editor session has no UI Toolkit panel to dispatch into.");
+                var root = window.rootVisualElement;
+                if (root?.panel == null || root.worldBound.width <= 0f)
+                    Assert.Ignore("This editor session has no rendered view, so there is no panel to dispatch into.");
 
                 var clicked = EditorWindowInteractionFunctions.SimulateEditorWindowClick(ProbeTitle, 40, 20);
                 Assert.AreEqual(1, window.Clicks, clicked);
@@ -73,6 +78,7 @@ namespace KitWright.Editor.Tests
             }
             finally
             {
+                LogAssert.ignoreFailingMessages = false;
                 window.Close();
             }
         }
