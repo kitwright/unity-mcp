@@ -78,8 +78,10 @@ namespace KitWright.Editor.Tests
             }
             finally
             {
-                LogAssert.ignoreFailingMessages = false;
+                // Close() logs the same missing-device error as Show(), so it has to run while
+                // failing messages are still ignored.
                 window.Close();
+                LogAssert.ignoreFailingMessages = false;
             }
         }
 
