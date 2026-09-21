@@ -3,6 +3,7 @@
 #if KITWRIGHT_INPUTSYSTEM
 using System;
 using System.ComponentModel;
+using System.Threading.Tasks;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -107,14 +108,14 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        [Description("Simulate a mouse drag from one screen position to another in Play Mode using the Unity Input System.")]
+        [Description("Simulate a mouse drag from one screen position to another in Play Mode using the Unity Input System. Takes 'duration' seconds to run, one step per frame, and returns once the button is back up.")]
         [ReadOnlyTool]
-        public static string SimulateMouseDrag(
+        public static async Task<string> SimulateMouseDrag(
             [ToolParam("Start X coordinate in pixels")] int start_x,
             [ToolParam("Start Y coordinate in pixels")] int start_y,
             [ToolParam("End X coordinate in pixels")] int end_x,
             [ToolParam("End Y coordinate in pixels")] int end_y,
-            [ToolParam("Duration of the drag in seconds", Required = false)] float duration = 0.5f,
+            [ToolParam("Duration of the drag in seconds. The steps are spread over it, one per frame.", Required = false)] float duration = 0.5f,
             [ToolParam("Mouse button: left, right, or middle", Required = false)] string button = "left")
         {
             if (!EditorApplication.isPlaying)
@@ -127,35 +128,41 @@ namespace KitWright.Editor.Tools.Builtins
                     return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No mouse device found in Input System");
 
                 duration = Mathf.Clamp(duration, 0.1f, 3f);
-                var pressButton = GetMouseButton(mouse, button);
+                int steps = Mathf.Max(5, Mathf.RoundToInt(duration * 30));
+                var gap = duration / steps;
 
                 InputState.Change(mouse.position, new Vector2(start_x, start_y));
                 QueueStateEvent(mouse, pressEvent =>
                 {
                     mouse.position.WriteValueIntoEvent(new Vector2(start_x, start_y), pressEvent);
-                    pressButton.WriteValueIntoEvent(1f, pressEvent);
+                    GetMouseButton(mouse, button).WriteValueIntoEvent(1f, pressEvent);
                 });
 
-                int steps = Mathf.Max(5, Mathf.RoundToInt(duration * 30));
-                for (int i = 1; i < steps; i++)
+                for (int i = 1; i <= steps; i++)
                 {
-                    float t = (float)i / steps;
-                    float curX = Mathf.Lerp(start_x, end_x, t);
-                    float curY = Mathf.Lerp(start_y, end_y, t);
+                    await NextFrameAfter(gap);
 
-                    QueueStateEvent(mouse, moveEvent =>
+                    // Re-read the device: the drag now spans frames, and a domain reload in the
+                    // middle of one replaces every Input System device.
+                    var device = Mouse.current;
+                    if (device == null)
+                        return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_LOST", "The mouse device went away mid-drag.");
+
+                    var t = (float)i / steps;
+                    var at = new Vector2(Mathf.Lerp(start_x, end_x, t), Mathf.Lerp(start_y, end_y, t));
+                    // The last step is the release. StateEvent.From seeds the event with the device's
+                    // current state, so a release that writes only the position leaves the button at 1
+                    // and every later click and drag runs with it still held.
+                    var held = i < steps ? 1f : 0f;
+
+                    QueueStateEvent(device, moveEvent =>
                     {
-                        mouse.position.WriteValueIntoEvent(new Vector2(curX, curY), moveEvent);
-                        pressButton.WriteValueIntoEvent(1f, moveEvent);
+                        device.position.WriteValueIntoEvent(at, moveEvent);
+                        GetMouseButton(device, button).WriteValueIntoEvent(held, moveEvent);
                     });
                 }
 
-                QueueStateEvent(mouse, releaseEvent =>
-                {
-                    mouse.position.WriteValueIntoEvent(new Vector2(end_x, end_y), releaseEvent);
-                });
-
-                return $"Mouse drag from ({start_x},{start_y}) to ({end_x},{end_y}) ({steps} steps queued)";
+                return $"Mouse drag from ({start_x},{start_y}) to ({end_x},{end_y}) over {duration:F2}s ({steps} steps)";
             }
             catch (Exception ex)
             {
@@ -211,14 +218,14 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        [Description("Simulate a swipe or drag on the screen in Play Mode, as one finger moving from a start point to an end point. Drives the Input System's Touchscreen device — use this rather than simulate_mouse_drag when the code under test reads touch.")]
+        [Description("Simulate a swipe or drag on the screen in Play Mode, as one finger moving from a start point to an end point. Drives the Input System's Touchscreen device — use this rather than simulate_mouse_drag when the code under test reads touch. Takes 'duration' seconds to run, one step per frame.")]
         [ReadOnlyTool]
-        public static string SimulateTouchDrag(
+        public static async Task<string> SimulateTouchDrag(
             [ToolParam("Start X coordinate in pixels")] int start_x,
             [ToolParam("Start Y coordinate in pixels")] int start_y,
             [ToolParam("End X coordinate in pixels")] int end_x,
             [ToolParam("End Y coordinate in pixels")] int end_y,
-            [ToolParam("Duration of the swipe in seconds", Required = false)] float duration = 0.5f,
+            [ToolParam("Duration of the swipe in seconds. The steps are spread over it, one per frame.", Required = false)] float duration = 0.5f,
             [ToolParam("Touch id", Required = false)] int touch_id = 1)
         {
             if (!EditorApplication.isPlaying)
@@ -232,21 +239,25 @@ namespace KitWright.Editor.Tools.Builtins
 
                 duration = Mathf.Clamp(duration, 0.1f, 3f);
                 var steps = Mathf.Max(5, Mathf.RoundToInt(duration * 30));
+                var gap = duration / steps;
 
                 QueueTouch(touchscreen, touch_id, UnityEngine.InputSystem.TouchPhase.Began, new Vector2(start_x, start_y));
 
-                for (var i = 1; i < steps; i++)
+                for (var i = 1; i <= steps; i++)
                 {
+                    await NextFrameAfter(gap);
+
+                    var device = Touchscreen.current;
+                    if (device == null)
+                        return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_LOST", "The touchscreen device went away mid-swipe.");
+
                     var t = (float)i / steps;
-                    QueueTouch(touchscreen, touch_id, UnityEngine.InputSystem.TouchPhase.Moved,
+                    QueueTouch(device, touch_id,
+                        i < steps ? UnityEngine.InputSystem.TouchPhase.Moved : UnityEngine.InputSystem.TouchPhase.Ended,
                         new Vector2(Mathf.Lerp(start_x, end_x, t), Mathf.Lerp(start_y, end_y, t)));
                 }
 
-                QueueTouch(touchscreen, touch_id, UnityEngine.InputSystem.TouchPhase.Ended, new Vector2(end_x, end_y));
-
-                // Every phase is queued inside this one call, so the whole swipe lands in a single
-                // frame: 'duration' sizes the path, it does not spread the swipe over wall-clock time.
-                return $"Touch {touch_id} swiped from ({start_x},{start_y}) to ({end_x},{end_y}) ({steps} steps queued in one frame)";
+                return $"Touch {touch_id} swiped from ({start_x},{start_y}) to ({end_x},{end_y}) over {duration:F2}s ({steps} steps)";
             }
             catch (Exception ex)
             {
@@ -388,6 +399,20 @@ namespace KitWright.Editor.Tools.Builtins
 
         // EditorApplication.update is the only tick a tool can schedule against while Play Mode runs,
         // so a hold-then-release is a deadline on that loop rather than a coroutine.
+        /// <summary>
+        /// Resumes on a later editor frame. InputSystem.Update() advances the device but does not run
+        /// EventSystem.Update(), so a drag queued inside one editor tick reaches uGUI as a single
+        /// pointer position: the press, the whole path and the release all arrive at the end point,
+        /// and nothing between the two ends is ever seen. A frame per step is what makes 'duration'
+        /// mean what its name says.
+        /// </summary>
+        private static Task NextFrameAfter(float seconds)
+        {
+            var tcs = new TaskCompletionSource<bool>();
+            ReleaseAfter(seconds, () => tcs.TrySetResult(true));
+            return tcs.Task;
+        }
+
         private static void ReleaseAfter(float seconds, Action release)
         {
             var deadline = EditorApplication.timeSinceStartup + seconds;
