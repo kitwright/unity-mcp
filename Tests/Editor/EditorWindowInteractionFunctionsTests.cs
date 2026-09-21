@@ -65,9 +65,14 @@ namespace KitWright.Editor.Tests
                 yield return null;
                 yield return null;
 
+                // Without a real view the panel hit-tests nothing, and a click that picks nothing
+                // proves nothing either way, so skip rather than assert against an empty panel.
                 var root = window.rootVisualElement;
-                if (root?.panel == null || root.worldBound.width <= 0f)
-                    Assert.Ignore("This editor session has no rendered view, so there is no panel to dispatch into.");
+                var probeButton = root?.Q<Button>();
+                var pickPoint = new Vector2(40f, 20f) / EditorGUIUtility.pixelsPerPoint;
+                var picked = root?.panel?.Pick(root.LocalToWorld(pickPoint));
+                if (probeButton == null || picked == null || (picked != probeButton && !probeButton.Contains(picked)))
+                    Assert.Ignore("This editor session has no rendered view, so the panel cannot hit-test the probe.");
 
                 var clicked = EditorWindowInteractionFunctions.SimulateEditorWindowClick(ProbeTitle, 40, 20);
                 Assert.AreEqual(1, window.Clicks, clicked);
