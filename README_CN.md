@@ -5,7 +5,6 @@
   </p>
   <p align="center">
     <a href="#"><img src="https://img.shields.io/badge/Unity-2022.3%2B-black?logo=unity" alt="Unity 2022.3+"></a>
-    <a href="#"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
     <a href="#"><img src="https://img.shields.io/badge/MCP-Compatible-green" alt="MCP Compatible"></a>
     <a href="#"><img src="https://img.shields.io/badge/Platform-Editor%20Only-orange" alt="Editor Only"></a>
   </p>
@@ -21,7 +20,7 @@
 
 ---
 
-KitWright MCP for Unity 是一个采用 MIT 协议的 Unity 编辑器 MCP 服务器，让 Claude Code、Cursor、LM Studio、Windsurf、Codex、VS Code Copilot 等 AI 助手直接操作正在运行的 Unity 项目。
+KitWright MCP for Unity 是一个 Unity 编辑器 MCP 服务器，让 Claude Code、Cursor、LM Studio、Windsurf、Codex、VS Code Copilot 等 AI 助手直接操作正在运行的 Unity 项目。
 
 一句话描述你的游戏 — AI 助手通过 KitWright MCP for Unity 的 274 个内置工具自动创建场景、编写脚本、验证运行态、模拟输入、分析性能并完成编辑器自动化，把所有逻辑串联起来。
 
@@ -334,7 +333,7 @@ public class CommandScript : IKitWrightCommand
 | 文档 | `README.md` 与 [TOOLS.md](TOOLS.md)，均由 `[ToolProvider]` 源码生成 | 自动生成的文档站，每个工具一页，含参数、action 与示例 |
 | 客户端切换工具集 | `set_tool_profile` 可从客户端切换 `minimal` / `core` / `extended` / `full`，并推送 `tools/list_changed` | `manage_tools` 按会话启用/停用工具组 |
 | 工具注解 | 只读工具输出 `annotations.readOnlyHint` | 已注解工具输出 `readOnlyHint` 与 `destructiveHint` |
-| 定位 | 轻量、直接、MIT 协议的 Unity MCP 服务器 | Coplay 维护的全功能 Unity bridge 方案 |
+| 定位 | 轻量、直接的 Unity MCP 服务器 | Coplay 维护的全功能 Unity bridge 方案 |
 
 Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) 及其[工具文档](https://coplaydev.github.io/unity-mcp/reference/tools)
 
@@ -345,7 +344,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 | 维度 | KitWright MCP for Unity | Unity AI Assistant |
 |------|-------------------------|--------------------|
 | 最低 Unity 版本 | 2022.3 | 6000.3（仅 Unity 6）|
-| 协议 / License | MIT 开源 | Unity Terms of Service，私有 |
+| 协议 / License | Asset Store EULA | Unity Terms of Service，私有 |
 | 部署 | Editor 内嵌 HTTP MCP server，纯本地 | Editor + 原生 Relay 子进程 + Unity Cloud 后端 |
 | 计费 | 免费，用户自带 AI 客户端 | Credits 点数制（Unity Dashboard）|
 | 工具暴露 | 274 工具 / 57 模块，`core` (43) / `full` profile | ~15 个 MCP 工具（多数为 `Manage*` 大粒度族）|
@@ -457,4 +456,4 @@ MCP Server (HTTP JSON-RPC 2.0)
 
 ## 许可证
 
-[MIT](LICENSE) — 可自由使用、修改、分发，也可集成到商业或开源项目中。
+遵循 [Unity Asset Store 最终用户许可协议](https://unity.com/legal/as-terms)。

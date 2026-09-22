@@ -5,7 +5,6 @@
   </p>
   <p align="center">
     <a href="#"><img src="https://img.shields.io/badge/Unity-2022.3%2B-black?logo=unity" alt="Unity 2022.3+"></a>
-    <a href="#"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
     <a href="#"><img src="https://img.shields.io/badge/MCP-Compatible-green" alt="MCP Compatible"></a>
     <a href="#"><img src="https://img.shields.io/badge/Platform-Editor%20Only-orange" alt="Editor Only"></a>
   </p>
@@ -21,7 +20,7 @@
 
 ---
 
-KitWright MCP for Unity is an MIT-licensed Unity Editor MCP server that lets AI assistants like Claude Code, Cursor, LM Studio, Windsurf, Codex, and VS Code Copilot operate directly inside your running Unity project.
+KitWright MCP for Unity is a Unity Editor MCP server that lets AI assistants like Claude Code, Cursor, LM Studio, Windsurf, Codex, and VS Code Copilot operate directly inside your running Unity project.
 
 Describe your game in one sentence — your AI assistant builds it in Unity through KitWright MCP for Unity's 274 built-in tools for scene creation, script generation, runtime validation, input simulation, performance analysis, and editor automation.
 
@@ -332,7 +331,7 @@ The table below compares this repository with the publicly documented behavior o
 | Documentation | `README.md` plus [TOOLS.md](TOOLS.md), both generated from the `[ToolProvider]` sources | Auto-generated docs site with a detail page per tool covering parameters, actions, and examples |
 | Tool exposure switching | `set_tool_profile` switches `minimal` / `core` / `extended` / `full` from the client and pushes `tools/list_changed` | `manage_tools` enables and disables tool groups per session |
 | Tool annotations | `annotations.readOnlyHint` on read-only tools | `readOnlyHint` and `destructiveHint` on annotated tools |
-| Positioning | Lightweight, direct, MIT-licensed Unity MCP server for AI-driven editor control | Full-featured Unity bridge maintained by Coplay with Python-backed server setup |
+| Positioning | Lightweight, direct Unity MCP server for AI-driven editor control | Full-featured Unity bridge maintained by Coplay with Python-backed server setup |
 
 Source for Coplay column: [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) and its [tool reference](https://coplaydev.github.io/unity-mcp/reference/tools)
 
@@ -343,7 +342,7 @@ The table below compares this repository with Unity Technologies' official `com.
 | Area | KitWright MCP for Unity | Unity AI Assistant |
 |------|--------------------------|--------------------|
 | Minimum Unity version | 2022.3 | 6000.3 (Unity 6 only) |
-| License | MIT, open source | Unity Terms of Service, proprietary |
+| License | Asset Store EULA | Unity Terms of Service, proprietary |
 | Deployment | Local HTTP MCP server in Editor, no cloud | Editor + native Relay subprocess + Unity Cloud backend |
 | Billing | Free, user brings their own AI client | Credits-based (Unity Dashboard) |
 | Tool exposure | 274 tools across 57 modules, `core` (43) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
@@ -462,6 +461,6 @@ Found a vulnerability? Report it privately — see the [Security Policy](SECURIT
 
 ## License
 
-[MIT](LICENSE) — Free to use, modify, distribute, and integrate into commercial or open-source projects.
+Distributed under the [Unity Asset Store End User License Agreement](https://unity.com/legal/as-terms).
 
-The KitWright name and logo are trademarks of the KitWright project and are **not** covered by the MIT license. You may not use the name or logo to brand derivative works or imply endorsement without prior written permission. All rights to the brand assets (files under `Editor/Icons/`) are reserved.
+The KitWright name and logo are trademarks of the KitWright project. You may not use the name or logo to brand derivative works or imply endorsement without prior written permission. All rights to the brand assets (files under `Editor/Icons/`) are reserved.

@@ -1,4 +1,4 @@
-// Copyright (C) KitWright. Licensed under MIT.
+// Copyright (C) KitWright. All rights reserved.
 
 namespace KitWright.Editor.Tools.Scripting
 {

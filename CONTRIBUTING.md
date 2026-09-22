@@ -60,8 +60,9 @@ Before submitting a PR, please verify the change in a Unity test project:
 
 ## License
 
-This project is released under the MIT License, and your contribution will be
-distributed under MIT as part of it.
+This project is distributed under the Unity Asset Store End User License
+Agreement, and your contribution will be distributed under it as part of the
+package.
 
 In addition, by submitting a contribution you grant the project owner a
 perpetual, worldwide, non-exclusive, royalty-free, irrevocable license to

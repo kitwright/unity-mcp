@@ -1,4 +1,4 @@
-// Copyright (C) KitWright. Licensed under MIT.
+// Copyright (C) KitWright. All rights reserved.
 
 // com.unity.modules.terrain is optional; without it these tools disappear instead of breaking the build.
 #if KITWRIGHT_TERRAIN

@@ -1,4 +1,4 @@
-// Copyright (C) KitWright. Licensed under MIT.
+// Copyright (C) KitWright. All rights reserved.
 
 using System.Linq;
 using KitWright.Editor.Services.UnityLogs;

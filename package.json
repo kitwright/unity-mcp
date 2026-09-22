@@ -2,8 +2,7 @@
   "name": "com.kitwright.unity.mcp",
   "version": "1.0.0",
   "displayName": "KitWright MCP for Unity",
-  "description": "MIT-licensed MCP server for Unity Editor with execute_code, prompts/resources, input simulation, screenshots, and play mode automation.",
-  "license": "MIT",
+  "description": "MCP server for Unity Editor with execute_code, prompts/resources, input simulation, screenshots, and play mode automation.",
   "unity": "2022.3",
   "dependencies": {
     "com.unity.nuget.newtonsoft-json": "3.2.1",

@@ -1,4 +1,4 @@
-// Copyright (C) KitWright. Licensed under MIT.
+// Copyright (C) KitWright. All rights reserved.
 //
 // Standalone keepalive broker for KitWright Unity MCP.
 // Compiled on demand with the Unity-bundled Mono C# compiler and run outside
