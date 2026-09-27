@@ -180,7 +180,8 @@ namespace KitWright.Editor.Tools.Helpers
         internal static ScriptChangeState AnalyzeScriptChangeState(
             IEnumerable<ScriptCompilationArtifact> artifacts,
             IEnumerable<string> projectScriptFiles,
-            TimeSpan timestampTolerance)
+            TimeSpan timestampTolerance,
+            Dictionary<string, DateTime> beeOutputTimes = null)
         {
             var state = new ScriptChangeState();
             var knownSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -191,24 +192,25 @@ namespace KitWright.Editor.Tools.Helpers
                 if (artifact == null)
                     continue;
 
-                var outputPath = NormalizePath(artifact.OutputPath);
-                var outputTime = artifact.OutputTimeUtc ?? GetFileWriteTimeUtc(outputPath);
+                var outputTime = artifact.OutputTimeUtc ??
+                                 ResolveLatestOutputTime(artifact.OutputPath, beeOutputTimes) ??
+                                 DateTime.MinValue;
                 var outputExists = outputTime != DateTime.MinValue;
                 if (outputTime > newestOutputTime)
                     newestOutputTime = outputTime;
 
-                foreach (var sourcePath in artifact.SourceFiles ?? Array.Empty<string>())
+                foreach (var source in artifact.SourceFiles)
                 {
-                    var normalizedSource = NormalizePath(sourcePath);
-                    if (string.IsNullOrEmpty(normalizedSource) || IsPackageCachePath(normalizedSource))
-                        continue;
+                    knownSources.Add(source);
 
-                    knownSources.Add(normalizedSource);
-                    if (!File.Exists(normalizedSource))
-                        continue;
-
-                    if (!outputExists || File.GetLastWriteTimeUtc(normalizedSource) - outputTime > timestampTolerance)
-                        state.AddOutOfDateSource(normalizedSource);
+                    // One stat per source: a missing one stats as 1601, which never reads as newer
+                    // than an output that exists, so only a missing output needs the existence check.
+                    if (outputExists
+                            ? GetSourceWriteTimeUtc(source) - outputTime > timestampTolerance
+                            : File.Exists(source))
+                    {
+                        state.AddOutOfDateSource(source);
+                    }
                 }
             }
 
@@ -289,20 +291,14 @@ namespace KitWright.Editor.Tools.Helpers
         {
             try
             {
-                var beeOutputTimes = CaptureBeeOutputTimes();
-                var artifacts = CompilationPipeline
-                    .GetAssemblies(AssembliesType.Editor)
-                    .Select(assembly => new ScriptCompilationArtifact(
-                        assembly.outputPath,
-                        assembly.sourceFiles ?? Array.Empty<string>(),
-                        ResolveLatestOutputTime(assembly.outputPath, beeOutputTimes)))
-                    .ToArray();
+                HookCacheInvalidation();
 
                 var projectScripts = scanForUnknownProjectScripts
                     ? EnumerateProjectScriptFiles()
                     : Enumerable.Empty<string>();
 
-                return AnalyzeScriptChangeState(artifacts, projectScripts, TimestampTolerance);
+                return AnalyzeScriptChangeState(
+                    CaptureAssemblyProjection(), projectScripts, TimestampTolerance, CaptureBeeOutputTimes());
             }
             catch (Exception ex)
             {
@@ -348,17 +344,58 @@ namespace KitWright.Editor.Tools.Helpers
         // these timestamps, so the recursive scan of Library/Bee/artifacts ran five times for one
         // answer. Invalidated on compile because that is when the cached answer stops being true.
         private static Dictionary<string, DateTime> s_beeOutputTimes;
-        private static bool s_beeInvalidationHooked;
+
+        // GetAssemblies rebuilds every assembly's source list on each call, the bulk of a capture
+        // on a large project, and only a compile or an import changes that list. Timestamps are
+        // still read per capture, since an edit changes those without either.
+        private static ScriptCompilationArtifact[] s_assemblyProjection;
+        private static bool s_cacheInvalidationHooked;
+
+        private static void HookCacheInvalidation()
+        {
+            if (s_cacheInvalidationHooked)
+                return;
+
+            CompilationPipeline.compilationStarted += InvalidateOnCompilation;
+            CompilationPipeline.compilationFinished += InvalidateOnCompilation;
+            // A script imported while its compile is deferred (Play Mode, auto-refresh off) fires no
+            // compile event, and a projection without it drops get_compilation_errors' stale warning.
+            EditorApplication.projectChanged += InvalidateAssemblyProjection;
+            s_cacheInvalidationHooked = true;
+        }
+
+        private static void InvalidateOnCompilation(object context)
+        {
+            s_beeOutputTimes = null;
+            s_assemblyProjection = null;
+        }
+
+        private static void InvalidateAssemblyProjection() => s_assemblyProjection = null;
+
+        // projectChanged is only raised on the next editor update, so a capture in the same tick as
+        // an import - a batch that creates a script and then reads compilation errors - would still
+        // see the old list. This runs inside the import.
+        private sealed class ImportInvalidator : AssetPostprocessor
+        {
+            private static void OnPostprocessAllAssets(
+                string[] importedAssets, string[] deletedAssets, string[] movedAssets, string[] movedFromAssetPaths) =>
+                InvalidateAssemblyProjection();
+        }
+
+        private static ScriptCompilationArtifact[] CaptureAssemblyProjection()
+        {
+            if (s_assemblyProjection != null)
+                return s_assemblyProjection;
+
+            s_assemblyProjection = CompilationPipeline
+                .GetAssemblies(AssembliesType.Editor)
+                .Select(assembly => new ScriptCompilationArtifact(assembly.outputPath, assembly.sourceFiles))
+                .ToArray();
+            return s_assemblyProjection;
+        }
 
         private static Dictionary<string, DateTime> CaptureBeeOutputTimes()
         {
-            if (!s_beeInvalidationHooked)
-            {
-                CompilationPipeline.compilationStarted += _ => s_beeOutputTimes = null;
-                CompilationPipeline.compilationFinished += _ => s_beeOutputTimes = null;
-                s_beeInvalidationHooked = true;
-            }
-
             if (s_beeOutputTimes != null)
                 return s_beeOutputTimes;
 
@@ -428,6 +465,27 @@ namespace KitWright.Editor.Tools.Helpers
             {
                 return DateTime.MinValue;
             }
+        }
+
+        // File.Exists read a path it could not stat as missing, so a throw has to read that way too.
+        private static DateTime GetSourceWriteTimeUtc(string path)
+        {
+            try
+            {
+                return File.GetLastWriteTimeUtc(path);
+            }
+            catch
+            {
+                return DateTime.MinValue;
+            }
+        }
+
+        internal static string[] ToTrackedSourcePaths(IEnumerable<string> sourceFiles)
+        {
+            return (sourceFiles ?? Enumerable.Empty<string>())
+                .Select(NormalizePath)
+                .Where(path => !string.IsNullOrEmpty(path) && !IsPackageCachePath(path))
+                .ToArray();
         }
 
         // Regenerated on refresh, so their mtime always outruns a dll Unity never rebuilds.
@@ -624,7 +682,8 @@ namespace KitWright.Editor.Tools.Helpers
         public ScriptCompilationArtifact(string outputPath, IEnumerable<string> sourceFiles, DateTime? outputTimeUtc)
         {
             OutputPath = outputPath;
-            SourceFiles = sourceFiles?.ToArray() ?? Array.Empty<string>();
+            // Normalized once here rather than per capture, since the pipeline caches artifacts.
+            SourceFiles = EditorRefreshPipeline.ToTrackedSourcePaths(sourceFiles);
             OutputTimeUtc = outputTimeUtc;
         }
 
