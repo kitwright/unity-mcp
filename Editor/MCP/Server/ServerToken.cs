@@ -87,9 +87,33 @@ namespace KitWright.Editor.MCP.Server
             if (presented.Length == 0)
                 return Verdict.Missing;
 
-            return string.Equals(presented, expected, StringComparison.OrdinalIgnoreCase)
-                ? Verdict.Ok
-                : Verdict.Mismatch;
+            return FixedTimeEquals(presented, expected) ? Verdict.Ok : Verdict.Mismatch;
+        }
+
+        public static string RefusalMessage(Verdict verdict) => verdict == Verdict.Missing
+            ? "This editor only answers a URL that carries its access token. Press Configure in the KitWright " +
+              "window, or restart the editor, to write the current URL into the client's config, then restart the client."
+            : "That access token is not this project's. Press Configure in the KitWright window " +
+              "to rewrite the client's config with the current URL.";
+
+        /// <summary>The URL with its token segment blanked, for anything that gets logged.</summary>
+        public static string Redact(string url)
+        {
+            var token = ExtractToken(url);
+            return token.Length == 0 ? url : url.Replace("/" + token, "/<token>");
+        }
+
+        // string.Equals returns at the first differing char, so its timing tells a caller how much
+        // of the token it has already guessed. The broker carries the same loop.
+        private static bool FixedTimeEquals(string candidate, string expected)
+        {
+            if (candidate.Length != expected.Length)
+                return false;
+
+            var difference = 0;
+            for (var i = 0; i < candidate.Length; i++)
+                difference |= candidate[i] ^ expected[i];
+            return difference == 0;
         }
     }
 }

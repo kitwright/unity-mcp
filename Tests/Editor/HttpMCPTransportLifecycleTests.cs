@@ -723,7 +723,7 @@ namespace KitWright.Editor
         }
 
         [UnityTest]
-        public IEnumerator AClientPresentingAnotherProjectsTokenIsTurnedAway()
+        public IEnumerator AClientWithoutThisProjectsTokenIsTurnedAway()
         {
             // Built, not written out: a 32-char hex literal trips the secret scanner.
             var token = new string('a', ServerToken.Length);
@@ -752,11 +752,17 @@ namespace KitWright.Editor
                     yield return WaitForTask(right, 3f);
                     Assert.AreEqual(HttpStatusCode.OK, right.Result.StatusCode);
 
-                    // Configs written before tokens existed carry none, and are still served so the
-                    // sweep gets a chance to repair them rather than breaking a working install.
-                    var legacy = client.PostAsync(root + "/", Body("init-3"));
-                    yield return WaitForTask(legacy, 3f);
-                    Assert.AreEqual(HttpStatusCode.OK, legacy.Result.StatusCode);
+                    var missing = client.PostAsync(root + "/", Body("init-3"));
+                    yield return WaitForTask(missing, 3f);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized, missing.Result.StatusCode,
+                        "Serving a config that carries no token is serving any process on the machine.");
+
+                    var stream = new HttpRequestMessage(HttpMethod.Get, root + "/");
+                    stream.Headers.Accept.ParseAdd("text/event-stream");
+                    var unauthenticatedStream = client.SendAsync(stream, HttpCompletionOption.ResponseHeadersRead);
+                    yield return WaitForTask(unauthenticatedStream, 3f);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized, unauthenticatedStream.Result.StatusCode,
+                        "The notification stream is behind the same check as calls.");
                 }
             }
             finally

@@ -566,6 +566,81 @@ namespace KitWright.Editor
             }
         }
 
+        [UnityTest]
+        public IEnumerator BrokerTransport_RefusesAClientWithoutTheAccessTokenAndFollowsARotation()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            // Built, not written out: a 32-char hex literal trips the secret scanner.
+            var token = new string('a', ServerToken.Length);
+            var rotated = new string('b', ServerToken.Length);
+            MCPBrokerClientTransport firstTransport = null;
+            MCPBrokerClientTransport secondTransport = null;
+
+            try
+            {
+                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
+                    "Unity-bundled Mono is required for broker process tests.");
+
+                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
+
+                var calls = 0;
+                firstTransport = new MCPBrokerClientTransport(port, connection.Token, token);
+                firstTransport.OnRequestReceived += (request, sendResponse) =>
+                {
+                    calls++;
+                    sendResponse(CreateToolTextResponse(request.Id, "served"));
+                };
+
+                var start = firstTransport.StartAsync();
+                yield return WaitForTask(start);
+                Assert.IsTrue(start.Result);
+
+                var missing = SendToolCallAsync(port, "execute_code");
+                yield return WaitForTask(missing, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, missing.Result.StatusCode,
+                    "a caller with no token must not reach the editor through the broker");
+
+                var wrong = SendToolCallAsync(port, "execute_code", path: "/t/deadbeef/");
+                yield return WaitForTask(wrong, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, wrong.Result.StatusCode);
+                Assert.AreEqual(0, calls, "a refused request is refused before it is queued, not after the editor ran it");
+
+                var right = SendToolCallAsync(port, "get_editor_state", path: "/t/" + token + "/");
+                yield return WaitForTask(right, 8f);
+                Assert.AreEqual(HttpStatusCode.OK, right.Result.StatusCode);
+                Assert.AreEqual(1, calls);
+
+                firstTransport.Dispose();
+                firstTransport = null;
+
+                secondTransport = new MCPBrokerClientTransport(port, connection.Token, rotated);
+                secondTransport.OnRequestReceived += (request, sendResponse) =>
+                    sendResponse(CreateToolTextResponse(request.Id, "served"));
+                var restart = secondTransport.StartAsync();
+                yield return WaitForTask(restart);
+                Assert.IsTrue(restart.Result);
+
+                var stale = SendToolCallAsync(port, "get_editor_state", path: "/t/" + token + "/");
+                yield return WaitForTask(stale, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, stale.Result.StatusCode,
+                    "a rotated token must retire the old one without restarting the broker");
+
+                var current = SendToolCallAsync(port, "get_editor_state", path: "/t/" + rotated + "/");
+                yield return WaitForTask(current, 8f);
+                Assert.AreEqual(HttpStatusCode.OK, current.Result.StatusCode);
+            }
+            finally
+            {
+                firstTransport?.Dispose();
+                secondTransport?.Dispose();
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
         [Test]
         public void BrokerSession_InitializeMintsAnIdAndUnknownIdsAreRefused()
         {
@@ -762,10 +837,10 @@ namespace KitWright.Editor
         }
 
         private static async Task<HttpResponseMessage> SendToolCallAsync(int port, string toolName,
-            string origin = null, string mcpSessionId = null)
+            string origin = null, string mcpSessionId = null, string path = "/")
         {
             using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) })
-            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/"))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + path))
             {
                 if (origin != null)
                     request.Headers.Add("Origin", origin);

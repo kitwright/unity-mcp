@@ -596,7 +596,7 @@ namespace KitWright.Editor.MCP.Server
                 if (brokerReady &&
                     MCPBrokerProcessManager.TryGetConnectionInfo(startupPort, out var broker))
                 {
-                    return new MCPBrokerClientTransport(startupPort, broker.Token);
+                    return new MCPBrokerClientTransport(startupPort, broker.Token, ServerToken.Get());
                 }
 
                 Debug.LogWarning(

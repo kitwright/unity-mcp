@@ -39,16 +39,29 @@ namespace KitWright.Editor.Tests
         public void APathCarryingTheRightTokenPasses()
         {
             Assert.AreEqual(ServerToken.Verdict.Ok, ServerToken.Check($"/p/abcd1234/t/{Token}/", Token));
-            Assert.AreEqual(ServerToken.Verdict.Ok, ServerToken.Check($"/p/abcd1234/t/{Token.ToUpperInvariant()}/", Token));
+            Assert.AreEqual(ServerToken.Verdict.Mismatch, ServerToken.Check($"/p/abcd1234/t/{Token.ToUpperInvariant()}/", Token),
+                "The token is compared exactly, as the broker compares it.");
+            Assert.AreEqual(ServerToken.Verdict.Mismatch, ServerToken.Check($"/t/{Token}a/", Token));
         }
 
         [Test]
         public void AMissingTokenAndAWrongOneAreDifferentAnswers()
         {
-            // They get different treatment: a config written before tokens existed carries none and
-            // is still served with a warning, while a token that is not this project's is refused.
+            // Both are refused, but they need different advice: a missing token is a config written
+            // before tokens existed, a wrong one is a config left over from a rotated token.
             Assert.AreEqual(ServerToken.Verdict.Missing, ServerToken.Check("/p/abcd1234/", Token));
             Assert.AreEqual(ServerToken.Verdict.Mismatch, ServerToken.Check("/p/abcd1234/t/deadbeef/", Token));
+            Assert.AreNotEqual(ServerToken.RefusalMessage(ServerToken.Verdict.Missing),
+                ServerToken.RefusalMessage(ServerToken.Verdict.Mismatch));
+        }
+
+        [Test]
+        public void ALoggedUrlDoesNotCarryTheToken()
+        {
+            var redacted = ServerToken.Redact($"http://127.0.0.1:8765/p/abcd1234/t/{Token}/");
+
+            Assert.AreEqual("http://127.0.0.1:8765/p/abcd1234/t/<token>/", redacted);
+            Assert.AreEqual("http://127.0.0.1:8765/p/abcd1234/", ServerToken.Redact("http://127.0.0.1:8765/p/abcd1234/"));
         }
 
         [Test]

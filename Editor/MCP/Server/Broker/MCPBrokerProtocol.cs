@@ -24,7 +24,10 @@ namespace KitWright.Editor.MCP.Server
         //     broker always wrote 200, so the refusal arrived as a JSON-RPC error the client had no
         //     rule for: it kept the dead id and every later call failed while the connection still
         //     looked healthy. The bump replaces such a broker.
-        public const int Version = 6;
+        // v7: pulls and attaches carry ClientTokenHeader, the access token MCP clients must present
+        //     in the URL, and the broker refuses a client without it before queueing anything. A v6
+        //     broker forwarded every loopback caller to the editor, so the bump replaces it.
+        public const int Version = 7;
         public const string Name = "kitwright-unity-mcp-broker";
         public const string HealthPath = "/_kitwright/broker/health";
         public const string AttachPath = "/_kitwright/broker/attach";
@@ -42,5 +45,6 @@ namespace KitWright.Editor.MCP.Server
         public const string ClientPortHeader = "X-KitWright-Broker-Client-Port";
         public const string McpSessionHeader = "X-KitWright-Broker-Mcp-Session";
         public const string StatusHeader = "X-KitWright-Broker-Status";
+        public const string ClientTokenHeader = "X-KitWright-Broker-Client-Token";
     }
 }

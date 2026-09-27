@@ -67,7 +67,7 @@ namespace KitWright.Editor.MCP.Server
             }
 
             if (rewritten.Count > 0)
-                Debug.Log($"[KitWright MCP Server] Updated stale MCP config URL to {serverUrl} for:\n{string.Join("\n", rewritten)}\nRestart or reload the client(s) to reconnect.");
+                Debug.Log($"[KitWright MCP Server] Updated stale MCP config URL to {ServerToken.Redact(serverUrl)} for:\n{string.Join("\n", rewritten)}\nRestart or reload the client(s) to reconnect.");
         }
 
         internal static bool RewriteJson(
