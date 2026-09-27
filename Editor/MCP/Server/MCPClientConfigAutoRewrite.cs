@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.RegularExpressions;
 using KitWright.Editor.Services;
 using UnityEditor;
@@ -68,6 +69,40 @@ namespace KitWright.Editor.MCP.Server
 
             if (rewritten.Count > 0)
                 Debug.Log($"[KitWright MCP Server] Updated stale MCP config URL to {ServerToken.Redact(serverUrl)} for:\n{string.Join("\n", rewritten)}\nRestart or reload the client(s) to reconnect.");
+
+            WarnAboutCommittableTokenCarriers(serverUrl);
+        }
+
+        // Every start, not only on a rewrite: a config that already carried the current URL when it
+        // was committed is the leak, and it never needs rewriting.
+        private static void WarnAboutCommittableTokenCarriers(string serverUrl)
+        {
+            var token = ServerToken.ExtractToken(serverUrl);
+            if (token.Length == 0)
+                return;
+
+            var carriers = ClientConfigPanel.GetAllTargets()
+                .Select(target => target.ProjectConfigPath)
+                .Where(path => !string.IsNullOrEmpty(path))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(path => Carries(path, token))
+                .ToList();
+
+            if (carriers.Count > 0)
+                System.Threading.Tasks.Task.Run(() => carriers.ForEach(ServerToken.WarnIfGitWouldCommit));
+        }
+
+        private static bool Carries(string path, string token)
+        {
+            try
+            {
+                return File.Exists(path) && File.ReadAllText(path).Contains(token);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                // A client holding its config open is not a leak this sweep can see.
+                return false;
+            }
         }
 
         internal static bool RewriteJson(
