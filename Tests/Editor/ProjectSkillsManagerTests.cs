@@ -97,6 +97,29 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        // Skill and instruction files are meant to be committed, and the access token is what keeps
+        // other processes out of the editor.
+        [Test]
+        public void ApplyConfiguration_WritesTheAccessTokenIntoNoGeneratedFile()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex", "claude", "cursor", "agents" });
+
+                var token = ServerToken.Get();
+                var files = Directory.GetFiles(projectRoot, "*", SearchOption.AllDirectories);
+                Assert.IsNotEmpty(files);
+                foreach (var path in files)
+                    StringAssert.DoesNotContain(token, File.ReadAllText(path), path);
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
         [Test]
         public void ApplyConfiguration_AppendsAndUpdatesOnlyManagedBlock()
         {

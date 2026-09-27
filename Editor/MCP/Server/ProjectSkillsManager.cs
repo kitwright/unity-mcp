@@ -7,9 +7,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
-using KitWright.Editor.DI;
 using KitWright.Editor.Services;
-using KitWright.Editor.Settings;
 using KitWright.Editor.Tools;
 
 namespace KitWright.Editor.MCP.Server
@@ -1089,18 +1087,20 @@ platform: {platform.ToString().ToLowerInvariant()}
 
 ## MCP Call Pattern
 
-If native MCP tools are not directly available, probe the local HTTP endpoint:
+If native MCP tools are not directly available, probe the local HTTP endpoint. Take its URL from the `kitwright` entry in this project's MCP client config (`.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`, ...). It is not written here because it carries this editor's access token: a skill file gets committed, and the token must not be.
 
 ```bash
-curl -sS -m 1 -X POST {{SERVER_URL}}mcp \
+URL='<url of the kitwright entry>'
+curl -sS -m 1 -X POST ""${URL}mcp"" \
   -H 'Content-Type: application/json' \
   -d '{""jsonrpc"":""2.0"",""id"":1,""method"":""ping""}'
 ```
 
 Probe with `ping`, never with `tools/list`: that returns the whole tool catalog, tens of KB per probe. Call `tools/list` once, only when you need the tool schemas.
 
-That URL carries this project's pin. A pinless or stale-port URL is answered by whichever
-editor happens to hold the port, which may be a different Unity project.
+That URL carries this project's pin and access token, and the editor rewrites it to the live
+port on every start. A URL without the token is refused with 401. A pinless or stale-port URL
+is answered by whichever editor happens to hold the port, which may be a different Unity project.
 
 For multi-line `execute_code` calls over curl, generate JSON with a real encoder instead of hand-escaping C#:
 
@@ -1298,20 +1298,7 @@ $@"
 - Source repository: `https://github.com/kitwright/unity-mcp`
 ";
 
-            // The curl fallback has to name a URL, and a hardcoded one is a loaded gun: ports are
-            // per-project now, so a stale or pinless URL is answered by whichever sibling editor
-            // holds that port.
-            return header + body.Replace("{{SERVER_URL}}", CurrentServerUrl()) + footer;
-        }
-
-        private static string CurrentServerUrl()
-        {
-            var services = RootScopeServices.Services;
-            if (services?.GetService(typeof(MCPServerService)) is MCPServerService server && server.IsRunning)
-                return ClientConfigPanel.BuildServerUrl(server.Port);
-
-            var settings = services?.GetService(typeof(SettingsController)) as SettingsController;
-            return ClientConfigPanel.BuildServerUrl(settings?.MCPServerPort ?? 8765);
+            return header + body + footer;
         }
 
         private static ProjectSkillsManifest CreateDefaultManifest()
