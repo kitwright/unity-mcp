@@ -183,10 +183,14 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrEmpty(relativeDir))
                 relativeDir = "Shaders";
 
+            // Resolved before any caller touches the disk: the folder, and the name that read/update/
+            // delete never validate, can both carry "..". A rooted folder (a drive letter survives the
+            // '/' trim) stays unprefixed so it is refused instead of glued under Assets/.
             var fileName = $"{name}.shader";
-            var fullPath = Path.Combine(Application.dataPath, relativeDir, fileName);
-            var relativePath = $"Assets/{relativeDir}/{fileName}".Replace("//", "/");
-            return (fullPath, relativePath);
+            var relativePath = Path.IsPathRooted(relativeDir)
+                ? $"{relativeDir}/{fileName}"
+                : $"Assets/{relativeDir}/{fileName}".Replace("//", "/");
+            return (PathSafety.ResolveAssetPath(relativePath), relativePath);
         }
 
         private static string DefaultShader(string name)

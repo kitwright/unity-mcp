@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Builtins;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -97,6 +98,42 @@ namespace KitWright.Editor.Tests
         public void CreatePrefabVariant_InvalidPathRejected()
         {
             Assert.That(Json(PrefabFunctions.CreatePrefabVariant(null, "Assets/x.prefab")), Does.Contain("INVALID_ARGUMENT"));
+        }
+
+        // A real base, so an unchecked path would get as far as the folder creation this pins.
+        [Test]
+        public void CreatePrefabVariant_RefusesAPathThatLeavesAssetsBeforeMakingAFolder()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var tempFolder = "Assets/__KitWrightMcpPrefabVariantEscapeTests";
+            var basePath = tempFolder + "/Base_" + suffix + ".prefab";
+            var escape = "KitWrightEscape_" + suffix;
+            var traversed = Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, "..", escape));
+            var absolute = Path.Combine(Path.GetTempPath(), escape);
+
+            try
+            {
+                EnsureFolder(tempFolder);
+                CreatePrefabAsset(basePath, "BaseRoot_" + suffix);
+
+                foreach (var (variantPath, folder) in new[]
+                         {
+                             ("Assets/../../" + escape + "/Variant.prefab", traversed),
+                             (absolute + "/Variant.prefab", absolute),
+                         })
+                {
+                    Assert.That(Json(PrefabFunctions.CreatePrefabVariant(basePath, variantPath)), Does.Contain("INVALID_PATH"), variantPath);
+                    Assert.IsFalse(Directory.Exists(folder), "create_prefab_variant made " + folder + " before refusing.");
+                }
+            }
+            finally
+            {
+                foreach (var folder in new[] { traversed, absolute })
+                    if (Directory.Exists(folder))
+                        Directory.Delete(folder, true);
+                if (AssetDatabase.IsValidFolder(tempFolder))
+                    AssetDatabase.DeleteAsset(tempFolder);
+            }
         }
 
         [Test]
