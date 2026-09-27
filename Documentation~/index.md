@@ -1,6 +1,6 @@
 # KitWright MCP for Unity
 
-KitWright MCP for Unity is an open-source MCP server for the Unity Editor.
+KitWright MCP for Unity is an MCP server for the Unity Editor.
 
 ## Getting Started
 

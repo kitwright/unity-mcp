@@ -358,7 +358,7 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 
 ## MCP 能力结构
 
-当前开源包有四层高价值能力：
+当前包有四层高价值能力：
 
 - **Tools** — `full` 下共 274 个工具，`core` 下 40 个高频工具
 - **Primary execution** — `execute_code` 用于复杂编辑器/运行态编排

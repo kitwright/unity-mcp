@@ -226,6 +226,13 @@ NODE
 run_git_checks() {
   info "Running git diff check"
   run git -C "$ROOT" diff --check
+
+  # Not behind run: a dry run is exactly when you want to know the export would be declined.
+  if [[ "$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)" == "asset-store" ]]; then
+    info "Running the Asset Store licence sweep"
+    python3 "$ROOT/scripts/check_asset_store_licence.py" "$ROOT" \
+      || fail "the tree still claims a licence of its own; an Asset Store submission would be declined"
+  fi
 }
 
 run_unity_tests() {
