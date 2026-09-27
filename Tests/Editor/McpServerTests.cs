@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.MCP.Server;
@@ -125,6 +126,66 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(MCPRequestHandler.TryParseEnvelope("{\"success\":\"yes\"}", out _, out _), "success must be boolean");
             Assert.IsFalse(MCPRequestHandler.TryParseEnvelope(null, out _, out _));
             Assert.IsFalse(MCPRequestHandler.TryParseEnvelope("{not json", out _, out _));
+        }
+
+        private static List<Dictionary<string, object>> TextContent(string text) =>
+            new List<Dictionary<string, object>> { new Dictionary<string, object> { ["type"] = "text", ["text"] = text } };
+
+        [Test]
+        public void AnOversizedTextResultSpillsToAFileThatHoldsAllOfIt()
+        {
+            var text = "{\"success\":true,\"data\":\"" + new string('x', MCPRequestHandler.MaxInlineTextChars) + "\"}";
+            var content = TextContent(text);
+
+            Assert.IsTrue(MCPRequestHandler.SpillOversizedText(content, "get_hierarchy", _tempRoot));
+
+            var files = Directory.GetFiles(_tempRoot, "*.txt");
+            Assert.AreEqual(1, files.Length);
+            StringAssert.EndsWith("_get_hierarchy.txt", files[0]);
+            Assert.AreEqual(text, File.ReadAllText(files[0]), "The file must hold the whole result, not the preview.");
+
+            var inline = (string)content[0]["text"];
+            StringAssert.Contains(files[0], inline, "The answer must say where the rest is.");
+            StringAssert.EndsWith(text.Substring(0, MCPRequestHandler.SpillPreviewChars), inline);
+            Assert.Less(inline.Length, MCPRequestHandler.SpillPreviewChars + 1024);
+        }
+
+        [Test]
+        public void ASmallResultAndAnImageStayInline()
+        {
+            var small = TextContent("small");
+            var image = new List<Dictionary<string, object>>
+            {
+                new Dictionary<string, object>
+                {
+                    ["type"] = "image",
+                    ["data"] = new string('A', MCPRequestHandler.MaxInlineTextChars * 2),
+                    ["mimeType"] = "image/png"
+                }
+            };
+
+            Assert.IsFalse(MCPRequestHandler.SpillOversizedText(small, "get_selection", _tempRoot));
+            Assert.IsFalse(MCPRequestHandler.SpillOversizedText(image, "capture_game_view", _tempRoot));
+            Assert.AreEqual("small", small[0]["text"]);
+            Assert.AreEqual(MCPRequestHandler.MaxInlineTextChars * 2, ((string)image[0]["data"]).Length);
+            Assert.IsFalse(Directory.Exists(_tempRoot), "Nothing to spill must write nothing.");
+        }
+
+        [Test]
+        public void SpillingKeepsOnlyTheNewestOutputs()
+        {
+            Directory.CreateDirectory(_tempRoot);
+            for (var i = 0; i < 25; i++)
+                File.WriteAllText(Path.Combine(_tempRoot, $"20000101-000000-{i:000}_old.txt"), "old");
+
+            MCPRequestHandler.SpillOversizedText(
+                TextContent(new string('x', MCPRequestHandler.MaxInlineTextChars + 1)), "find_assets", _tempRoot);
+
+            var names = Directory.GetFiles(_tempRoot, "*.txt").Select(Path.GetFileName).ToArray();
+            Assert.AreEqual(MCPRequestHandler.SpilledOutputsKept, names.Length);
+            Assert.IsTrue(names.Any(name => name.EndsWith("_find_assets.txt")), "The spill just written must survive.");
+            Assert.IsFalse(names.Contains("20000101-000000-005_old.txt"), "The oldest go first.");
+            Assert.IsTrue(names.Contains("20000101-000000-006_old.txt"));
         }
 
         [Test]
