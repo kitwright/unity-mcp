@@ -18,6 +18,8 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Run multiple MCP tool calls sequentially in a single request, on the main thread, saving round-trips. " +
                      "Pass a JSON array of {\"name\": \"<tool_name>\", \"params\": {..}} objects. Each result is returned in order. " +
                      "By default a failing call stops the batch; set stop_on_error=false to continue past failures. " +
+                     "A capture in the batch comes back as an image block of the response, with {\"image_index\": N} " +
+                     "standing in for it in results (N counts the response's images from 0). " +
                      "The scene changes the whole batch makes collapse into a single Undo step, so the user can revert " +
                      "the batch with one Ctrl+Z instead of one per command. File writes, asset imports and play-mode " +
                      "changes are outside Unity's undo system and are not reverted by it.")]
