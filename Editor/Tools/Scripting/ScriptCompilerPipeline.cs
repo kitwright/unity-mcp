@@ -403,10 +403,13 @@ namespace KitWright.Editor.Tools.Scripting
             return sb.ToString();
         }
 
-        private static string BuildCompilerArguments(string cscPath, string responsePath)
+        // Bare -shared on purpose: a value after it is the server's pipe name, not an off switch.
+        // Left bare, Roslyn derives the pipe from the compiler directory and user, so two Unity
+        // installs never reach each other's server.
+        internal static string BuildCompilerArguments(string cscPath, string responsePath)
         {
             var sharedFlag = string.Equals(Path.GetFileName(cscPath), "csc.dll", StringComparison.OrdinalIgnoreCase)
-                ? " /shared:false"
+                ? " -shared"
                 : string.Empty;
             return $"{QuoteArgument(cscPath)} -noconfig{sharedFlag} @{QuoteArgument(responsePath)}";
         }
