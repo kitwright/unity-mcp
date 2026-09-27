@@ -87,7 +87,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (eventSystem == null)
             {
                 results.AppendLine("  EventSystem: skipped (no EventSystem found)");
-                AppendDirectButtonFallback(results, new Vector2(x, y));
+                AppendDirectButtonFallback(results, new Vector2(x, y), inputButton);
                 return;
             }
 
@@ -95,7 +95,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (!TryGetTopUiTarget(eventSystem, pointerData, out var target, out var raycast))
             {
                 results.AppendLine("  EventSystem: no UI element at position");
-                AppendDirectButtonFallback(results, new Vector2(x, y));
+                AppendDirectButtonFallback(results, new Vector2(x, y), inputButton);
                 return;
             }
 
@@ -107,11 +107,26 @@ namespace KitWright.Editor.Tools.Builtins
             ExecuteEvents.ExecuteHierarchy(target, pointerData, ExecuteEvents.pointerClickHandler);
             results.AppendLine($"  EventSystem: clicked on '{target.name}'");
 
-            if (target.TryGetComponent<Button>(out var button))
-                button.onClick?.Invoke();
+            // The click above is what presses a Button, under uGUI's own rules; invoking onClick on
+            // top of it fired the button twice and ignored those rules. Say so when they refused.
+            var handler = ExecuteEvents.GetEventHandler<IPointerClickHandler>(target);
+            if (handler != null && handler.TryGetComponent<Selectable>(out var selectable))
+            {
+                var refusal = RefusalReason(selectable, inputButton);
+                if (refusal != null)
+                    results.AppendLine($"  '{handler.name}' {refusal}, so the click did not press it");
+            }
         }
 
-        private static void AppendDirectButtonFallback(StringBuilder results, Vector2 position)
+        // What Selectable.IsInteractable (CanvasGroups included) and Button.OnPointerClick check.
+        private static string RefusalReason(Selectable selectable, PointerEventData.InputButton inputButton)
+        {
+            if (!selectable.IsInteractable())
+                return "is not interactable";
+            return inputButton == PointerEventData.InputButton.Left ? null : "reacts to the left button only";
+        }
+
+        private static void AppendDirectButtonFallback(StringBuilder results, Vector2 position, PointerEventData.InputButton inputButton)
         {
             foreach (var button in ObjectsHelper.FindObjectsByTypeUnsorted<Button>(FindObjectsInactive.Include))
             {
@@ -124,6 +139,13 @@ namespace KitWright.Editor.Tools.Builtins
 
                 if (!RectTransformUtility.RectangleContainsScreenPoint(rectTransform, position, null))
                     continue;
+
+                var refusal = RefusalReason(button, inputButton);
+                if (refusal != null)
+                {
+                    results.AppendLine($"  Direct button hit: '{button.name}' {refusal}, not invoked");
+                    return;
+                }
 
                 button.onClick?.Invoke();
                 results.AppendLine($"  Direct button hit: invoked '{button.name}'");
