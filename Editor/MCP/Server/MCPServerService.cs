@@ -540,12 +540,25 @@ namespace KitWright.Editor.MCP.Server
             var toolExposureChanged = !string.Equals(toolExposureSetting, _toolExposureSetting, StringComparison.Ordinal);
             var transportChanged = !string.Equals(transportSetting, _transportSetting, StringComparison.Ordinal);
 
-            if ((toolExposureChanged || transportChanged) && _isRunning)
+            if (!_isRunning)
+                return;
+
+            if (transportChanged)
             {
                 PluginDebugLogger.Log("[KitWright MCP Server] Server settings changed, restarting MCP transport...");
                 _toolExposureSetting = toolExposureSetting;
                 _transportSetting = transportSetting;
                 ScheduleRestart();
+                return;
+            }
+
+            // The exporter and the execution bridge read the profile live from settings, so a new
+            // exposure only needs clients told to re-read tools/list - a restart would refuse
+            // requests for a frame or two and drop the reply to set_tool_profile itself.
+            if (toolExposureChanged)
+            {
+                _toolExposureSetting = toolExposureSetting;
+                MCPToolListChangeNotifier.CheckForChanges(new MCPToolExporter(_settings));
             }
         }
 
