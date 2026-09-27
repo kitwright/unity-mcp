@@ -46,7 +46,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "safety_checks blocks a small set of obviously dangerous patterns " +
                      "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
                      "and, when strict filesystem safety is enabled, broad System.IO writes plus obvious absolute/system/traversal paths. " +
-                     "This catches accidents, not intent: safety_checks is an argument you control, so it is neither a sandbox nor a security boundary — unless the MCP Settings window locks it, in which case the setting wins and the argument is ignored. " +
+                     "This catches accidents, not intent: it is neither a sandbox nor a security boundary. When the MCP Settings window locks it, the setting wins and the argument is ignored, but the check stays best-effort. " +
                      "If omitted, the MCP Settings window's default safety-check setting is used " +
                      "(enabled by default); explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
@@ -199,8 +199,10 @@ namespace KitWright.Editor.Tools.Builtins
         // ---- History helpers ----------------------------------------------------
 
         // Locked makes the setting the only input: the client's safety_checks argument stops overriding it
-        // in either direction, which is what turns the guard from a footgun-guard into a boundary the
-        // caller cannot clear. Unlocked (the default) keeps the argument as the override it has always been.
+        // in either direction. That takes the one-argument off switch away; it does not make the guard a
+        // boundary, since the checks are pattern-based and a caller can write a script Unity compiles
+        // outside them. The access token is the boundary. Unlocked (the default) keeps the argument as
+        // the override it has always been.
         internal static bool ResolveSafetyChecks(bool? safetyChecks, bool settingDefault, bool locked)
         {
             return locked ? settingDefault : safetyChecks ?? settingDefault;

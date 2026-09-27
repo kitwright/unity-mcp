@@ -59,7 +59,7 @@ namespace KitWright.Editor.MCP.Server
 
             AddToggleCard(settingsFoldout,
                 "Lock execute_code safety checks",
-                "Off by default. When on, the setting above becomes the only input and a client's safety_checks argument is ignored, so a caller cannot clear the guard. Turn it on for a shared or untrusted client; legitimate reflection, P/Invoke, or serialization snippets then need it turned off again.",
+                "Off by default. When on, the setting above becomes the only input and a client's safety_checks argument is ignored, so a caller cannot switch the checks off with one argument. It is still a best-effort check, not a sandbox: a client can write a script through create_script or write_file (or, without the strict filesystem guard, from inside a snippet), and Unity compiles that script outside these checks. The access token in the client's URL is what keeps other processes out. Legitimate reflection, P/Invoke, or serialization snippets need the lock turned off again.",
                 _settingsController.ExecuteCodeSafetyChecksLocked,
                 value => _settingsController.ExecuteCodeSafetyChecksLocked = value);
 

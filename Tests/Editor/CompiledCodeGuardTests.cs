@@ -6,6 +6,11 @@ using NUnit.Framework;
 
 namespace KitWright.Editor.Tests
 {
+    public static class ModuleInitializerSentinel
+    {
+        public static bool Fired;
+    }
+
     public sealed class CompiledCodeGuardTests
     {
         // The strict source rule anchors on "File." with a (?<![\w.]) lookbehind, or on the literal
@@ -170,6 +175,124 @@ public class Deser
         return bf.Deserialize(ms);
     }
 }";
+
+        private const string ConstructorInvoke = @"
+public class CtorInvoke
+{
+    public static string Run()
+    {
+        var ctor = typeof(System.Text.StringBuilder).GetConstructor(System.Type.EmptyTypes);
+        return ctor.Invoke(new object[0]).ToString();
+    }
+}";
+
+        private const string DynamicInvoke = @"
+public class Dynamic
+{
+    public static string Run()
+    {
+        System.Delegate call = new System.Func<string>(() => ""x"");
+        return (string)call.DynamicInvoke();
+    }
+}";
+
+        private const string FieldWrite = @"
+public class FieldWrite
+{
+    private static int hidden;
+
+    public static string Run()
+    {
+        typeof(FieldWrite).GetField(""hidden"", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)
+            .SetValue(null, 1);
+        return ""done"";
+    }
+}";
+
+        private const string PropertyWrite = @"
+public class PropertyWrite
+{
+    public static int Visible { get; set; }
+
+    public static string Run()
+    {
+        typeof(PropertyWrite).GetProperty(""Visible"").SetValue(null, 1);
+        return ""done"";
+    }
+}";
+
+        // The call instruction's token is a MethodSpec, not the MemberRef the scan reads.
+        private const string GenericMethodInstance = @"
+public class GenericActivator
+{
+    public static string Run() => System.Activator.CreateInstance<System.Text.StringBuilder>().ToString();
+}";
+
+        // The blocked type appears only as a generic argument, inside a TypeSpec.
+        private const string GenericTypeArgument = @"
+public class GenericProcess
+{
+    public static string Run() => new System.Collections.Generic.List<System.Diagnostics.Process>().Count.ToString();
+}";
+
+        private const string ModuleInitializer = @"
+namespace System.Runtime.CompilerServices
+{
+    [System.AttributeUsage(System.AttributeTargets.Method)]
+    public sealed class ModuleInitializerAttribute : System.Attribute { }
+}
+
+public class EarlyBird
+{
+    [System.Runtime.CompilerServices.ModuleInitializer]
+    internal static void Init() { KitWright.Editor.Tests.ModuleInitializerSentinel.Fired = true; }
+
+    public static string Run() => ""ran"";
+}";
+
+        [TestCase(ConstructorInvoke, "System.Reflection.ConstructorInfo.Invoke")]
+        [TestCase(DynamicInvoke, "System.Delegate.DynamicInvoke")]
+        [TestCase(FieldWrite, "System.Reflection.FieldInfo.SetValue")]
+        [TestCase(PropertyWrite, "System.Reflection.PropertyInfo.SetValue")]
+        [TestCase(GenericMethodInstance, "System.Activator.CreateInstance")]
+        [TestCase(GenericTypeArgument, "System.Diagnostics.Process")]
+        public void Guard_BlocksAKnownRouteAroundTheList(string snippet, string expected)
+        {
+            var compilation = ScriptCompilerPipeline.Compile(snippet);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
+            Assert.AreEqual(expected, reference);
+        }
+
+        [Test]
+        public void Guard_RefusesASnippetLongerThanTheScanReads()
+        {
+            var compilation = ScriptCompilerPipeline.Compile(Benign);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, 2, out _, out var reason),
+                "references past the cap were never checked, so they cannot pass as clean");
+            Assert.That(reason, Does.Contain("more than 2"));
+        }
+
+        // The scan runs on an assembly that is already loaded. That is only safe if loading and
+        // scanning it run none of its code, and a module initializer is the code that could.
+        [Test]
+        public void Guard_ScansASnippetBeforeItsModuleInitializerRuns()
+        {
+            ModuleInitializerSentinel.Fired = false;
+
+            var compilation = ScriptCompilerPipeline.Compile(ModuleInitializer);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+            Assert.IsFalse(ModuleInitializerSentinel.Fired, "loading the snippet ran its module initializer");
+
+            Assert.IsFalse(CompiledCodeGuard.TryFindViolation(compilation.Assembly, true, out _, out _));
+            Assert.IsFalse(ModuleInitializerSentinel.Fired, "the safety scan ran the module initializer before judging it");
+
+            compilation.Assembly.GetType("EarlyBird").GetMethod("Run").Invoke(null, null);
+            Assert.IsTrue(ModuleInitializerSentinel.Fired, "the initializer never ran at all, so this test proved nothing");
+        }
 
         [Test]
         public void SourcePolicy_MissesAnAliasedNamespace()
