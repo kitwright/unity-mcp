@@ -31,6 +31,11 @@ namespace KitWright.Editor.Tools.Builtins
             if (!IsUnderAssets(path)) return Response.Error("INVALID_PATH", new { path, hint = "path must be under Assets/" });
             path = path.Replace('\\', '/');
             if (!path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase)) path += ".asmdef";
+
+            try { PathSafety.ResolveAssetPath(path); }
+            catch (PathOutsideProjectException ex)
+            { return Response.Error("INVALID_PATH", new { path, message = ex.Message }); }
+
             if (File.Exists(path)) return Response.Error("ASMDEF_EXISTS", new { path });
 
             var asmName = string.IsNullOrEmpty(name) ? Path.GetFileNameWithoutExtension(path) : name;
@@ -217,6 +222,17 @@ namespace KitWright.Editor.Tools.Builtins
         private static JObject LoadAsmdef(string path, out object error)
         {
             error = null;
+            // The project root rather than Assets/: an embedded package's asmdef under Packages/ is
+            // a target these tools have always been able to edit.
+            if (!string.IsNullOrEmpty(path))
+            {
+                try { PathSafety.ResolveProjectPath(path); }
+                catch (PathOutsideProjectException ex)
+                {
+                    error = Response.Error("INVALID_PATH", new { path, message = ex.Message });
+                    return null;
+                }
+            }
             if (string.IsNullOrEmpty(path) || !path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
             {
                 error = Response.Error("ASMDEF_NOT_FOUND", new { path });
