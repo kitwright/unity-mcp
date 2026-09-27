@@ -107,6 +107,12 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("SHA256 from get_script_sha; patch is rejected with STALE_FILE if the file changed", Required = false)]
             string expected_sha256 = null)
         {
+            // An empty needle matches at every index without advancing, so the count loop below
+            // would spin forever on the main thread.
+            if (string.IsNullOrEmpty(old_text))
+                return ToolResultFormatter.Error("EMPTY_OLD_TEXT", new { path },
+                    "old_text must be the exact, non-empty text to replace; use edit_script to rewrite the whole file.");
+
             var fullPath = PathSafety.ResolveProjectPath(path);
             if (!File.Exists(fullPath))
                 return ToolResultFormatter.Error("SCRIPT_NOT_FOUND", new { path });
