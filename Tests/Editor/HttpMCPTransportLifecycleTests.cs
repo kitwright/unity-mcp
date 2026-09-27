@@ -98,6 +98,35 @@ namespace KitWright.Editor
             }
         }
 
+        [Test]
+        public void LogNotificationGuard_NeedsAnAttachedStreamWithALevel()
+        {
+            var manager = SSESessionManager.Instance;
+            manager.ResetForTests();
+            var closers = new List<IDisposable>();
+
+            try
+            {
+                Assert.IsFalse(manager.HasLogSubscribers, "no session, nobody to notify");
+
+                var session = manager.CreateSession();
+                manager.SetLoggingLevel(null, "info");
+                Assert.IsFalse(manager.HasLogSubscribers,
+                    "a session with no stream — every broker-mode session — cannot receive a notification");
+
+                manager.TryAttachStream(session.SessionId, LoopbackStream(closers), out _);
+                Assert.IsTrue(manager.HasLogSubscribers, "a stream with a level set is a real subscriber");
+
+                manager.SetLoggingLevel(null, null);
+                Assert.IsFalse(manager.HasLogSubscribers, "a stream with no level set asked for no logs");
+            }
+            finally
+            {
+                foreach (var closer in closers)
+                    closer.Dispose();
+            }
+        }
+
         private static NetworkStream LoopbackStream(List<IDisposable> closers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
