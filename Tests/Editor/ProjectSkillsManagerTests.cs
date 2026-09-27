@@ -47,16 +47,49 @@ namespace KitWright.Editor.Tests
                 Assert.IsFalse(status.HasUpdates);
                 Assert.IsTrue(File.Exists(agentsPath));
                 Assert.IsTrue(File.Exists(skillPath));
-                StringAssert.Contains("unity-mcp-workflow@1.0.0", File.ReadAllText(agentsPath));
+                StringAssert.Contains("unity-mcp-workflow@1.0.1", File.ReadAllText(agentsPath));
                 StringAssert.Contains(ProjectSkillsManager.ManagedEndMarker, File.ReadAllText(agentsPath));
                 StringAssert.Contains(ProjectSkillsManager.ManagedEndMarker, File.ReadAllText(claudePath));
-                StringAssert.Contains("version: 1.0.0", File.ReadAllText(skillPath));
-                StringAssert.Contains("<!-- KitWright Unity skill version: unity-mcp-workflow@1.0.0 -->", File.ReadAllText(skillPath));
+                StringAssert.Contains("version: 1.0.1", File.ReadAllText(skillPath));
+                StringAssert.Contains("<!-- KitWright Unity skill version: unity-mcp-workflow@1.0.1 -->", File.ReadAllText(skillPath));
 
                 var manifestJson = File.ReadAllText(ProjectSkillsManager.GetManifestPath(projectRoot));
                 StringAssert.Contains("\"skillVersions\"", manifestJson);
                 StringAssert.Contains("\"id\": \"unity-mcp-workflow\"", manifestJson);
-                StringAssert.Contains("\"version\": \"1.0.0\"", manifestJson);
+                StringAssert.Contains("\"version\": \"1.0.1\"", manifestJson);
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        // request_recompile and wait_for_compilation already return the compile errors, and
+        // tools/list is the whole catalog: guidance that chains an error read or probes with it
+        // costs every project a round-trip per edit and tens of KB per probe.
+        [Test]
+        public void ApplyConfiguration_GuidanceDropsTheErrorReadAndProbesWithPing()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex", "claude", "cursor" });
+
+                foreach (var path in new[]
+                {
+                    ProjectSkillsManager.GetCodexAgentsPath(projectRoot),
+                    ProjectSkillsManager.GetClaudeInstructionsPath(projectRoot),
+                    GetCodexWorkflowSkillPath(projectRoot),
+                    Path.Combine(ProjectSkillsManager.GetCursorRulesPath(projectRoot), "kitwright-unity-mcp-workflow.mdc")
+                })
+                {
+                    var content = File.ReadAllText(path);
+                    StringAssert.Contains("force_refresh=false", content, path);
+                    StringAssert.Contains("with `get_compilation_errors`", content, path);
+                    StringAssert.Contains("`ping`", content, path);
+                    StringAssert.DoesNotContain("\"method\":\"tools/list\"", content, path);
+                }
             }
             finally
             {
@@ -196,7 +229,7 @@ namespace KitWright.Editor.Tests
                 ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex" });
                 var skillPath = GetCodexWorkflowSkillPath(projectRoot);
                 RemoveLinesContaining(skillPath, "KitWright Unity skill version:");
-                RemoveLinesContaining(skillPath, "version: 1.0.0");
+                RemoveLinesContaining(skillPath, "version: 1.0.1");
 
                 var manifest = ProjectSkillsManager.LoadManifest(projectRoot);
                 var status = ProjectSkillsManager.GetUpgradeStatus(projectRoot, manifest, "codex");
@@ -205,7 +238,7 @@ namespace KitWright.Editor.Tests
                 Assert.IsTrue(status.HasUpdates);
                 Assert.IsTrue(skillStatus.RequiresUpgrade);
                 Assert.AreEqual("unknown", skillStatus.InstalledVersion);
-                Assert.AreEqual("1.0.0", skillStatus.ExpectedVersion);
+                Assert.AreEqual("1.0.1", skillStatus.ExpectedVersion);
             }
             finally
             {
@@ -231,7 +264,7 @@ namespace KitWright.Editor.Tests
                 Assert.IsTrue(status.HasUpdates);
                 Assert.IsTrue(skillStatus.Missing);
                 Assert.AreEqual("missing", skillStatus.InstalledVersion);
-                Assert.AreEqual("1.0.0", skillStatus.ExpectedVersion);
+                Assert.AreEqual("1.0.1", skillStatus.ExpectedVersion);
             }
             finally
             {
