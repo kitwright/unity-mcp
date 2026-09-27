@@ -155,6 +155,13 @@ namespace KitWright.UnityMcp.Broker
             Log("listening on http://127.0.0.1:" + port + "/");
 
             LastActivityMs = NowMs();
+
+            // A handler can sit in a read for up to RequestReadTimeoutMs, and the pool only grows
+            // slowly past its minimum, so a burst of parallel calls would otherwise queue for threads.
+            int workers, completion;
+            ThreadPool.GetMinThreads(out workers, out completion);
+            ThreadPool.SetMinThreads(Math.Max(workers, 32), completion);
+
             var sweeper = new Thread(SweepLoop);
             sweeper.IsBackground = true;
             sweeper.Start();
@@ -173,9 +180,9 @@ namespace KitWright.UnityMcp.Broker
                     continue;
                 }
 
-                var thread = new Thread(HandleConnectionThread);
-                thread.IsBackground = true;
-                thread.Start(client);
+                // A thread per connection took up to ~190 ms to start running on a loaded machine
+                // (p99 ~130 ms on Unity's Mono), on every request; a pool thread starts in microseconds.
+                ThreadPool.QueueUserWorkItem(HandleConnectionThread, client);
             }
 
             return 0;
