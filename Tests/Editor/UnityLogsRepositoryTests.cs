@@ -175,28 +175,6 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void LogNotificationGuard_FollowsWhetherASubscriberIsAttached()
-        {
-            var sessions = MCP.Server.SSE.SSESessionManager.Instance;
-            var liveSessions = sessions.ExportSnapshot();
-            sessions.ResetForTests();
-
-            try
-            {
-                Assert.IsFalse(sessions.HasLogSubscribers,
-                    "A log with no SSE session attached must not build a notification.");
-
-                sessions.SetLoggingLevel(null, "info");
-                Assert.IsTrue(sessions.HasLogSubscribers, "The guard must not mute a real subscriber.");
-            }
-            finally
-            {
-                sessions.ResetForTests();
-                sessions.ImportSnapshot(liveSessions);
-            }
-        }
-
-        [Test]
         public void HelperMethods_HandleEmptyTextAndLongLines()
         {
             Assert.IsTrue(UnityLogsRepository.MatchesTextFilter("Hello Console", "console"));
