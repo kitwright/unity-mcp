@@ -1,8 +1,11 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Collections;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
+using UnityEngine;
+using UnityEngine.TestTools;
 
 namespace KitWright.Editor.Tests
 {
@@ -65,6 +68,41 @@ namespace KitWright.Editor.Tests
                 "A filtered run reports no total until it finishes.");
             Assert.IsFalse(TestRunnerFunctions.MatchedNothing(Job("finished", hasFilters: false, totalTests: 0)),
                 "An unfiltered run of a project with no tests is not the caller's mistake.");
+        }
+
+        // get_test_job answered "running" at once, so agents polled it about twice per run. It waits
+        // for the run now - and has to answer the moment the run ends, not when its wait runs out.
+        // The jobs are handed in rather than saved: the real job slot belongs to whatever run is
+        // executing this test, and an agent waiting on it must not be woken into a fake result.
+        [UnityTest]
+        public IEnumerator AWaitingGetTestJobAnswersAsSoonAsTheRunEnds()
+        {
+            var finished = Job("finished", hasFilters: false, totalTests: 3);
+            var pending = TestRunnerFunctions.WaitWhileRunningAsync(
+                Job("running", hasFilters: false, totalTests: 0), 25, () => finished);
+            Assert.IsFalse(pending.IsCompleted, "a running job was not waited on");
+
+            TestRunnerFunctions.WakeJobWaiters();
+            var startedAt = Time.realtimeSinceStartup;
+            while (!pending.IsCompleted && Time.realtimeSinceStartup - startedAt < 5f)
+                yield return null;
+
+            Assert.IsTrue(pending.IsCompleted, "the end of the run did not wake the waiting call");
+            Assert.AreSame(finished, pending.Result, "the waiter must answer with the job as it is now");
+        }
+
+        [Test]
+        public void GetTestJobAnswersAtOnceWhenThereIsNothingToWaitFor()
+        {
+            var running = Job("running", hasFilters: false, totalTests: 0);
+            var noWait = TestRunnerFunctions.WaitWhileRunningAsync(running, 0, () => null);
+            Assert.IsTrue(noWait.IsCompleted, "wait_seconds=0 must answer at once");
+            Assert.AreSame(running, noWait.Result);
+
+            var finished = Job("finished", hasFilters: false, totalTests: 1);
+            var done = TestRunnerFunctions.WaitWhileRunningAsync(finished, 25, () => null);
+            Assert.IsTrue(done.IsCompleted, "a finished job has nothing to wait for");
+            Assert.AreSame(finished, done.Result);
         }
     }
 }
