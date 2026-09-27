@@ -126,14 +126,24 @@ namespace KitWright.Editor.Threading
         internal static bool FailBlockedCall<T>(
             TaskCompletionSource<T> tcs, TimeSpan idle, string dialog, CancellationTokenSource queuedItem)
         {
-            if (!tcs.TrySetException(new TimeoutException(BlockedMessage(idle, dialog))))
+            if (tcs.Task.IsCompleted)
                 return false;
 
-            // The caller has its answer, so the item must not still be waiting to mutate the
+            // The caller gets its answer below, so the item must not still be waiting to mutate the
             // project once the editor resumes - ProcessQueues drops a cancelled item, and the
-            // client's retry is then the only thing that runs.
-            queuedItem.Cancel();
-            return true;
+            // client's retry is then the only thing that runs. Cancel first: completing tcs runs a
+            // synchronous continuation that disposes queuedItem, after which Cancel throws.
+            try
+            {
+                queuedItem.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // Disposed only once the call completed, so there is nothing left to fail.
+                return false;
+            }
+
+            return tcs.TrySetException(new EditorNotPumpingException(BlockedMessage(idle, dialog)));
         }
 
         public Task<T> ExecuteOnEditorThreadAsync<T>(Func<T> func)
@@ -312,5 +322,12 @@ namespace KitWright.Editor.Threading
             tcs.SetCanceled();
             return tcs.Task;
         }
+    }
+
+    // Its own type so the server can answer the stall watchdog's verdict apart from a timeout
+    // thrown by the tool itself.
+    internal sealed class EditorNotPumpingException : TimeoutException
+    {
+        public EditorNotPumpingException(string message) : base(message) { }
     }
 }
