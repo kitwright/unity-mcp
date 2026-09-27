@@ -30,7 +30,7 @@ namespace KitWright.Editor.MCP.Server
         private const string ImageDataUriPrefix = "data:image/";
         private const string Base64Marker = ";base64,";
 
-        private const string SessionStateKey = "KitWright.MCP.InteractionLog";
+        internal const string SessionStateKey = "KitWright.MCP.InteractionLog";
         private static readonly string ImageDir =
             Path.Combine("Library", "KitWrightMcp", "ActivityImages");
 
@@ -65,6 +65,9 @@ namespace KitWright.Editor.MCP.Server
                     _head = (_head + 1) % _buffer.Length;
                     if (_count < _buffer.Length) _count++;
                 }
+
+                for (int i = capacity; i < existing.Count; i++)
+                    DeleteOwnedImage(existing[i].ImageFilePath);
             }
         }
 
@@ -109,13 +112,17 @@ namespace KitWright.Editor.MCP.Server
                     : ((resultSummary?.Length ?? 0) + 3) / 4
             };
 
+            string evictedImage = null;
             lock (_lock)
             {
+                if (_count == _buffer.Length)
+                    evictedImage = _buffer[_head].ImageFilePath;
                 _buffer[_head] = entry;
                 _head = (_head + 1) % _buffer.Length;
                 if (_count < _buffer.Length) _count++;
             }
 
+            DeleteOwnedImage(evictedImage);
             SaveToSession();
             OnEntryAdded?.Invoke(entry);
         }
@@ -259,7 +266,10 @@ namespace KitWright.Editor.MCP.Server
             {
                 var bytes = Convert.FromBase64String(Base64Of(dataUri));
                 Directory.CreateDirectory(ImageDir);
-                var path = Path.Combine(ImageDir, $"shot_{DateTime.Now:yyyyMMdd_HHmmss_fff}.{ExtensionOf(dataUri)}");
+                // Unique per entry, not per millisecond: evicting an entry deletes its file, which
+                // must not be a file a newer entry points at too.
+                var path = Path.Combine(ImageDir,
+                    $"shot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.{ExtensionOf(dataUri)}");
                 File.WriteAllBytes(path, bytes);
                 return path;
             }
@@ -267,6 +277,25 @@ namespace KitWright.Editor.MCP.Server
             {
                 Debug.LogWarning($"[KitWright MCP] Failed to save activity image: {ex.Message}");
                 return null;
+            }
+        }
+
+        // Only files this log wrote into ImageDir: an entry can also point at a screenshot a tool
+        // saved wherever its caller asked, and that file is not ours to delete.
+        private static void DeleteOwnedImage(string path)
+        {
+            if (string.IsNullOrEmpty(path) ||
+                !string.Equals(Path.GetDirectoryName(path), ImageDir, StringComparison.Ordinal) ||
+                !File.Exists(path))
+                return;
+
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception ex)
+            {
+                Debug.LogWarning($"[KitWright MCP] Failed to delete activity image: {ex.Message}");
             }
         }
 
