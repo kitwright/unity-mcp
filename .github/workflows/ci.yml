@@ -191,6 +191,12 @@ jobs:
                   name: editmode-test-results-${{ matrix.unityVersion }}
                   path: artifacts/
 
+            # A skipped test is green in the check run. This lists every skip of this leg, with its
+            # reason, in the job summary, and fails on a skip whose reason nobody declared.
+            - name: Report skipped tests
+              if: always()
+              run: python3 scripts/report_test_skips.py "EditMode ${{ matrix.unityVersion }}" artifacts/
+
     # ────────────────────────────────────────────────────────────────
     # Optional engine modules stripped
     # ────────────────────────────────────────────────────────────────
