@@ -476,6 +476,13 @@ namespace KitWright.Editor.MCP.Server
                         return;
                     }
 
+                    var notPumping = EditorNotPumpingResponse(request, editorThreadTask);
+                    if (notPumping != null)
+                    {
+                        sendResponse(notPumping);
+                        return;
+                    }
+
                     sendResponse(editorThreadTask.Result);
                 }
             }
@@ -488,6 +495,20 @@ namespace KitWright.Editor.MCP.Server
                     Error = new MCPError { Code = -32603, Message = $"Internal error: {ex.Message}" }
                 });
             }
+        }
+
+        // The stall watchdog's verdict is an answer, not a crash: left to the generic catch it
+        // reads "-32603 Internal error: One or more errors occurred" and logs an error.
+        internal static MCPResponse EditorNotPumpingResponse(MCPRequest request, Task editorThreadTask)
+        {
+            if (editorThreadTask.Exception?.InnerException is not EditorNotPumpingException notPumping)
+                return null;
+
+            return new MCPResponse
+            {
+                Id = request?.Id,
+                Error = new MCPError { Code = -32001, Message = notPumping.Message }
+            };
         }
 
         // Only tools/call touches live scene/asset state; metadata requests skip the editor thread.
