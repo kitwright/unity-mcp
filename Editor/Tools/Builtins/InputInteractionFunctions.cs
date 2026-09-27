@@ -126,31 +126,84 @@ namespace KitWright.Editor.Tools.Builtins
             return inputButton == PointerEventData.InputButton.Left ? null : "reacts to the left button only";
         }
 
-        private static void AppendDirectButtonFallback(StringBuilder results, Vector2 position, PointerEventData.InputButton inputButton)
+        // Reached when no raycast answered, so this stands in for one: the button drawn on top at the
+        // point, measured with its own canvas's camera, and only if nothing that takes raycasts is
+        // drawn over it. It used to take whichever button the scene listed first, with no camera -
+        // right for an overlay canvas only - and pressed it through a modal panel covering it.
+        internal static void AppendDirectButtonFallback(StringBuilder results, Vector2 position, PointerEventData.InputButton inputButton)
         {
-            foreach (var button in ObjectsHelper.FindObjectsByTypeUnsorted<Button>(FindObjectsInactive.Include))
+            Button button = null;
+            foreach (var candidate in ObjectsHelper.FindObjectsByTypeUnsorted<Button>(FindObjectsInactive.Exclude))
             {
-                if (button == null || !button.isActiveAndEnabled)
+                if (candidate.isActiveAndEnabled && Contains(candidate.transform as RectTransform, position) &&
+                    (button == null || DrawsAbove(candidate, button)))
+                    button = candidate;
+            }
+
+            if (button == null)
+                return;
+
+            foreach (var graphic in ObjectsHelper.FindObjectsByTypeUnsorted<Graphic>(FindObjectsInactive.Exclude))
+            {
+                if (!graphic.isActiveAndEnabled || !graphic.raycastTarget || graphic.transform.IsChildOf(button.transform) ||
+                    !Contains(graphic.rectTransform, position) || !DrawsAbove(graphic, button))
                     continue;
 
-                var rectTransform = button.GetComponent<RectTransform>();
-                if (rectTransform == null)
-                    continue;
-
-                if (!RectTransformUtility.RectangleContainsScreenPoint(rectTransform, position, null))
-                    continue;
-
-                var refusal = RefusalReason(button, inputButton);
-                if (refusal != null)
-                {
-                    results.AppendLine($"  Direct button hit: '{button.name}' {refusal}, not invoked");
-                    return;
-                }
-
-                button.onClick?.Invoke();
-                results.AppendLine($"  Direct button hit: invoked '{button.name}'");
+                results.AppendLine($"  Direct button hit: '{button.name}' is covered by '{graphic.name}', not invoked");
                 return;
             }
+
+            var refusal = RefusalReason(button, inputButton);
+            if (refusal != null)
+            {
+                results.AppendLine($"  Direct button hit: '{button.name}' {refusal}, not invoked");
+                return;
+            }
+
+            button.onClick?.Invoke();
+            results.AppendLine($"  Direct button hit: invoked '{button.name}'");
+        }
+
+        private static bool Contains(RectTransform rect, Vector2 position)
+        {
+            if (rect == null)
+                return false;
+
+            var canvas = RootCanvasOf(rect);
+            var eventCamera = canvas == null || canvas.renderMode == RenderMode.ScreenSpaceOverlay
+                ? null
+                : canvas.worldCamera != null ? canvas.worldCamera : Camera.main;
+            return RectTransformUtility.RectangleContainsScreenPoint(rect, position, eventCamera);
+        }
+
+        private static Canvas RootCanvasOf(UnityEngine.Component component)
+        {
+            var canvas = component.GetComponentInParent<Canvas>();
+            return canvas == null ? null : canvas.rootCanvas;
+        }
+
+        // ponytail: root canvas order then draw depth, as GraphicRaycaster sorts; a nested canvas
+        // with overrideSorting is ranked by its root. Good enough for a fallback that only runs
+        // when no raycaster answered.
+        private static bool DrawsAbove(UnityEngine.Component a, UnityEngine.Component b)
+        {
+            return DrawKey(a).CompareTo(DrawKey(b)) > 0;
+        }
+
+        private static (int overlay, int layer, int order, int depth) DrawKey(UnityEngine.Component component)
+        {
+            var canvas = RootCanvasOf(component);
+            var graphic = component as Graphic;
+            if (graphic == null && component is Selectable selectable)
+                graphic = selectable.targetGraphic;
+            if (graphic == null)
+                graphic = component.GetComponent<Graphic>();
+            return canvas == null
+                ? (0, 0, 0, graphic != null ? graphic.depth : -1)
+                : (canvas.renderMode == RenderMode.ScreenSpaceOverlay ? 1 : 0,
+                    SortingLayer.GetLayerValueFromID(canvas.sortingLayerID),
+                    canvas.sortingOrder,
+                    graphic != null ? graphic.depth : -1);
         }
 
         private static void AppendPhysicsClickResult(StringBuilder results, Vector2 viewportPosition)

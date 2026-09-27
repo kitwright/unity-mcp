@@ -89,6 +89,62 @@ namespace KitWright.Editor.Tests
             yield return new ExitPlayMode();
         }
 
+        // The fallback answers when no raycast did, so it has to stand in for one: the button on top,
+        // measured with its canvas's camera, and nothing when something covers it.
+        [UnityTest]
+        public IEnumerator DirectButtonFallback_PressesOnlyTheButtonARaycastWouldHaveHit()
+        {
+            yield return new EnterPlayMode();
+
+            var cameraGo = new GameObject("KwFallbackCamera", typeof(Camera));
+            var cameraCanvas = NewCanvas("KwCameraCanvas", RenderMode.ScreenSpaceCamera, 0);
+            cameraCanvas.worldCamera = cameraGo.GetComponent<Camera>();
+            NewButton("KwCameraButton", cameraCanvas);
+            yield return null;
+
+            var point = new Vector2(Screen.width / 2f, Screen.height / 2f);
+            var answer = Fallback(point);
+            StringAssert.Contains("invoked 'KwCameraButton'", answer,
+                "a camera canvas's rect is in world space, so it has to be measured with that camera");
+
+            NewButton("KwUnder", NewCanvas("KwUnderCanvas", RenderMode.ScreenSpaceOverlay, 32000));
+            NewButton("KwOver", NewCanvas("KwOverCanvas", RenderMode.ScreenSpaceOverlay, 32001));
+            yield return null;
+
+            answer = Fallback(point);
+            StringAssert.Contains("invoked 'KwOver'", answer, "the button drawn on top, not the first one the scene lists");
+
+            var cover = new GameObject("KwCover", typeof(RectTransform), typeof(Image));
+            Stretch(cover, NewCanvas("KwCoverCanvas", RenderMode.ScreenSpaceOverlay, 32002).transform);
+            yield return null;
+
+            answer = Fallback(point);
+            StringAssert.Contains("'KwOver' is covered by 'KwCover', not invoked", answer);
+
+            yield return new ExitPlayMode();
+        }
+
+        private static string Fallback(Vector2 point)
+        {
+            var results = new System.Text.StringBuilder();
+            InputInteractionFunctions.AppendDirectButtonFallback(results, point, PointerEventData.InputButton.Left);
+            return results.ToString();
+        }
+
+        private static Canvas NewCanvas(string name, RenderMode mode, int order)
+        {
+            var canvas = new GameObject(name, typeof(Canvas)).GetComponent<Canvas>();
+            canvas.renderMode = mode;
+            canvas.sortingOrder = order;
+            return canvas;
+        }
+
+        private static void NewButton(string name, Canvas canvas)
+        {
+            var go = new GameObject(name, typeof(RectTransform), typeof(Image), typeof(Button));
+            Stretch(go, canvas.transform);
+        }
+
         private static void Stretch(GameObject child, Transform parent)
         {
             var rect = child.GetComponent<RectTransform>();
