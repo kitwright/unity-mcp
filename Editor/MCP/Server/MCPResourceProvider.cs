@@ -6,6 +6,7 @@ using System.IO;
 using System.Reflection;
 using System.Text;
 using KitWright.Editor.Services;
+using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -152,19 +153,37 @@ namespace KitWright.Editor.MCP.Server
             if (string.IsNullOrWhiteSpace(assetPath))
                 return "Asset path is required.";
 
-            var fullPath = Path.IsPathRooted(assetPath)
-                ? assetPath
-                : Path.Combine(ApplicationPaths.ProjectRoot, assetPath).Replace("\\", "/");
+            // The URI names a project asset. Unlike the add-on's image tools, which read mockups
+            // from wherever the user saved them, nothing here needs a file outside the project, so
+            // an absolute path, a ".." walk or a link out of it is refused.
+            string fullPath;
+            try
+            {
+                fullPath = PathSafety.ResolveProjectPath(assetPath);
+            }
+            catch (PathOutsideProjectException ex)
+            {
+                return ex.Message;
+            }
 
             if (!File.Exists(fullPath))
                 return "Asset not found: " + assetPath;
 
-            var content = File.ReadAllText(fullPath);
-            if (content.Length > 12000)
-                content = content.Substring(0, 12000) + "\n... (truncated)";
+            // Read no more than is returned: a large binary in the project would otherwise be
+            // loaded whole on the editor thread just to be cut.
+            var buffer = new char[MaxAssetChars + 1];
+            int read;
+            using (var reader = new StreamReader(fullPath))
+                read = reader.ReadBlock(buffer, 0, buffer.Length);
+
+            var content = read > MaxAssetChars
+                ? new string(buffer, 0, MaxAssetChars) + "\n... (truncated)"
+                : new string(buffer, 0, read);
 
             return $"[{assetPath}]\n{content}";
         }
+
+        private const int MaxAssetChars = 12000;
 
         private void MarkProjectSummaryDirty()
         {

@@ -43,6 +43,54 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void AssetResource_ReadsInsideTheProjectAndNothingOutsideIt()
+        {
+            var outside = Path.Combine(Path.GetTempPath(), "kw-resource-outside-" + Guid.NewGuid().ToString("N") + ".txt");
+            File.WriteAllText(outside, "outside-the-project");
+            var big = Path.Combine(KitWright.Editor.Services.ApplicationPaths.ProjectRoot, "Temp",
+                "kw-resource-big-" + Guid.NewGuid().ToString("N") + ".txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(big));
+            File.WriteAllText(big, new string('x', 20000));
+
+            try
+            {
+                using (var provider = new MCPResourceProvider(null, null))
+                {
+                    string Read(string path)
+                    {
+                        var contents = (List<object>)provider.ReadResource("unity://asset/path/" + path)["contents"];
+                        return (string)((Dictionary<string, object>)contents[0])["text"];
+                    }
+
+                    Assert.That(Read("Packages/manifest.json"), Does.StartWith("[Packages/manifest.json]"));
+
+                    foreach (var escape in new[]
+                             {
+                                 outside,
+                                 "../" + Path.GetFileName(outside),
+                                 "Assets/../../" + Path.GetFileName(outside),
+                                 Uri.EscapeDataString("Assets/../../" + Path.GetFileName(outside)),
+                                 "Assets\\..\\..\\" + Path.GetFileName(outside)
+                             })
+                    {
+                        var text = Read(escape);
+                        Assert.That(text, Does.Contain("escaped the project"), escape);
+                        Assert.That(text, Does.Not.Contain("outside-the-project"), escape);
+                    }
+
+                    var truncated = Read("Temp/" + Path.GetFileName(big));
+                    Assert.That(truncated, Does.EndWith("... (truncated)"));
+                    Assert.Less(truncated.Length, 12200);
+                }
+            }
+            finally
+            {
+                File.Delete(outside);
+                File.Delete(big);
+            }
+        }
+
+        [Test]
         public async Task Ping_IsAnsweredWithAnEmptyResult()
         {
             var settings = new SettingsController(_tempRoot);
