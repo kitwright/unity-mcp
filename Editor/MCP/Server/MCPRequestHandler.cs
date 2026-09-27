@@ -359,7 +359,16 @@ namespace KitWright.Editor.MCP.Server
         private const string ImageDataUriPrefix = "data:image/";
         private const string Base64Marker = ";base64,";
 
-        private List<Dictionary<string, object>> BuildContentFromResult(string result)
+        // A capture run inside batch_execute is not a bare data URI but a string value in its JSON,
+        // which the client would otherwise receive as hundreds of KB of base64 text. The lookbehind
+        // leaves a URI quoted inside another string alone. Base64 carries no quote or backslash, so
+        // the closing quote is the end of the value.
+        private static readonly System.Text.RegularExpressions.Regex EmbeddedImageDataUri =
+            new System.Text.RegularExpressions.Regex(
+                "(?<!\\\\)\"data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]*)\"",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        internal static List<Dictionary<string, object>> BuildContentFromResult(string result)
         {
             var content = new List<Dictionary<string, object>>();
 
@@ -372,13 +381,9 @@ namespace KitWright.Editor.MCP.Server
 
             if (marker > 0)
             {
-                var base64Data = result.Substring(marker + Base64Marker.Length);
-                content.Add(new Dictionary<string, object>
-                {
-                    ["type"] = "image",
-                    ["data"] = base64Data,
-                    ["mimeType"] = result.Substring("data:".Length, marker - "data:".Length)
-                });
+                content.Add(ImageBlock(
+                    result.Substring("data:".Length, marker - "data:".Length),
+                    result.Substring(marker + Base64Marker.Length)));
                 content.Add(new Dictionary<string, object>
                 {
                     ["type"] = "text", ["text"] = "Screenshot captured successfully."
@@ -386,14 +391,39 @@ namespace KitWright.Editor.MCP.Server
             }
             else
             {
+                var images = new List<Dictionary<string, object>>();
                 content.Add(new Dictionary<string, object>
                 {
-                    ["type"] = "text", ["text"] = result
+                    ["type"] = "text", ["text"] = LiftEmbeddedImages(result, images)
                 });
+                content.AddRange(images);
             }
 
             return content;
         }
+
+        // Each embedded image becomes {"image_index": N}, N counting this response's image blocks from 0.
+        // structuredContent goes through the same pass, so the two agree on N.
+        internal static string LiftEmbeddedImages(string result, List<Dictionary<string, object>> images)
+        {
+            if (result == null || result.IndexOf("\"" + ImageDataUriPrefix, StringComparison.Ordinal) < 0)
+                return result;
+
+            var index = 0;
+            return EmbeddedImageDataUri.Replace(result, match =>
+            {
+                images?.Add(ImageBlock(match.Groups[1].Value, match.Groups[2].Value));
+                return "{\"image_index\":" + index++ + "}";
+            });
+        }
+
+        private static Dictionary<string, object> ImageBlock(string mimeType, string base64Data) =>
+            new Dictionary<string, object>
+            {
+                ["type"] = "image",
+                ["data"] = base64Data,
+                ["mimeType"] = mimeType
+            };
 
         // Only the {success, ...} envelope is promoted to structuredContent, so free-form JSON
         // (or JSON-looking text) from a tool never lands there unvalidated.
@@ -401,6 +431,7 @@ namespace KitWright.Editor.MCP.Server
         {
             envelope = null;
             isError = false;
+            result = LiftEmbeddedImages(result, null);
 
             if (string.IsNullOrEmpty(result) || result[0] != '{')
                 return false;

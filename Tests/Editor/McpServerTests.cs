@@ -216,5 +216,45 @@ namespace KitWright.Editor.Tests
             Assert.IsTrue(result);
         }
 
+        // A capture run inside batch_execute is a string value in the batch's JSON, not a bare
+        // data URI, so it used to reach the client as ~300 KB of base64 text.
+        [Test]
+        public void ACaptureInsideABatchComesBackAsAnImageBlock()
+        {
+            var base64 = new string('A', 300 * 1024);
+            var batch = Newtonsoft.Json.JsonConvert.SerializeObject(KitWright.Editor.Tools.Helpers.Response.Success(
+                "Batch executed 2 command(s).",
+                new
+                {
+                    count = 2,
+                    total = 2,
+                    aborted = false,
+                    results = new object[]
+                    {
+                        new { index = 0, name = "capture_game_view", result = "data:image/jpeg;base64," + base64 },
+                        new { index = 1, name = "get_selection", result = Newtonsoft.Json.Linq.JToken.Parse("{\"success\":true}") }
+                    }
+                }));
+
+            var content = MCPRequestHandler.BuildContentFromResult(batch);
+
+            Assert.AreEqual(2, content.Count);
+            Assert.AreEqual("text", content[0]["type"]);
+            Assert.AreEqual("image", content[1]["type"]);
+            Assert.AreEqual("image/jpeg", content[1]["mimeType"]);
+            Assert.AreEqual(base64, content[1]["data"]);
+
+            var text = (string)content[0]["text"];
+            Assert.Less(text.Length, 1024, "The base64 must leave the text.");
+            var parsed = Newtonsoft.Json.Linq.JToken.Parse(text);
+            Assert.AreEqual(0, (int)parsed["data"]["results"][0]["result"]["image_index"]);
+            Assert.IsTrue((bool)parsed["data"]["results"][1]["result"]["success"]);
+
+            Assert.IsTrue(MCPRequestHandler.TryParseEnvelope(batch, out var envelope, out var isError));
+            Assert.IsFalse(isError);
+            StringAssert.DoesNotContain("base64", Newtonsoft.Json.JsonConvert.SerializeObject(envelope),
+                "structuredContent carries the same payload, so it is lifted too.");
+        }
+
     }
 }
