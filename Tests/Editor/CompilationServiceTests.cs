@@ -88,7 +88,7 @@ namespace KitWright.Editor.Tests
                 Assert.That(complete.Split('\n').Count(line => line.StartsWith("- [")), Is.EqualTo(3));
 
                 // A separate hop from the service tested above.
-                var viaTool = CompilationFunctions.GetCompilationErrors(max_entries: 1, cursor: 1);
+                var viaTool = AnsweredAtOnce(CompilationFunctions.GetCompilationErrors(max_entries: 1, cursor: 1));
                 StringAssert.Contains("error 1", viaTool);
                 Assert.That(viaTool, Does.Not.Contain("error 0"));
             }
@@ -97,6 +97,48 @@ namespace KitWright.Editor.Tests
                 messages.Clear();
                 messages.AddRange(backup);
             }
+        }
+
+        // Blocking on a task that is still waiting would deadlock the editor thread it resumes on.
+        private static string AnsweredAtOnce(Task<string> pending)
+        {
+            Assert.IsTrue(pending.IsCompleted, "get_compilation_errors waited although nothing asked it to.");
+            return pending.Result;
+        }
+
+        // get_compilation_errors used to answer "try again" while compiling, and agents polled it
+        // back to back until the compile ended. It waits now, which wait_seconds=0 turns back off.
+        [TestCase(0)]
+        [TestCase(-5)]
+        public void GetCompilationErrors_WithoutAWaitAnswersTryAgainWhileCompiling(int waitSeconds)
+        {
+            CompilationService.IsCompilingOverride = true;
+
+            var answer = AnsweredAtOnce(CompilationFunctions.GetCompilationErrors(wait_seconds: waitSeconds));
+
+            StringAssert.StartsWith("Currently compiling... Please wait and try again.", answer);
+        }
+
+        // The resolved flag says compiling while the raw one Unity waits on is already clear, which
+        // is how a compile that ends mid-wait looks from here: the wait returns and the errors follow.
+        [Test]
+        public void GetCompilationErrors_AnswersWithTheErrorsOnceTheCompileIsOver()
+        {
+            CompilationService.IsCompilingOverride = true;
+
+            var answer = AnsweredAtOnce(CompilationFunctions.GetCompilationErrors());
+
+            Assert.That(answer, Does.Not.Contain("Currently compiling"));
+        }
+
+        [Test]
+        public void GetCompilationErrors_AnswersAtOnceWhenNothingIsCompiling()
+        {
+            CompilationService.IsCompilingOverride = false;
+
+            var answer = AnsweredAtOnce(CompilationFunctions.GetCompilationErrors(wait_seconds: 30));
+
+            Assert.That(answer, Does.Not.Contain("Currently compiling"));
         }
 
         // The four gates below only change behaviour while compiling, which no test can reach for

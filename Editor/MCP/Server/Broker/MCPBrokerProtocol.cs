@@ -42,5 +42,11 @@ namespace KitWright.Editor.MCP.Server
         public const string ClientPortHeader = "X-KitWright-Broker-Client-Port";
         public const string McpSessionHeader = "X-KitWright-Broker-Mcp-Session";
         public const string StatusHeader = "X-KitWright-Broker-Status";
+
+        // Mono's default is 2 connections per host, and the long-poll pull already holds one, so
+        // concurrent pushes and the health probe queue behind each other -- a probe queued past its
+        // 500ms timeout reads as a dead broker. Set on every request: an idle ServicePoint is
+        // recycled after MaxServicePointIdleTime and its replacement starts back at the default.
+        public const int ConnectionLimit = 16;
     }
 }
