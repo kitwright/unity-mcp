@@ -24,6 +24,7 @@ namespace KitWright.Editor.MCP.Server
 
         private readonly int _port;
         private readonly string _token;
+        private readonly string _clientToken;
         private readonly string _baseUrl;
         private readonly string _sessionId;
         private CancellationTokenSource _cts;
@@ -86,10 +87,13 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        public MCPBrokerClientTransport(int port, string token)
+        /// <param name="clientToken">The token MCP clients must present, handed to the broker on every
+        /// pull and attach so it can refuse them before anything reaches the editor. Empty asks for none.</param>
+        public MCPBrokerClientTransport(int port, string token, string clientToken = null)
         {
             _port = port;
             _token = token ?? string.Empty;
+            _clientToken = clientToken ?? string.Empty;
             _baseUrl = "http://127.0.0.1:" + _port;
             _sessionId = Guid.NewGuid().ToString("N");
         }
@@ -300,6 +304,7 @@ namespace KitWright.Editor.MCP.Server
             request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
             request.Headers[MCPBrokerProtocol.TokenHeader] = _token;
             request.Headers[MCPBrokerProtocol.SessionHeader] = _sessionId;
+            request.Headers[MCPBrokerProtocol.ClientTokenHeader] = _clientToken;
 
             Track(request);
             if (!_isRunning)
@@ -439,6 +444,7 @@ namespace KitWright.Editor.MCP.Server
                 request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
                 request.Headers[MCPBrokerProtocol.TokenHeader] = _token;
                 request.Headers[MCPBrokerProtocol.SessionHeader] = _sessionId;
+                request.Headers[MCPBrokerProtocol.ClientTokenHeader] = _clientToken;
 
                 Track(request);
                 try

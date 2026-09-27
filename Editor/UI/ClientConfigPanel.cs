@@ -706,6 +706,9 @@ namespace KitWright.Editor.MCP.Server
             else
                 ConfigureJsonTarget(target);
 
+            var written = target.ConfigPath;
+            System.Threading.Tasks.Task.Run(() => ServerToken.WarnIfGitWouldCommit(written));
+
             // Only after the project file is on disk: if this threw, the user still has whatever
             // the global file gave them.
             return ClearShadowingGlobalEntry(target);
