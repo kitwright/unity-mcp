@@ -475,9 +475,9 @@ namespace KitWright.Editor.MCP.Server
                                 }
                                 else if (httpRequest.AcceptsEventStream &&
                                          !string.Equals(request.Method, "initialize", StringComparison.Ordinal) &&
-                                         MCPToolListChangeNotifier.TryConsumePending())
+                                         MCPToolListChangeNotifier.TryConsumePending(request.SessionId))
                                 {
-                                    await SendSseResponseAsync(stream, response, ct, extraHeaders);
+                                    await SendSseResponseAsync(stream, response, request.SessionId, ct, extraHeaders);
                                 }
                                 else
                                 {
@@ -680,7 +680,8 @@ namespace KitWright.Editor.MCP.Server
         /// Streamable-HTTP style response: an SSE body that carries the pending
         /// tools/list_changed notification followed by the JSON-RPC response.
         /// Only used when the client declared Accept: text/event-stream.
-        private async Task SendSseResponseAsync(NetworkStream stream, MCPResponse mcpResponse, CancellationToken ct, string extraHeaders = "")
+        private async Task SendSseResponseAsync(NetworkStream stream, MCPResponse mcpResponse, string sessionId,
+            CancellationToken ct, string extraHeaders = "")
         {
             try
             {
@@ -690,12 +691,12 @@ namespace KitWright.Editor.MCP.Server
             }
             catch (Exception ex) when (IsExpectedClientDisconnect(ex, ct))
             {
-                MCPToolListChangeNotifier.RestorePending();
+                MCPToolListChangeNotifier.RestorePending(sessionId);
                 PluginDebugLogger.Log($"[KitWright MCP Server] SSE response not sent because the client disconnected: {ex.Message}");
             }
             catch (Exception ex)
             {
-                MCPToolListChangeNotifier.RestorePending();
+                MCPToolListChangeNotifier.RestorePending(sessionId);
                 Debug.LogError($"[KitWright MCP Server] Failed to send response: {ex.Message}");
             }
         }

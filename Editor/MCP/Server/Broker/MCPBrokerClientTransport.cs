@@ -261,7 +261,9 @@ namespace KitWright.Editor.MCP.Server
             }
 
             var contentType = clientContentTypeOverride;
-            if (canPiggybackNotification && pull.AcceptsSse && MCPToolListChangeNotifier.TryConsumePending())
+            var notified = canPiggybackNotification && pull.AcceptsSse &&
+                           MCPToolListChangeNotifier.TryConsumePending(pull.McpSessionId);
+            if (notified)
             {
                 responseJson = MCPToolListChangeNotifier.BuildSseBody(responseJson);
                 contentType = "text/event-stream";
@@ -283,13 +285,13 @@ namespace KitWright.Editor.MCP.Server
             catch (OperationCanceledException)
             {
                 // The broker will make this request available to the next Unity session.
-                if (contentType != null)
-                    MCPToolListChangeNotifier.RestorePending();
+                if (notified)
+                    MCPToolListChangeNotifier.RestorePending(pull.McpSessionId);
             }
             catch (Exception ex)
             {
-                if (contentType != null)
-                    MCPToolListChangeNotifier.RestorePending();
+                if (notified)
+                    MCPToolListChangeNotifier.RestorePending(pull.McpSessionId);
                 Debug.LogError("[KitWright MCP Server] Broker push failed: " + ex.Message);
             }
         }

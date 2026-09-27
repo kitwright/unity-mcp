@@ -137,6 +137,7 @@ namespace KitWright.Editor.MCP.Server
 
             var negotiated = NegotiateProtocolVersion(requested);
             _negotiatedBySession[SessionKey(request)] = negotiated;
+            MCPToolListChangeNotifier.Observe(request.SessionId);
 
             var result = new Dictionary<string, object>
             {

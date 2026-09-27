@@ -79,6 +79,8 @@ namespace KitWright.Editor.MCP.Server.SSE
             var sessionId = Guid.NewGuid().ToString("N");
             var session = new SSESession(sessionId);
             _sessions[sessionId] = session;
+            // A session exists from its initialize on, and the client lists the tools right after.
+            MCPToolListChangeNotifier.Observe(sessionId);
             return session;
         }
 
