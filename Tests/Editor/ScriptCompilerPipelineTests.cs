@@ -30,6 +30,28 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void RoslynArguments_UseTheSharedServerOnItsDerivedPipe()
+        {
+            var dotnet = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/DotNetSdkRoslyn/csc.dll", "/tmp/csc.rsp");
+            Assert.That(dotnet, Does.Contain(" -shared "));
+            Assert.That(dotnet, Does.Not.Contain("shared:"),
+                "a value after shared: names the pipe, so shared:false put every Unity install on a pipe called \"false\"");
+
+            var mono = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/Roslyn/csc.exe", "/tmp/csc.rsp");
+            Assert.That(mono, Does.Not.Contain("shared"));
+        }
+
+        [Test]
+        public void ExecuteCode_RefreshThatStartsNoCompile_AnswersWithItsOwnCodeAndTheWayOut()
+        {
+            var result = ScriptExecutionFunctions.RefreshDidNotStartCompilationError(
+                new Tools.Helpers.EditorRefreshDidNotStartCompilationException(new Tools.Helpers.EditorRefreshResult()));
+
+            AssertError(result, "REFRESH_DID_NOT_START_COMPILATION");
+            StringAssert.Contains("skip_refresh=true", GetProperty<string>(GetProperty<object>(result, "data"), "hint"));
+        }
+
+        [Test]
         public void CompilerPipeline_FallsBackToCodeDomWhenRoslynUnavailable()
         {
             var result = ScriptCompilerPipeline.Compile(

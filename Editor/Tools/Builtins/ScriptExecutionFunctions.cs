@@ -26,6 +26,7 @@ namespace KitWright.Editor.Tools.Builtins
         private const string HistorySessionKey = "KitWright.MCP.ExecuteCode.History";
         private const int HistoryMaxEntries = 50;
         private const string KitWrightScriptingNamespace = "KitWright.Editor.Tools.Scripting";
+        private const string RefreshDidNotStartCompilationCode = "REFRESH_DID_NOT_START_COMPILATION";
 
         [Description("Primary high-flexibility execution tool. Compiles a C# snippet with Unity's Roslyn csc first " +
                      "while preserving the in-memory compilation/execution flow, then runs the compiled assembly on the editor thread. " +
@@ -92,6 +93,11 @@ namespace KitWright.Editor.Tools.Builtins
                     return Response.Error("EDITOR_BUSY",
                         new { hint = "Unity is still compiling/importing. Retry in a moment, or pass skip_refresh=true if you know the editor is up to date." });
                 }
+                catch (EditorRefreshDidNotStartCompilationException ex)
+                {
+                    AppendHistory(code, false, RefreshDidNotStartCompilationCode);
+                    return RefreshDidNotStartCompilationError(ex);
+                }
             }
 
             var className = "TempScript_" + Guid.NewGuid().ToString("N").Substring(0, 8);
@@ -133,6 +139,18 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             return exception;
+        }
+
+        // The code request_recompile and wait_for_compilation already answer for the same condition.
+        internal static object RefreshDidNotStartCompilationError(EditorRefreshDidNotStartCompilationException exception)
+        {
+            return Response.Error(RefreshDidNotStartCompilationCode, new
+            {
+                refresh = exception.RefreshResult?.ToResponseData(),
+                hint = "Unity did not start compiling script files that are newer than the compiled assemblies, so the snippet was not run. " +
+                       "Pass skip_refresh=true to run it against what is already compiled, or get the edit compiled first " +
+                       "(a hot-reload or auto-refresh interception plugin may be swallowing the compile request)."
+            });
         }
 
         [Description("Return the most recent execute_code invocations (success or failure) from the current Editor session. " +
