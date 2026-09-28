@@ -18,9 +18,7 @@ namespace KitWright.Editor.Settings
         private const int MaxPort = 65535;
         private const string DefaultToolExportProfile = "core";
         private const string DefaultSelectedConfigTarget = "Claude Code";
-        private const bool DefaultExecuteCodeSafetyChecksEnabled = true;
         private const bool DefaultExecuteCodeSafetyChecksLocked = false;
-        private const bool DefaultExecuteCodeStrictFilesystemSafetyEnabled = true;
         private const bool DefaultExecuteCodeProjectNamespaceInjectionEnabled = false;
         private const bool DefaultPluginDebugLoggingEnabled = false;
         private const bool DefaultMCPBrokerModeEnabled = true;
@@ -216,25 +214,7 @@ namespace KitWright.Editor.Settings
             }
         }
 
-        public bool ExecuteCodeSafetyChecksEnabled
-        {
-            get
-            {
-                lock (_lock)
-                    return _settings.executeCodeSafetyChecksEnabled;
-            }
-            set
-            {
-                UpdateSettings(data =>
-                {
-                    data.executeCodeSafetyChecksEnabled = value;
-                    data.executeCodeSafetyChecksConfigured = true;
-                });
-            }
-        }
-
-        // When locked, ExecuteCodeSafetyChecksEnabled is the only input: a client's safety_checks
-        // argument stops overriding it in either direction.
+        // When locked, execute_code's safety checks always run: a client's safety_checks=false is ignored.
         public bool ExecuteCodeSafetyChecksLocked
         {
             get
@@ -248,23 +228,6 @@ namespace KitWright.Editor.Settings
                 {
                     data.executeCodeSafetyChecksLocked = value;
                     data.executeCodeSafetyChecksLockedConfigured = true;
-                });
-            }
-        }
-
-        public bool ExecuteCodeStrictFilesystemSafetyEnabled
-        {
-            get
-            {
-                lock (_lock)
-                    return _settings.executeCodeStrictFilesystemSafetyEnabled;
-            }
-            set
-            {
-                UpdateSettings(data =>
-                {
-                    data.executeCodeStrictFilesystemSafetyEnabled = value;
-                    data.executeCodeStrictFilesystemSafetyConfigured = true;
                 });
             }
         }
@@ -422,12 +385,8 @@ namespace KitWright.Editor.Settings
                 port = DefaultPort,
                 toolExportProfile = DefaultToolExportProfile,
                 selectedConfigTarget = DefaultSelectedConfigTarget,
-                executeCodeSafetyChecksEnabled = DefaultExecuteCodeSafetyChecksEnabled,
-                executeCodeSafetyChecksConfigured = true,
                 executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked,
                 executeCodeSafetyChecksLockedConfigured = true,
-                executeCodeStrictFilesystemSafetyEnabled = DefaultExecuteCodeStrictFilesystemSafetyEnabled,
-                executeCodeStrictFilesystemSafetyConfigured = true,
                 executeCodeProjectNamespaceInjectionEnabled = DefaultExecuteCodeProjectNamespaceInjectionEnabled,
                 executeCodeProjectNamespaceInjectionConfigured = true,
                 pluginDebugLoggingEnabled = DefaultPluginDebugLoggingEnabled,
@@ -456,20 +415,10 @@ namespace KitWright.Editor.Settings
                 entry.tools = entry.custom ? NormalizeToolNames(entry.tools) : null;
             }
             settings.selectedConfigTarget = NormalizeSelectedConfigTarget(settings.selectedConfigTarget);
-            if (!settings.executeCodeSafetyChecksConfigured)
-            {
-                settings.executeCodeSafetyChecksEnabled = DefaultExecuteCodeSafetyChecksEnabled;
-                settings.executeCodeSafetyChecksConfigured = true;
-            }
             if (!settings.executeCodeSafetyChecksLockedConfigured)
             {
                 settings.executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked;
                 settings.executeCodeSafetyChecksLockedConfigured = true;
-            }
-            if (!settings.executeCodeStrictFilesystemSafetyConfigured)
-            {
-                settings.executeCodeStrictFilesystemSafetyEnabled = DefaultExecuteCodeStrictFilesystemSafetyEnabled;
-                settings.executeCodeStrictFilesystemSafetyConfigured = true;
             }
             if (!settings.executeCodeProjectNamespaceInjectionConfigured)
             {
@@ -514,12 +463,8 @@ namespace KitWright.Editor.Settings
             public string toolExportProfile = DefaultToolExportProfile;
             public List<ProfileToolList> profileTools = new List<ProfileToolList>();
             public string selectedConfigTarget = DefaultSelectedConfigTarget;
-            public bool executeCodeSafetyChecksEnabled = DefaultExecuteCodeSafetyChecksEnabled;
-            public bool executeCodeSafetyChecksConfigured = false;
             public bool executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked;
             public bool executeCodeSafetyChecksLockedConfigured = false;
-            public bool executeCodeStrictFilesystemSafetyEnabled = DefaultExecuteCodeStrictFilesystemSafetyEnabled;
-            public bool executeCodeStrictFilesystemSafetyConfigured = false;
             public bool executeCodeProjectNamespaceInjectionEnabled = DefaultExecuteCodeProjectNamespaceInjectionEnabled;
             public bool executeCodeProjectNamespaceInjectionConfigured = false;
             public bool pluginDebugLoggingEnabled = DefaultPluginDebugLoggingEnabled;

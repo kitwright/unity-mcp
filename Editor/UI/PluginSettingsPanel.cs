@@ -52,22 +52,10 @@ namespace KitWright.Editor.MCP.Server
             settingsFoldout.Add(autostartSection);
 
             AddToggleCard(settingsFoldout,
-                "Default execute_code safety checks",
-                "The default for execute_code calls that omit safety_checks. On its own it stops accidents, not a caller that wants through: any client can pass safety_checks=false. Lock it below to make that argument inert.",
-                _settingsController.ExecuteCodeSafetyChecksEnabled,
-                value => _settingsController.ExecuteCodeSafetyChecksEnabled = value);
-
-            AddToggleCard(settingsFoldout,
-                "Lock execute_code safety checks",
-                "Off by default. When on, the setting above becomes the only input and a client's safety_checks argument is ignored, so a caller cannot clear the guard. Turn it on for a shared or untrusted client; legitimate reflection, P/Invoke, or serialization snippets then need it turned off again.",
+                "Agent cannot turn off execute_code safety checks",
+                "Off by default. execute_code's safety checks (dangerous calls, file writes, absolute/user/system/traversal paths) run unless a client passes safety_checks=false. When on, that argument is ignored, so a caller cannot clear the guard. Turn it on for a shared or untrusted client; legitimate reflection, P/Invoke, file-writing, or serialization snippets then need it turned off again.",
                 _settingsController.ExecuteCodeSafetyChecksLocked,
                 value => _settingsController.ExecuteCodeSafetyChecksLocked = value);
-
-            AddToggleCard(settingsFoldout,
-                "Strict filesystem guard",
-                "Adds checks for broad System.IO file writes, raw file streams, and absolute/user/system/traversal paths. This is a defensive guard, not a complete sandbox.",
-                _settingsController.ExecuteCodeStrictFilesystemSafetyEnabled,
-                value => _settingsController.ExecuteCodeStrictFilesystemSafetyEnabled = value);
 
             AddToggleCard(settingsFoldout,
                 "Auto-inject project namespaces",

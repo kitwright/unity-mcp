@@ -355,20 +355,19 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void ResolveSafetyChecks_Unlocked_LetsTheArgumentOverrideTheSetting()
+        public void ResolveSafetyChecks_Unlocked_RunsUnlessTheArgumentSaysFalse()
         {
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(false, true, false));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(true, false, false));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, true, false));
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(null, false, false));
+            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(false, false));
+            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(true, false));
+            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, false));
         }
 
         [Test]
-        public void ResolveSafetyChecks_Locked_IgnoresTheArgumentInBothDirections()
+        public void ResolveSafetyChecks_Locked_RunsWhateverTheArgumentSays()
         {
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(false, true, true));
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(true, false, true));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, true, true));
+            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(false, true));
+            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(true, true));
+            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, true));
         }
 
         private static void AssertBlocked(string code, bool strict, string expectedReasonPart)
