@@ -11,7 +11,7 @@ namespace KitWright.Editor
     public sealed class SettingsControllerTests
     {
         [Test]
-        public void NewSettings_LeaveExecuteCodeSafetyChecksUnlockedByDefault()
+        public void NewSettings_StartFromTheDefaults()
         {
             var projectPath = CreateTempProjectPath();
 
@@ -19,13 +19,10 @@ namespace KitWright.Editor
             {
                 var controller = new SettingsController(projectPath);
 
-                Assert.IsFalse(controller.ExecuteCodeSafetyChecksLocked);
                 Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
                 Assert.IsFalse(controller.PluginDebugLoggingEnabled);
                 Assert.IsTrue(controller.MCPBrokerModeEnabled);
                 Assert.AreEqual(string.Empty, controller.MCPBrokerMonoPath);
-                StringAssert.Contains("\"executeCodeSafetyChecksLocked\": false", ReadSettingsJson(projectPath));
-                StringAssert.Contains("\"executeCodeSafetyChecksLockedConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeProjectNamespaceInjectionEnabled\": false", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeProjectNamespaceInjectionConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"pluginDebugLoggingEnabled\": false", ReadSettingsJson(projectPath));
@@ -40,7 +37,7 @@ namespace KitWright.Editor
         }
 
         [Test]
-        public void ExistingSettingsWithoutSafetyField_MigrateToUnlockedDefault()
+        public void ExistingSettingsWithoutNewerFields_MigrateToTheDefaults()
         {
             var projectPath = CreateTempProjectPath();
 
@@ -54,41 +51,16 @@ namespace KitWright.Editor
 
                 var controller = new SettingsController(projectPath);
 
-                Assert.IsFalse(controller.ExecuteCodeSafetyChecksLocked);
                 Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
                 Assert.IsFalse(controller.PluginDebugLoggingEnabled);
                 Assert.IsTrue(controller.MCPBrokerModeEnabled);
                 Assert.AreEqual(string.Empty, controller.MCPBrokerMonoPath);
-                StringAssert.Contains("\"executeCodeSafetyChecksLocked\": false", ReadSettingsJson(projectPath));
-                StringAssert.Contains("\"executeCodeSafetyChecksLockedConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeProjectNamespaceInjectionEnabled\": false", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeProjectNamespaceInjectionConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"pluginDebugLoggingEnabled\": false", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"pluginDebugLoggingConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"mcpBrokerModeEnabled\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"mcpBrokerMonoPath\": \"\"", ReadSettingsJson(projectPath));
-            }
-            finally
-            {
-                DeleteTempProjectPath(projectPath);
-            }
-        }
-
-        [Test]
-        public void ExecuteCodeSafetyChecksLockedSetting_PersistsTrueValue()
-        {
-            var projectPath = CreateTempProjectPath();
-
-            try
-            {
-                var controller = new SettingsController(projectPath);
-                controller.ExecuteCodeSafetyChecksLocked = true;
-
-                var reloaded = new SettingsController(projectPath);
-
-                Assert.IsTrue(reloaded.ExecuteCodeSafetyChecksLocked);
-                StringAssert.Contains("\"executeCodeSafetyChecksLocked\": true", ReadSettingsJson(projectPath));
-                StringAssert.Contains("\"executeCodeSafetyChecksLockedConfigured\": true", ReadSettingsJson(projectPath));
             }
             finally
             {

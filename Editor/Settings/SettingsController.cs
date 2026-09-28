@@ -18,7 +18,6 @@ namespace KitWright.Editor.Settings
         private const int MaxPort = 65535;
         private const string DefaultToolExportProfile = "core";
         private const string DefaultSelectedConfigTarget = "Claude Code";
-        private const bool DefaultExecuteCodeSafetyChecksLocked = false;
         private const bool DefaultExecuteCodeProjectNamespaceInjectionEnabled = false;
         private const bool DefaultPluginDebugLoggingEnabled = false;
         private const bool DefaultMCPBrokerModeEnabled = true;
@@ -214,24 +213,6 @@ namespace KitWright.Editor.Settings
             }
         }
 
-        // When locked, execute_code's safety checks always run: a client's safety_checks=false is ignored.
-        public bool ExecuteCodeSafetyChecksLocked
-        {
-            get
-            {
-                lock (_lock)
-                    return _settings.executeCodeSafetyChecksLocked;
-            }
-            set
-            {
-                UpdateSettings(data =>
-                {
-                    data.executeCodeSafetyChecksLocked = value;
-                    data.executeCodeSafetyChecksLockedConfigured = true;
-                });
-            }
-        }
-
         public bool ExecuteCodeProjectNamespaceInjectionEnabled
         {
             get
@@ -385,8 +366,6 @@ namespace KitWright.Editor.Settings
                 port = DefaultPort,
                 toolExportProfile = DefaultToolExportProfile,
                 selectedConfigTarget = DefaultSelectedConfigTarget,
-                executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked,
-                executeCodeSafetyChecksLockedConfigured = true,
                 executeCodeProjectNamespaceInjectionEnabled = DefaultExecuteCodeProjectNamespaceInjectionEnabled,
                 executeCodeProjectNamespaceInjectionConfigured = true,
                 pluginDebugLoggingEnabled = DefaultPluginDebugLoggingEnabled,
@@ -415,11 +394,6 @@ namespace KitWright.Editor.Settings
                 entry.tools = entry.custom ? NormalizeToolNames(entry.tools) : null;
             }
             settings.selectedConfigTarget = NormalizeSelectedConfigTarget(settings.selectedConfigTarget);
-            if (!settings.executeCodeSafetyChecksLockedConfigured)
-            {
-                settings.executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked;
-                settings.executeCodeSafetyChecksLockedConfigured = true;
-            }
             if (!settings.executeCodeProjectNamespaceInjectionConfigured)
             {
                 settings.executeCodeProjectNamespaceInjectionEnabled = DefaultExecuteCodeProjectNamespaceInjectionEnabled;
@@ -463,8 +437,6 @@ namespace KitWright.Editor.Settings
             public string toolExportProfile = DefaultToolExportProfile;
             public List<ProfileToolList> profileTools = new List<ProfileToolList>();
             public string selectedConfigTarget = DefaultSelectedConfigTarget;
-            public bool executeCodeSafetyChecksLocked = DefaultExecuteCodeSafetyChecksLocked;
-            public bool executeCodeSafetyChecksLockedConfigured = false;
             public bool executeCodeProjectNamespaceInjectionEnabled = DefaultExecuteCodeProjectNamespaceInjectionEnabled;
             public bool executeCodeProjectNamespaceInjectionConfigured = false;
             public bool pluginDebugLoggingEnabled = DefaultPluginDebugLoggingEnabled;
