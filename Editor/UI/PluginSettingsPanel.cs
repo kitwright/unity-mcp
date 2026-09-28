@@ -52,7 +52,7 @@ namespace KitWright.Editor.MCP.Server
             settingsFoldout.Add(autostartSection);
 
             AddToggleCard(settingsFoldout,
-                "Agent cannot turn off execute_code safety checks",
+                "Force execute_code safety checks",
                 "Off by default. execute_code's safety checks (dangerous calls, file writes, absolute/user/system/traversal paths) run unless a client passes safety_checks=false. When on, that argument is ignored, so a caller cannot clear the guard. Turn it on for a shared or untrusted client; legitimate reflection, P/Invoke, file-writing, or serialization snippets then need it turned off again.",
                 _settingsController.ExecuteCodeSafetyChecksLocked,
                 value => _settingsController.ExecuteCodeSafetyChecksLocked = value);
