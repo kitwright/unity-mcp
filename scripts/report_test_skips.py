@@ -29,6 +29,7 @@ EXPECTED = [
     r"Unity-bundled Mono is required",
     r"legacy Input Manager",
     r"Windows-only",
+    r"Only a drive letter survives",
     r"Could not create a junction",
     r"Device Simulator module is not available",
     r"AI module is not installed",
