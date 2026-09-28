@@ -163,6 +163,37 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void AnalyzeScriptChangeState_MissingSource_IsNotPendingWhetherOrNotItsAssemblyExists()
+        {
+            var temp = CreateTempDirectory();
+            try
+            {
+                var output = Path.Combine(temp, "Assembly-CSharp.dll");
+                var neverBuilt = Path.Combine(temp, "Never-Built.dll");
+                var deleted = Path.Combine(temp, "Deleted.cs");
+                var unbuilt = Path.Combine(temp, "Unbuilt.cs");
+                File.WriteAllText(output, "compiled");
+                File.WriteAllText(unbuilt, "class Unbuilt {}");
+
+                var state = EditorRefreshPipeline.AnalyzeScriptChangeState(
+                    new[]
+                    {
+                        new ScriptCompilationArtifact(output, new[] { deleted }),
+                        new ScriptCompilationArtifact(neverBuilt, new[] { deleted, unbuilt })
+                    },
+                    Array.Empty<string>(),
+                    TimeSpan.FromSeconds(1));
+
+                Assert.AreEqual(1, state.OutOfDateSourceCount,
+                    "A deleted source waits on no compile, built assembly or not; an existing source with no assembly does.");
+            }
+            finally
+            {
+                DeleteTempDirectory(temp);
+            }
+        }
+
+        [Test]
         public void RefreshAndRequestCompilation_NothingStale_SkipsCompileStartDetection()
         {
             if (EditorApplication.isCompiling || EditorApplication.isUpdating)
@@ -264,6 +295,66 @@ namespace KitWright.Editor.Tests
             Assert.AreSame(firstScan, cache.GetValue(null),
                 "A second capture must reuse the scan: only a compile can change those timestamps, and " +
                 "Library/Bee/artifacts is walked recursively.");
+        }
+
+        [Test]
+        public void CaptureScriptChangeState_ReusesTheAssemblyProjectionItAlreadyBuilt()
+        {
+            var cache = AssemblyProjectionCache();
+
+            cache.SetValue(null, null);
+            EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            var first = cache.GetValue(null);
+            Assert.NotNull(first, "The first capture has to fill the cache, or there is nothing to reuse.");
+
+            EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            Assert.AreSame(first, cache.GetValue(null),
+                "A second capture must reuse the projection: GetAssemblies plus normalizing every source path " +
+                "is paid on each get_compilation_errors and each execute_code refresh otherwise.");
+        }
+
+        // A script imported while its compile is deferred changes the source list with no compile
+        // event, so a projection that outlived the import would drop the stale-scripts warning.
+        [Test]
+        public void AssemblyProjection_IsDroppedByACompileAnImportOrAProjectChange()
+        {
+            var cache = AssemblyProjectionCache();
+            var onCompilation = typeof(EditorRefreshPipeline).GetMethod(
+                "InvalidateOnCompilation", BindingFlags.NonPublic | BindingFlags.Static);
+            var onProjectChanged = typeof(EditorRefreshPipeline).GetMethod(
+                "InvalidateAssemblyProjection", BindingFlags.NonPublic | BindingFlags.Static);
+            var onImport = typeof(EditorRefreshPipeline)
+                .GetNestedType("ImportInvalidator", BindingFlags.NonPublic)?
+                .GetMethod("OnPostprocessAllAssets", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(onCompilation, "InvalidateOnCompilation was renamed; update this test.");
+            Assert.NotNull(onProjectChanged, "InvalidateAssemblyProjection was renamed; update this test.");
+            Assert.NotNull(onImport, "ImportInvalidator.OnPostprocessAllAssets was renamed; update this test.");
+
+            AssertDropsTheProjection(cache, "a compile", () => onCompilation.Invoke(null, new object[] { null }));
+            AssertDropsTheProjection(cache, "projectChanged", () => onProjectChanged.Invoke(null, null));
+            var none = Array.Empty<string>();
+            AssertDropsTheProjection(cache, "an import", () => onImport.Invoke(null, new object[] { none, none, none, none }));
+        }
+
+        private static void AssertDropsTheProjection(FieldInfo cache, string trigger, Action fire)
+        {
+            EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            var before = cache.GetValue(null);
+            Assert.NotNull(before, "A capture has to fill the cache before there is anything to drop.");
+
+            fire();
+            Assert.IsNull(cache.GetValue(null), $"{trigger} must drop the cached projection.");
+
+            EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            Assert.AreNotSame(before, cache.GetValue(null), $"The capture after {trigger} must rebuild it.");
+        }
+
+        private static FieldInfo AssemblyProjectionCache()
+        {
+            var cache = typeof(EditorRefreshPipeline).GetField(
+                "s_assemblyProjection", BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.NotNull(cache, "s_assemblyProjection was renamed; update this test.");
+            return cache;
         }
 
         private static string CreateTempDirectory()

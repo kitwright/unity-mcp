@@ -376,6 +376,30 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        [Test]
+        public void GetComponentProperties_FilterFindsAPropertyPastTheFirstWindow()
+        {
+            var go = new GameObject("__filter_probe");
+            try
+            {
+                var line = go.AddComponent<LineRenderer>();
+                line.positionCount = 1000;
+
+                var response = JObject.FromObject(ComponentPropertyFunctions.GetComponentProperties(
+                    component_instance_id: ObjectIdCodec.GetSerializableId(line),
+                    descend: true, max_properties: 50, name_filter: "m_Loop"));
+
+                var names = response["data"]["properties"].Select(p => p.Value<string>("Name")).ToList();
+                CollectionAssert.Contains(names, "m_Loop",
+                    "m_Loop sits after 1000 positions; filtering the first 50 properties never reached it.");
+                StringAssert.DoesNotContain("pass cursor=", response.Value<string>("message"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
 #if KITWRIGHT_PARTICLES
         [Test]
         public void UnsupportedPropertyType_ReadsAsUnreadableMarker()

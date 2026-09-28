@@ -25,7 +25,9 @@ namespace KitWright.Editor.Tools.Builtins
     {
         private const string HistorySessionKey = "KitWright.MCP.ExecuteCode.History";
         private const int HistoryMaxEntries = 50;
+        private const int HistoryMaxCodeChars = 32 * 1024;
         private const string KitWrightScriptingNamespace = "KitWright.Editor.Tools.Scripting";
+        private const string RefreshDidNotStartCompilationCode = "REFRESH_DID_NOT_START_COMPILATION";
 
         [Description("Primary high-flexibility execution tool. Compiles a C# snippet with Unity's Roslyn csc first " +
                      "while preserving the in-memory compilation/execution flow, then runs the compiled assembly on the editor thread. " +
@@ -87,6 +89,11 @@ namespace KitWright.Editor.Tools.Builtins
                     return Response.Error("EDITOR_BUSY",
                         new { hint = "Unity is still compiling/importing. Retry in a moment, or pass skip_refresh=true if you know the editor is up to date." });
                 }
+                catch (EditorRefreshDidNotStartCompilationException ex)
+                {
+                    AppendHistory(code, false, RefreshDidNotStartCompilationCode);
+                    return RefreshDidNotStartCompilationError(ex);
+                }
             }
 
             var className = "TempScript_" + Guid.NewGuid().ToString("N").Substring(0, 8);
@@ -99,7 +106,7 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var result = RunInSingleUndoGroup(UndoGroupName(code),
-                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks));
+                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode)));
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result));
                 return result;
             }
@@ -128,6 +135,18 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             return exception;
+        }
+
+        // The code request_recompile and wait_for_compilation already answer for the same condition.
+        internal static object RefreshDidNotStartCompilationError(EditorRefreshDidNotStartCompilationException exception)
+        {
+            return Response.Error(RefreshDidNotStartCompilationCode, new
+            {
+                refresh = exception.RefreshResult?.ToResponseData(),
+                hint = "Unity did not start compiling script files that are newer than the compiled assemblies, so the snippet was not run. " +
+                       "Pass skip_refresh=true to run it against what is already compiled, or get the edit compiled first " +
+                       "(a hot-reload or auto-refresh interception plugin may be swallowing the compile request)."
+            });
         }
 
         [Description("Return the most recent execute_code invocations (success or failure) from the current Editor session. " +
@@ -237,7 +256,10 @@ namespace KitWright.Editor.Tools.Builtins
                 box.entries.Add(new HistoryEntry
                 {
                     timestamp = DateTime.UtcNow.ToString("o"),
-                    code = code ?? string.Empty,
+                    // SessionState holds the whole history as one string and rewrites it on every call,
+                    // so a generated 200 KB snippet costs every later call. Too large to keep means too
+                    // large to replay, which the replay tool already answers for an empty entry.
+                    code = code != null && code.Length <= HistoryMaxCodeChars ? code : string.Empty,
                     success = success,
                     summary = Preview(summary, 200)
                 });
@@ -311,18 +333,23 @@ namespace KitWright.Editor.Tools.Builtins
             return "execute_code: " + Preview(firstLine, 60);
         }
 
-        private static object CompileAndExecute(string code, string className, bool safetyChecks)
+        private static object CompileAndExecute(string code, string className, bool safetyChecks,
+            SnippetPlacement placement = default)
         {
             var compilation = ScriptCompilerPipeline.Compile(LoopGuardInjector.Inject(code));
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
-                return Response.Error("COMPILATION_FAILED", new
-                {
-                    compiler = compilation.CompilerName,
-                    errors = compilation.Errors,
-                    compiler_attempts = compilation.Attempts,
-                    hint = "Roslyn is tried first for modern C# syntax while preserving execute_code's in-memory compilation/execution flow."
-                });
+                var errors = compilation.Errors.Select(placement.ToSnippet).ToList();
+                // The attempts only say something when one compiler failed over to another; a lone
+                // Roslyn attempt repeated what "compiler" already says, on every compile error.
+                return compilation.Attempts.Count > 1
+                    ? Response.Error("COMPILATION_FAILED", new
+                    {
+                        compiler = compilation.CompilerName,
+                        errors,
+                        compiler_attempts = compilation.Attempts
+                    })
+                    : Response.Error("COMPILATION_FAILED", new { compiler = compilation.CompilerName, errors });
             }
 
             if (compilation.Status != ScriptCompilationStatus.Success || compilation.Assembly == null)
@@ -516,6 +543,51 @@ namespace KitWright.Editor.Tools.Builtins
             return WrapCode(code, className, projectUsings);
         }
 
+        /// <summary>
+        /// Where the caller's snippet sits in the source that was compiled. The compiler reports lines
+        /// of that source: a bare body starts on line 17, under the usings and the wrapper class, and
+        /// its first line is indented 8. Reported as-is, an error on the snippet's line 3 read as line
+        /// 19, and the agent spent a round trip finding the line it had written.
+        /// </summary>
+        internal readonly struct SnippetPlacement
+        {
+            private readonly int _linesBefore;
+            private readonly int _firstLineIndent;
+
+            private SnippetPlacement(int linesBefore, int firstLineIndent)
+            {
+                _linesBefore = linesBefore;
+                _firstLineIndent = firstLineIndent;
+            }
+
+            internal static SnippetPlacement Of(string snippet, string compiled)
+            {
+                var at = string.IsNullOrEmpty(snippet) ? -1 : compiled.IndexOf(snippet, StringComparison.Ordinal);
+                if (at < 0)
+                    return default;
+
+                var lineStart = at == 0 ? 0 : compiled.LastIndexOf('\n', at - 1) + 1;
+                var linesBefore = 0;
+                for (var i = 0; i < at; i++)
+                    if (compiled[i] == '\n')
+                        linesBefore++;
+                return new SnippetPlacement(linesBefore, at - lineStart);
+            }
+
+            // Lines inside the generated wrapper come back as 0: there is no snippet line to point at.
+            internal ScriptCompilationError ToSnippet(ScriptCompilationError error)
+            {
+                var line = error.line - _linesBefore;
+                return new ScriptCompilationError
+                {
+                    line = Math.Max(0, line),
+                    column = line == 1 ? Math.Max(1, error.column - _firstLineIndent) : error.column,
+                    text = error.text,
+                    code = error.code
+                };
+            }
+        }
+
         private static string WrapCode(string code, string className, string projectUsings)
         {
             return $@"using System;
@@ -540,10 +612,13 @@ public static class {className}
 }}";
         }
 
+        // Project script assemblies only change with a domain reload, which also clears this.
+        private static string s_projectNamespaceUsings;
+
         internal static string GetReachableProjectNamespaceUsings()
         {
-            return GetReachableProjectNamespaceUsings(
-                AppDomain.CurrentDomain.GetAssemblies(), ApplicationPaths.ProjectRoot);
+            return s_projectNamespaceUsings ?? (s_projectNamespaceUsings = GetReachableProjectNamespaceUsings(
+                AppDomain.CurrentDomain.GetAssemblies(), ApplicationPaths.ProjectRoot));
         }
 
         internal static string GetReachableProjectNamespaceUsings(IEnumerable<Assembly> assemblies, string projectRoot)

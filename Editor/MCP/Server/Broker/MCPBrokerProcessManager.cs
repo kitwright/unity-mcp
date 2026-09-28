@@ -314,6 +314,7 @@ namespace KitWright.Editor.MCP.Server
                 request.Timeout = 500;
                 request.ReadWriteTimeout = 500;
                 request.KeepAlive = false;
+                request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
                 request.Headers[MCPBrokerProtocol.TokenHeader] = token;
 
                 using (var response = (HttpWebResponse)request.GetResponse())

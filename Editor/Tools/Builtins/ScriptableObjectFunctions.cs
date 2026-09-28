@@ -49,7 +49,7 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("CREATE_INSTANCE_FAILED", new { type = type.FullName });
 
             AssetDatabase.CreateAsset(instance, asset_path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(instance);
 
             return Response.Success($"Created {type.Name} asset at {asset_path}.", new
             {

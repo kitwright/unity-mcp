@@ -70,7 +70,7 @@ namespace KitWright.Editor.Tools
             {
                 var args = BuildArguments(method, functionCall.Parameters);
                 var result = method.Invoke(null, args);
-                return await NormalizeResultAsync(result);
+                return await NormalizeResultAsync(result, method.ReturnType);
             }
             catch (ToolArgumentException pex)
             {
@@ -119,17 +119,19 @@ namespace KitWright.Editor.Tools
             }
         }
 
-        private static async Task<string> NormalizeResultAsync(object result)
+        internal static async Task<string> NormalizeResultAsync(object result, Type declaredReturnType)
         {
             if (result is Task task)
             {
                 await task;
 
-                var resultProperty = task.GetType().GetProperty("Result");
-                if (resultProperty == null)
+                // The declared type, not the runtime one: an `async Task` method hands back a
+                // Task<VoidTaskResult>, whose Result serialized to "{}" - no envelope, so a batch
+                // read a tool that finished cleanly as a failure.
+                if (declaredReturnType == typeof(Task))
                     return SerializeResult(null);
 
-                var taskResult = resultProperty.GetValue(task);
+                var taskResult = task.GetType().GetProperty("Result")?.GetValue(task);
                 return SerializeResult(taskResult);
             }
 
@@ -137,8 +139,10 @@ namespace KitWright.Editor.Tools
         }
 
         // Tools may return either a plain string (backward-compatible behavior) or a structured
-        // object (e.g. via Response.Success/Error) which we JSON-encode for the client.
-        private static string SerializeResult(object value)
+        // object (e.g. via Response.Success/Error) which we JSON-encode for the client. An object
+        // that is not already an envelope is wrapped as its data, as a JSON string already is, so
+        // every caller - the client, a batch, a parent batch - reads success the same way.
+        internal static string SerializeResult(object value)
         {
             if (value == null)
                 return JsonConvert.SerializeObject(Response.Success("OK"));
@@ -146,12 +150,26 @@ namespace KitWright.Editor.Tools
                 return WrapLegacyStringResult(s);
             try
             {
-                return JsonConvert.SerializeObject(value);
+                return JsonConvert.SerializeObject(IsEnvelopeObject(value) ? value : Response.Success("OK", value));
             }
             catch (Exception ex)
             {
                 Debug.LogWarning($"[KitWright] Failed to serialize tool result: {ex.Message}");
                 return JsonConvert.SerializeObject(Response.Success(value.ToString() ?? "OK"));
+            }
+        }
+
+        // Response builds its envelopes as anonymous objects, so this reads the shape, not a type.
+        private static bool IsEnvelopeObject(object value)
+        {
+            switch (value)
+            {
+                case JObject obj:
+                    return obj["success"]?.Type == JTokenType.Boolean;
+                case IDictionary<string, object> dict:
+                    return dict.TryGetValue("success", out var flag) && flag is bool;
+                default:
+                    return value.GetType().GetProperty("success")?.PropertyType == typeof(bool);
             }
         }
 

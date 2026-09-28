@@ -5,6 +5,8 @@ using System.Linq;
 using System.Reflection;
 using KitWright.Editor.Api.Models;
 using KitWright.Editor.Settings;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace KitWright.Editor.Tools
@@ -205,8 +207,57 @@ namespace KitWright.Editor.Tools
             if (string.IsNullOrEmpty(name as string))
                 return fallback;
 
-            var budget = GetMethod((string)name)?.GetCustomAttribute<LongRunningToolAttribute>()?.Seconds ?? 0;
+            if (string.Equals((string)name, BatchToolName, StringComparison.Ordinal))
+                return BatchBudgetSeconds(BatchCommandNames(parameters), fallback);
+
+            var budget = LongRunningSeconds((string)name);
             return budget > fallback ? budget : fallback;
+        }
+
+        private const string BatchToolName = "batch_execute";
+
+        // A batch holding build_player was cut off at the ordinary ceiling while the build ran on.
+        // It gets the ordinary ceiling once, plus each long-running command's own budget, capped
+        // below the broker's hold deadline so the editor still answers before the broker gives up.
+        internal static int BatchBudgetSeconds(IEnumerable<string> commandNames, int fallback)
+        {
+            var budget = fallback;
+            foreach (var name in commandNames ?? Enumerable.Empty<string>())
+                budget += LongRunningSeconds(name);
+            return Math.Min(budget, MaxBatchBudgetSeconds);
+        }
+
+        private const int MaxBatchBudgetSeconds = 1800;
+
+        private static int LongRunningSeconds(string toolName) =>
+            string.IsNullOrEmpty(toolName)
+                ? 0
+                : GetMethod(toolName)?.GetCustomAttribute<LongRunningToolAttribute>()?.Seconds ?? 0;
+
+        // The commands argument is a JSON array in a string; a client that sends the array itself
+        // arrives here as the parsed list.
+        private static IEnumerable<string> BatchCommandNames(IDictionary<string, object> parameters)
+        {
+            if (!(parameters.TryGetValue("arguments", out var arguments) && arguments is IDictionary<string, object> args) ||
+                !args.TryGetValue("commands", out var commands))
+                return Enumerable.Empty<string>();
+
+            if (commands is string text)
+            {
+                try
+                {
+                    return JArray.Parse(text).Select(command => (command as JObject)?["name"]?.ToString()).ToList();
+                }
+                catch (JsonException)
+                {
+                    // The batch refuses it as INVALID_COMMANDS itself, well inside the ordinary ceiling.
+                    return Enumerable.Empty<string>();
+                }
+            }
+
+            return commands is IEnumerable<object> list
+                ? list.Select(command => command is IDictionary<string, object> c && c.TryGetValue("name", out var n) ? n as string : null).ToList()
+                : Enumerable.Empty<string>();
         }
 
         public static bool RunsOffEditorThread(string snakeCaseName)

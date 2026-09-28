@@ -398,6 +398,36 @@ namespace KitWright.Editor.Tests
             }
         }
 
+#if UNITY_6000_3_OR_NEWER
+        [Test]
+        public void IdsForThousandsOfLiveObjectsCompactTheCacheAFewTimesNotOncePerId()
+        {
+            var objects = new List<TextAsset>();
+            try
+            {
+                for (var i = 0; i < 8000; i++)
+                    objects.Add(new TextAsset(string.Empty) { hideFlags = HideFlags.HideAndDontSave });
+
+                var before = ObjectIdCodec.CompactionCount;
+                var ids = new List<string>();
+                foreach (var o in objects)
+                    ids.Add(ObjectIdCodec.GetSerializableId(o));
+                foreach (var o in objects)
+                    ObjectIdCodec.GetSerializableId(o);
+
+                Assert.LessOrEqual(ObjectIdCodec.CompactionCount - before, 8,
+                    "Every new id past 1024 live ones used to walk the whole cache.");
+                for (var i = 0; i < objects.Count; i++)
+                    Assert.AreSame(objects[i], ObjectIdCodec.ToObject(ids[i]));
+            }
+            finally
+            {
+                foreach (var o in objects)
+                    UnityEngine.Object.DestroyImmediate(o);
+            }
+        }
+#endif
+
         [Test]
         public void FindObjectsByTypeUnsorted_PreservesInactiveFilter()
         {

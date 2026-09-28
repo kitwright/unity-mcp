@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. All rights reserved.
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
@@ -13,10 +14,10 @@ namespace KitWright.Editor.Tools.Builtins
     /// <summary>
     /// Unity Test Runner integration with an async job pattern: run_tests starts a run and
     /// returns a job id immediately (test runs can take minutes and PlayMode runs trigger
-    /// domain reloads, so a synchronous MCP call would time out); get_test_job polls for
-    /// status/results. Job state lives in SessionState so it survives the domain reloads
-    /// that PlayMode test runs cause; the results callback is re-registered on every domain
-    /// load via [InitializeOnLoad].
+    /// domain reloads, so a synchronous MCP call would time out); get_test_job reports
+    /// status/results, waiting a while for the run to end first. Job state lives in
+    /// SessionState so it survives the domain reloads that PlayMode test runs cause; the
+    /// results callback is re-registered on every domain load via [InitializeOnLoad].
     /// </summary>
     [ToolProvider("Testing")]
     internal static class TestRunnerFunctions
@@ -24,7 +25,8 @@ namespace KitWright.Editor.Tools.Builtins
         private const string ActiveJobKey = "KitWright.TestRunner.ActiveJob";
 
         [Description("Run Unity Test Runner tests (EditMode or PlayMode) asynchronously. Returns a job_id immediately; " +
-                     "poll get_test_job for status and results. Only one test run can be active at a time (a Unity Test " +
+                     "call get_test_job for status and results - it waits for the run to finish, so one call is often enough. " +
+                     "Only one test run can be active at a time (a Unity Test " +
                      "Runner limitation). PlayMode runs enter Play Mode and trigger domain reloads -- the job state survives " +
                      "them. Optional filters narrow the run to specific tests, categories, or assemblies. " +
                      "Modified scenes are saved before the run by default, because the Test Framework raises Unity's " +
@@ -52,7 +54,7 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("TESTS_ALREADY_RUNNING", new
                 {
                     job_id = active.Value<string>("jobId"),
-                    hint = "Poll get_test_job, or cancel_test_run if the run is stuck."
+                    hint = "Call get_test_job to wait for it, or cancel_test_run if the run is stuck."
                 });
             }
 
@@ -70,8 +72,6 @@ namespace KitWright.Editor.Tools.Builtins
                 (filter.assemblyNames != null && filter.assemblyNames.Length > 0);
 
             var api = ScriptableObject.CreateInstance<TestRunnerApi>();
-            // Released in RunFinished/CancelTestRun; the deadline is the backstop if neither fires.
-            NoThrottleLease.Acquire(TimeSpan.FromMinutes(30));
             string guid;
             try
             {
@@ -79,7 +79,6 @@ namespace KitWright.Editor.Tools.Builtins
             }
             catch (Exception ex)
             {
-                NoThrottleLease.Release();
                 return ToolResultFormatter.Exception(ex);
             }
 
@@ -104,18 +103,21 @@ namespace KitWright.Editor.Tools.Builtins
             SaveJob(job);
 
             return Response.Success(
-                $"Test run started ({testMode}). Poll get_test_job with this job_id; PlayMode runs may take a while and reload the domain.",
+                $"Test run started ({testMode}). Call get_test_job with this job_id: it waits up to 20s for the run to finish, " +
+                "so call it again only while it still reports running. PlayMode runs may take a while and reload the domain.",
                 new { job_id = guid, mode = testMode.ToString() });
         }
 
-        [Description("Get the status and results of a test run started by run_tests. While running, reports progress; " +
+        [Description("Get the status and results of a test run started by run_tests. While the run is still going, the call " +
+                     "waits up to wait_seconds for it to finish, then reports progress if it has not; " +
                      "when finished, reports pass/fail/skip counts and details for failed tests. If no test-runner " +
                      "callback has fired for a while, the response includes possiblyStuck=true with the current phase, " +
                      "current test (when known), and a diagnostic hint. Runner start/transition uses a 30-second threshold; " +
                      "a known in-progress test uses 120 seconds to avoid flagging ordinary long-running tests too early.")]
         [ReadOnlyTool]
-        public static object GetTestJob(
-            [ToolParam("Job id returned by run_tests. Omit to query the most recent run.", Required = false)] string job_id = null)
+        public static async Task<object> GetTestJob(
+            [ToolParam("Job id returned by run_tests. Omit to query the most recent run.", Required = false)] string job_id = null,
+            [ToolParam("Seconds to wait for a running job to finish before answering (0-25, default 20). 0 answers at once.", Required = false)] int wait_seconds = 20)
         {
             var job = LoadJob();
             if (job == null)
@@ -125,6 +127,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (!string.IsNullOrEmpty(job_id) && !string.Equals(job_id, storedId, StringComparison.Ordinal))
                 return Response.Error("JOB_NOT_FOUND", new { job_id, activeJobId = storedId, hint = "Only the most recent run is tracked." });
 
+            job = await WaitWhileRunningAsync(job, Mathf.Clamp(wait_seconds, 0, 25), LoadJob);
             AnnotateIfPossiblyStuck(job);
             // A filter that matches nothing still finishes as Passed, which reads as a green run to
             // anything that only looks at resultState - a misspelt name or the wrong list separator
@@ -135,6 +138,29 @@ namespace KitWright.Editor.Tools.Builtins
                     "not a list, and test names must be fully qualified (Namespace.Class.Method).");
 
             return Response.Success($"Test job {job.Value<string>("status")}.", job);
+        }
+
+        // Only ever touched on the editor thread, so a waiter's status check and a RunFinished
+        // cannot interleave and strand it on a source nothing will complete. Continuations run
+        // inline on purpose: posted from beforeAssemblyReload, they would never run at all.
+        private static TaskCompletionSource<bool> _jobWaiters = new TaskCompletionSource<bool>();
+
+        /// <summary>Answers every waiting get_test_job with the job as it stands. Called when a run
+        /// ends or is cancelled, and before a domain reload, where a waiter left parked would vanish
+        /// with the domain instead of answering.</summary>
+        internal static void WakeJobWaiters() => _jobWaiters.TrySetResult(true);
+
+        // No ConfigureAwait(false): reload reads SessionState, which is editor-thread only.
+        internal static async Task<JObject> WaitWhileRunningAsync(JObject job, int waitSeconds, Func<JObject> reload)
+        {
+            if (waitSeconds <= 0 || job.Value<string>("status") != "running")
+                return job;
+
+            if (_jobWaiters.Task.IsCompleted)
+                _jobWaiters = new TaskCompletionSource<bool>();
+
+            await Task.WhenAny(_jobWaiters.Task, Task.Delay(TimeSpan.FromSeconds(waitSeconds)));
+            return reload() ?? job;
         }
 
         // Unity's Test Runner only supports one active run at a time, engine-wide, and this
@@ -239,11 +265,11 @@ namespace KitWright.Editor.Tools.Builtins
             var isTrackedJob = job.Value<string>("jobId") == guid;
             if (isTrackedJob)
             {
-                NoThrottleLease.Release();
                 job["status"] = "cancelled";
                 job.Remove("currentTest");
                 job.Remove("currentTestStartedAt");
                 SaveJob(job);
+                WakeJobWaiters();
             }
 
             if (cancelled)
@@ -327,6 +353,7 @@ namespace KitWright.Editor.Tools.Builtins
             Api = ScriptableObject.CreateInstance<TestRunnerApi>();
             Api.hideFlags = HideFlags.HideAndDontSave;
             Api.RegisterCallbacks(new Callbacks());
+            AssemblyReloadEvents.beforeAssemblyReload += TestRunnerFunctions.WakeJobWaiters;
         }
 
         private sealed class Callbacks : ICallbacks
@@ -399,7 +426,7 @@ namespace KitWright.Editor.Tools.Builtins
                 job["durationSeconds"] = Math.Round(result.Duration, 2);
                 job["failures"] = failures;
                 TestRunnerFunctions.SaveJob(job);
-                NoThrottleLease.Release();
+                TestRunnerFunctions.WakeJobWaiters();
             }
 
             private static int CountLeafTests(ITestAdaptor test)

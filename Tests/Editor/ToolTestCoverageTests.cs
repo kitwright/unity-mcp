@@ -30,12 +30,8 @@ namespace KitWright.Editor.Tests
             "run_tests",
             // a package resolve, which reloads the domain the run is living in
             "remove_package",
-            // an assembly definition change, which recompiles and reloads it too
-            "add_assembly_references",
-            "create_assembly_def",
-            "remove_assembly_references",
-            "set_assembly_platforms",
-            "update_assembly_def_settings",
+            // The .asmdef writers left this list when their path refusals got tests; a write that
+            // lands still recompiles and reloads the domain, so only the refusals run.
             // arbitrary code or a script edit, same reason
             // batch_execute left this list when CoreProfileCoversWhatTheShippedSkillsCall started
             // naming it; running it in a test is still off the table for the reason above.

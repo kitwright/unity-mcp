@@ -439,17 +439,14 @@ namespace KitWright.Editor.Tools.Builtins
                     return type;
             }
 
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            if (typeName.Equals(nameof(UnityEngine.Object), StringComparison.OrdinalIgnoreCase))
+                return typeof(UnityEngine.Object);
+
+            // TypeCache is built once per domain; walking every assembly's GetTypes() was per call.
+            foreach (var t in TypeCache.GetTypesDerivedFrom<UnityEngine.Object>())
             {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch { continue; }
-                foreach (var t in types)
-                {
-                    if (t.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase) &&
-                        typeof(UnityEngine.Object).IsAssignableFrom(t))
-                        return t;
-                }
+                if (t.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase))
+                    return t;
             }
             return null;
         }

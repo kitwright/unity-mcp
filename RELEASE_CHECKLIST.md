@@ -40,6 +40,25 @@ wrapper packing, and opt-in publishing flags for GitHub, NuGet, and the MCP Regi
 - [ ] Verify interaction logs appear in the MCP Server window
 - [ ] Trigger a script recompile and confirm the MCP server recovers correctly
 
+### Tests CI cannot run
+
+The CI runners are headless Linux: no graphics device, no screen, no editor loop between test
+frames, and no Hot Reload or URP. The tests that need those skip there, and the **Report skipped
+tests** step lists them per leg. Run them once per release in an editor that has what they need:
+open a project with both packages as testables, then run the EditMode suite from the Test Runner
+window. Batchmode will not do, since it skips these tests too.
+
+- [ ] `ScreenshotFunctionsTests`: capture read-back (graphics device)
+- [ ] `EditorWindowInteractionFunctionsTests`: UI Toolkit click (rendered view)
+- [ ] `EditorThreadHelperStallTests.SinceLastPump_IsFreshWhileTheEditorIsRunningThisTest` (editor loop ticking)
+- [ ] `ShaderFunctionsTests.ListShaders_CountCapReportsThePreCapTotalAndTheShownCount` (a project with two or more shaders)
+- [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
+- [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
+- [ ] Add-on: `UIReconstructToolsTests`, the whole match pipeline (graphics device), and `RuntimeToolsPlayModeTests` drag and scroll (a screen larger than 640x480)
+
+A skip in CI whose reason `scripts/report_test_skips.py` does not list fails the build. Add the reason
+there only when the test needs something the runners do not have, and name the test here.
+
 ## 3. MCP Client Verification
 
 - [ ] Verify at least one primary client can connect (`Claude Code`, `Cursor`, `Codex`, etc.)

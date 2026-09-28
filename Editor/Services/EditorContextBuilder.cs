@@ -35,7 +35,6 @@ namespace KitWright.Editor.Services
         private string _cachedConsoleErrorSummary = "No recent console errors.";
         private string _cachedCompileErrorContext = "No compilation errors detected.";
         private RefreshFlags _dirtyFlags = RefreshFlags.All;
-        private bool _refreshScheduled;
         private bool _disposed;
 
         public EditorContextBuilder(
@@ -55,7 +54,6 @@ namespace KitWright.Editor.Services
             EditorSceneManager.newSceneCreated += OnNewSceneCreated;
 
             _unityLogsRepository?.StartListening();
-            RequestRefresh(RefreshFlags.All);
         }
 
         public string GetContextBlock()
@@ -169,25 +167,20 @@ namespace KitWright.Editor.Services
             RefreshSnapshot();
         }
 
+        // Only marks what is stale: the snapshot is rebuilt by the next getter, so a Play Mode
+        // session spawning objects every frame does not rebuild a resource nobody reads.
         private void RequestRefresh(RefreshFlags flags)
         {
             if (_disposed)
                 return;
 
             _dirtyFlags |= flags;
-            if (_refreshScheduled)
-                return;
-
-            _refreshScheduled = true;
-            EditorApplication.delayCall += RefreshSnapshot;
         }
 
         private void RefreshSnapshot()
         {
             if (_disposed)
                 return;
-
-            _refreshScheduled = false;
 
             var flags = _dirtyFlags;
             if (flags == RefreshFlags.None && !string.IsNullOrEmpty(_cachedContext))

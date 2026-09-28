@@ -79,6 +79,8 @@ namespace KitWright.Editor.MCP.Server.SSE
             var sessionId = Guid.NewGuid().ToString("N");
             var session = new SSESession(sessionId);
             _sessions[sessionId] = session;
+            // A session exists from its initialize on, and the client lists the tools right after.
+            MCPToolListChangeNotifier.Observe(sessionId);
             return session;
         }
 
@@ -169,9 +171,26 @@ namespace KitWright.Editor.MCP.Server.SSE
             }
         }
 
-        /// <summary>False when no session (and no global level) could ever receive a log
-        /// notification, so callers can skip building one entirely.</summary>
-        internal bool HasLogSubscribers => !_sessions.IsEmpty || _globalMinSeverityLevel.HasValue;
+        /// <summary>False when no session could receive a log notification right now — none has
+        /// a stream attached with a level set — so callers can skip building one entirely.</summary>
+        internal bool HasLogSubscribers
+        {
+            get
+            {
+                // Runs for every Unity log: the enumerator takes no lock and no snapshot, which
+                // Values.Any would. ActiveStream is read without StreamLock, so a stream attaching
+                // at this instant can miss one log.
+                foreach (var kvp in _sessions)
+                {
+                    var session = kvp.Value;
+                    if (session.ActiveStream != null &&
+                        (session.MinSeverityLevel ?? _globalMinSeverityLevel).HasValue)
+                        return true;
+                }
+
+                return false;
+            }
+        }
 
         internal static int NotificationsSerialized;
 

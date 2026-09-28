@@ -55,7 +55,7 @@ namespace KitWright.Editor.MCP.Server
                 var mcpTool = new Dictionary<string, object>
                 {
                     ["name"] = tool.name,
-                    ["description"] = MCPToolExportPolicy.BuildDescriptionPrefix(tool.name, profile) + description,
+                    ["description"] = MCPToolExportPolicy.BuildDescriptionPrefix(tool.name) + description,
                     ["inputSchema"] = ConvertParametersToJsonSchema(tool.parameters, compact)
                 };
 
@@ -71,16 +71,35 @@ namespace KitWright.Editor.MCP.Server
             return mcpTools;
         }
 
-        private static string FirstSentence(string text)
+        private static readonly string[] Abbreviations = { "e.g.", "i.e.", "etc.", "vs." };
+
+        // An abbreviation's full stop is not the end of the sentence: "Moves an object (e.g. a
+        // prefab) ..." used to come back as "Moves an object (e.g." in the compact schema.
+        internal static string FirstSentence(string text)
         {
             if (string.IsNullOrEmpty(text))
                 return text;
 
-            var end = text.IndexOf(". ", StringComparison.Ordinal);
-            if (end < 0)
-                return text.TrimEnd().TrimEnd('.');
+            for (var end = text.IndexOf(". ", StringComparison.Ordinal); end >= 0;
+                 end = text.IndexOf(". ", end + 1, StringComparison.Ordinal))
+            {
+                if (!EndsWithAbbreviation(text, end + 1))
+                    return text.Substring(0, end + 1);
+            }
 
-            return text.Substring(0, end + 1);
+            return text.TrimEnd().TrimEnd('.');
+        }
+
+        private static bool EndsWithAbbreviation(string text, int length)
+        {
+            foreach (var abbreviation in Abbreviations)
+            {
+                if (length >= abbreviation.Length &&
+                    string.CompareOrdinal(text, length - abbreviation.Length, abbreviation, 0, abbreviation.Length) == 0)
+                    return true;
+            }
+
+            return false;
         }
 
         private Dictionary<string, object> ConvertParametersToJsonSchema(

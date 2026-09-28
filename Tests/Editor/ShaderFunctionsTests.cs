@@ -3,11 +3,14 @@
 using System;
 using System.IO;
 using System.Text.RegularExpressions;
+using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Builtins;
+using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
+using static KitWright.Editor.Tests.ToolCall;
 
 namespace KitWright.Editor.Tests
 {
@@ -112,6 +115,48 @@ namespace KitWright.Editor.Tests
         {
             var (_, relativePath) = ShaderFunctions.ResolvePaths("Foo", "Assets");
             Assert.AreEqual("Assets/Shaders/Foo.shader", relativePath);
+        }
+
+        // The name is on the list because read/update/delete_shader never validate it.
+        [TestCase("Foo", "Assets/../../KitWrightEscape")]
+        [TestCase("Foo", "../KitWrightEscape")]
+        [TestCase("../../../KitWrightEscape", "Shaders")]
+        public void ResolvePaths_RefusesAFolderOrNameThatLeavesAssets(string name, string path)
+        {
+            Assert.Throws<PathOutsideProjectException>(() => ShaderFunctions.ResolvePaths(name, path));
+        }
+
+        [Test]
+        public void ResolvePaths_RefusesAnAbsoluteFolder()
+        {
+            if (Path.DirectorySeparatorChar != '\\')
+                Assert.Ignore("Only a drive letter survives the leading '/' trim; elsewhere '/tmp/x' lands under Assets.");
+
+            Assert.Throws<PathOutsideProjectException>(() =>
+                ShaderFunctions.ResolvePaths("Foo", Path.Combine(Path.GetTempPath(), "KitWrightEscape")));
+        }
+
+        [Test]
+        public void ShaderTools_RefuseAPathOutsideAssetsBeforeTouchingTheDisk()
+        {
+            var escape = "KitWrightEscape_" + Guid.NewGuid().ToString("N");
+            var outside = Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, "..", escape));
+
+            try
+            {
+                Assert.AreEqual("PATH_OUTSIDE_PROJECT", Code("create_shader", "name", "Foo", "path", "Assets/../../" + escape));
+                Assert.IsFalse(Directory.Exists(outside), "create_shader made a folder outside the project before refusing.");
+
+                var name = "../../../" + escape;
+                Assert.AreEqual("PATH_OUTSIDE_PROJECT", Code("update_shader", "name", name, "contents", "Shader \"X\" {}"));
+                Assert.AreEqual("PATH_OUTSIDE_PROJECT", Code("read_shader", "name", name));
+                Assert.AreEqual("PATH_OUTSIDE_PROJECT", Code("delete_shader", "name", name));
+            }
+            finally
+            {
+                if (Directory.Exists(outside))
+                    Directory.Delete(outside, true);
+            }
         }
     }
 }

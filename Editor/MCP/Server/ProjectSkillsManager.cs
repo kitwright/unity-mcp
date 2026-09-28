@@ -7,9 +7,7 @@ using System.Linq;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
-using KitWright.Editor.DI;
 using KitWright.Editor.Services;
-using KitWright.Editor.Settings;
 using KitWright.Editor.Tools;
 
 namespace KitWright.Editor.MCP.Server
@@ -37,7 +35,7 @@ namespace KitWright.Editor.MCP.Server
         {
             new SkillDefinition(
                 "unity-mcp-workflow",
-                "1.0.0",
+                "1.0.1",
                 "Unity MCP Workflow",
                 "Efficient workflow for using Unity MCP to edit, import, compile, inspect, and test Unity projects.",
                 true,
@@ -62,9 +60,11 @@ namespace KitWright.Editor.MCP.Server
                     "For `execute_code`, prefer the IKitWrightCommand template over the legacy `static string Run()`: include `using KitWright.Editor.Tools.Scripting;`, implement `IKitWrightCommand`, and use `ctx.RegisterObjectCreation`, `ctx.RegisterObjectModification`, `ctx.DestroyObject` so created/modified objects participate in editor Undo automatically. Use `ctx.Log` / `ctx.LogWarning` / `ctx.LogError` for traceable output that comes back in the response (without polluting the Unity console).",
                     "Batch related Unity-side changes in one guarded `execute_code` snippet. Null-guard every lookup, return explicit missing path/object/component messages, and include concise before/after values.",
                     "`execute_code` now refreshes the asset database and waits for compilation to finish before compiling the snippet, so external file edits are picked up automatically. For other tools that depend on the latest assemblies (e.g. `get_compilation_errors`), still call `request_recompile` after external file edits.",
-                    "After code or resource edits, exit Play Mode if needed, call `request_recompile`, call `wait_for_compilation`, then read compilation errors or console errors before claiming success.",
+                    "After code or resource edits, exit Play Mode if needed and call `request_recompile` first: it is the call that imports the edits, and unless it reports that Unity started importing or recompiling, its answer already carries the compile errors. Only when it reports that, call `wait_for_compilation(force_refresh=false)`, whose answer carries them too. Do not follow either call with `get_compilation_errors`. Never call `wait_for_compilation(force_refresh=false)` without a `request_recompile` before it: on its own it reads the state from before the edits.",
+                    "When editing several `.cs` files, write them all with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.",
+                    "Group independent reads into one `batch_execute` call (`commands`: a JSON array of `{\"name\", \"params\"}` objects) instead of one round-trip per read.",
                     "Call `wait_for_compilation` before Play Mode, screenshots, or conclusions when a previous edit has not yet been confirmed.",
-                    "After `enter_play_mode`, the MCP HTTP server briefly drops while Unity reloads the domain. Before the next tool call, poll a cheap tool such as `tools/list` or `get_reload_recovery_status` until the server responds again — do not assume the connection is immediately ready.",
+                    "`enter_play_mode` and a recompile both reload the domain. In broker mode (the default) the broker holds requests across the reload and delivers them once Unity is back, so make the next call directly — no poll loop; a call answered with \"Unity is recompiling scripts, so this tool did not run\" is simply repeated. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog, tens of KB per probe.",
                     "`request_recompile` is rejected while Unity is in Play Mode — Unity does not process script compilation or domain reloads while playing. Call `exit_play_mode` first, then retry `request_recompile`.",
                     "If a request is interrupted by script recompilation or domain reload, treat the result as unknown until `get_reload_recovery_status`, compilation checks, and MCP readback confirm the final state.",
                     "Read back exact values from Unity after changes, not only success messages.",
@@ -861,9 +861,11 @@ $@"{ManagedMarker}
 - `execute_code` refreshes the asset database and waits for compilation before running. For other tools that depend on freshly compiled code, still call `request_recompile` after external script edits.
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
-- After code or resource edits, exit Play Mode if needed, call `request_recompile`, `wait_for_compilation`, then read compilation or console errors.
+- After code or resource edits, exit Play Mode if needed and call `request_recompile` first; it returns the compile errors unless it reports that Unity started importing or recompiling. Only then call `wait_for_compilation(force_refresh=false)`, which returns them too. Do not follow either with `get_compilation_errors`, and never use `force_refresh=false` without a `request_recompile` before it: on its own it reads the state from before the edits.
+- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
+- Group independent reads into one `batch_execute` call instead of one round-trip each.
 - `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
-- After `enter_play_mode`, the HTTP server briefly drops while Unity reloads the domain. Poll `tools/list` or `get_reload_recovery_status` until it responds again before issuing the next tool call.
+- `enter_play_mode` and a recompile reload the domain. In broker mode (the default) requests are held across the reload, so make the next call directly, with no poll loop. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog.
 - If recompilation triggers a domain reload or interrupts a request, treat the result as unknown until `get_reload_recovery_status`, compilation checks, and MCP readback confirm it.
 - Avoid changing `Library/`, `Temp/`, `Logs/`, or `obj/`.
 
@@ -908,9 +910,11 @@ $@"{ManagedMarker}
 - `execute_code` refreshes assets and waits for compilation before running. For other tools that depend on freshly compiled code, still call `request_recompile` after external script edits.
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
-- After code or resource edits, exit Play Mode if needed, call `request_recompile`, `wait_for_compilation`, then read compilation or console errors.
+- After code or resource edits, exit Play Mode if needed and call `request_recompile` first; it returns the compile errors unless it reports that Unity started importing or recompiling. Only then call `wait_for_compilation(force_refresh=false)`, which returns them too. Do not follow either with `get_compilation_errors`, and never use `force_refresh=false` without a `request_recompile` before it: on its own it reads the state from before the edits.
+- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
+- Group independent reads into one `batch_execute` call instead of one round-trip each.
 - `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
-- After `enter_play_mode`, the HTTP server briefly drops while Unity reloads the domain. Poll `tools/list` or `get_reload_recovery_status` until it responds again before issuing the next tool call.
+- `enter_play_mode` and a recompile reload the domain. In broker mode (the default) requests are held across the reload, so make the next call directly, with no poll loop. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog.
 - If domain reload interrupts a request, treat the result as unknown until `get_reload_recovery_status`, compilation checks, and MCP readback confirm it.
 - Additional installed skills are available under `.claude/skills/`.
 
@@ -1044,6 +1048,7 @@ platform: {platform.ToString().ToLowerInvariant()}
    - Check that Unity MCP is reachable before assuming Editor state.
    - Inspect hierarchy, prefab paths, selected objects, and relevant component references through MCP.
    - If the user names an object, treat the name as a hint and verify the real Unity object path before editing.
+   - Group independent reads into one `batch_execute` call instead of one round-trip each.
 2. Choose the edit surface.
    - Edit source files with normal repo tools, then trigger Unity recompilation.
    - Edit scene objects through Unity APIs, mark the scene dirty, and save the scene.
@@ -1060,7 +1065,7 @@ platform: {platform.ToString().ToLowerInvariant()}
    - Do not run self-healing fallback loops; if a reference, path, package, or tool is missing, report it once and stop or skip that item.
 4. Validate.
    - Read back the changed objects through MCP.
-   - For code or resource edits, exit Play Mode if needed, call `request_recompile`, call `wait_for_compilation`, then inspect compilation errors and console errors.
+   - For code or resource edits, exit Play Mode if needed and follow Recompile And Reload below: `request_recompile`, then `wait_for_compilation(force_refresh=false)` only if it reports a started import or compile. Both return the compile errors, so do not follow them with `get_compilation_errors`; inspect console errors.
    - For runtime behavior, enter Play Mode or inspect live objects when needed.
    - If MCP is unreachable, do not claim scene, prefab, asset, or runtime verification.
    - Report exactly what was verified and what still requires device, store, network, or manual validation.
@@ -1082,16 +1087,20 @@ platform: {platform.ToString().ToLowerInvariant()}
 
 ## MCP Call Pattern
 
-If native MCP tools are not directly available, probe the local HTTP endpoint:
+If native MCP tools are not directly available, probe the local HTTP endpoint. Take its URL from the `kitwright` entry in this project's MCP client config (`.mcp.json`, `.codex/config.toml`, `.gemini/settings.json`, ...). It is not written here because it carries this editor's access token: a skill file gets committed, and the token must not be.
 
 ```bash
-curl -sS -m 1 -X POST {{SERVER_URL}}mcp \
+URL='<url of the kitwright entry>'
+curl -sS -m 1 -X POST ""${URL}mcp"" \
   -H 'Content-Type: application/json' \
-  -d '{""jsonrpc"":""2.0"",""id"":1,""method"":""tools/list""}'
+  -d '{""jsonrpc"":""2.0"",""id"":1,""method"":""ping""}'
 ```
 
-That URL carries this project's pin. A pinless or stale-port URL is answered by whichever
-editor happens to hold the port, which may be a different Unity project.
+Probe with `ping`, never with `tools/list`: that returns the whole tool catalog, tens of KB per probe. Call `tools/list` once, only when you need the tool schemas.
+
+That URL carries this project's pin and access token, and the editor rewrites it to the live
+port on every start. A URL without the token is refused with 401. A pinless or stale-port URL
+is answered by whichever editor happens to hold the port, which may be a different Unity project.
 
 For multi-line `execute_code` calls over curl, generate JSON with a real encoder instead of hand-escaping C#:
 
@@ -1230,14 +1239,16 @@ return ""Scene dirtied: size "" + before + "" -> "" + rect.sizeDelta + "" (call 
 After external C# or asset file edits:
 
 1. If Unity is in Play Mode, call `exit_play_mode` first — `request_recompile` is rejected during play because Unity does not run script compilation or domain reloads while playing.
-2. Call `request_recompile`.
-3. Call `wait_for_compilation`.
-4. Read `get_compilation_errors` and `get_console_logs` errors before continuing.
-5. If a domain reload drops or interrupts the request, call `get_reload_recovery_status` when available, re-scan the MCP endpoint if needed, then continue from `wait_for_compilation`.
+2. Call `request_recompile`, always first: it is the call that imports the edits. Unless it reports that Unity started importing or recompiling, its answer already carries the compile result (`COMPILATION_FAILED` with the issues, or no errors).
+3. Only if it reported that Unity started importing or recompiling, call `wait_for_compilation` with `force_refresh=false`: the refresh already ran, and its answer carries the compile errors too. Never use `force_refresh=false` without step 2 before it — on its own it reads the state from before the edits.
+4. Do not follow step 2 or 3 with `get_compilation_errors`. Read `get_console_logs` errors before continuing.
+5. If a domain reload drops or interrupts the request, call `get_reload_recovery_status` when available, re-scan the MCP endpoint if needed, then continue from step 3.
+
+Editing several `.cs` files: write all of them with your own file tools, then run this sequence once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.
 
 Do not treat a disconnected, interrupted, or domain-reload-recovered request as a successful compile or edit. It only means the state is unknown until compilation checks and MCP readback confirm the final values.
 
-After `enter_play_mode`, the HTTP server is briefly unreachable while Unity reloads the domain. Before issuing the next tool call, poll a cheap endpoint such as `tools/list` (or `get_reload_recovery_status` if exposed) until you get a response — do not assume the connection survives the Play Mode transition.
+`enter_play_mode` and a recompile both reload the domain. In broker mode (the default) the broker holds requests across the reload and delivers them once Unity is back, so make the next call directly — no poll loop is needed (over curl, give that call a timeout of a minute rather than `-m 1`). A call answered with ""Unity is recompiling scripts, so this tool did not run"" is simply repeated. If the connection is refused instead (direct mode), poll `ping` as in MCP Call Pattern (with native tools only, `get_reload_recovery_status`) until it answers.
 
 ## Verification Checklist
 
@@ -1287,20 +1298,7 @@ $@"
 - Source repository: `https://github.com/kitwright/unity-mcp`
 ";
 
-            // The curl fallback has to name a URL, and a hardcoded one is a loaded gun: ports are
-            // per-project now, so a stale or pinless URL is answered by whichever sibling editor
-            // holds that port.
-            return header + body.Replace("{{SERVER_URL}}", CurrentServerUrl()) + footer;
-        }
-
-        private static string CurrentServerUrl()
-        {
-            var services = RootScopeServices.Services;
-            if (services?.GetService(typeof(MCPServerService)) is MCPServerService server && server.IsRunning)
-                return ClientConfigPanel.BuildServerUrl(server.Port);
-
-            var settings = services?.GetService(typeof(SettingsController)) as SettingsController;
-            return ClientConfigPanel.BuildServerUrl(settings?.MCPServerPort ?? 8765);
+            return header + body + footer;
         }
 
         private static ProjectSkillsManifest CreateDefaultManifest()
