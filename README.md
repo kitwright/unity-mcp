@@ -356,7 +356,7 @@ For a long-form comparison of the two approaches see [KitWright MCP for Unity vs
 
 ## MCP Capabilities
 
-The current open-source package exposes four high-value capability layers:
+The current package exposes four high-value capability layers:
 
 - **Tools** — 274 total tools in `full`, 43 focused tools in `core`
 - **Primary execution** — `execute_code` for rich editor/runtime orchestration

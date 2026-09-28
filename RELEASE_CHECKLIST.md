@@ -3,14 +3,14 @@
 > **You are on the `asset-store` branch.** Every Asset Store submission is cut from here,
 > never from `main`. Asset Store packages are covered by the Asset Store EULA and may not
 > carry a licence of their own, so this branch has no `LICENSE` file, no `license` field in
-> `package.json`, and no MIT wording in the docs or the source headers. Submitting `main`
+> `package.json`, and no licence wording of its own in the docs or the source headers. Submitting `main`
 > gets the package declined under "Sensitive and Restricted Content" — it happened on
 > request #3469260, 22 Sep 2026.
 >
 > Merge `main` into this branch to pick up new work, then re-check the licence sweep in
 > section 1 before exporting.
 
-Use this checklist before publishing a new open-source release of KitWright MCP for Unity.
+Use this checklist before publishing a new release of KitWright MCP for Unity.
 
 The local helper `scripts/release.sh <version>` automates the high-risk mechanical steps:
 version bumping, Unity EditMode tests, `.unitypackage` export, pathname validation, SHA/manifest generation,
@@ -23,8 +23,9 @@ wrapper packing, and opt-in publishing flags for GitHub, NuGet, and the MCP Regi
 - [ ] `package.json` version matches the intended release
 - [ ] `CHANGELOG.md` includes the release notes for the target version
 - [ ] `README.md`, `README_CN.md`, and `Documentation~/index.md` match the current product behavior
-- [ ] No independent licence survived a merge from `main`: `grep -rn MIT --include=*.cs --include=*.md --include=*.json .`
-      returns only the CoplayDev attribution lines, and `LICENSE` does not exist
+- [ ] No independent licence survived a merge from `main`: `python3 scripts/check_asset_store_licence.py` exits 0.
+      It fails on a `LICENSE` file, a `license` field, or any licence claim other than the
+      CoplayDev attribution lines, and lists each hit
 
 ## 2. Unity Smoke Test
 
