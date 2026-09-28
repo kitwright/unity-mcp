@@ -53,6 +53,14 @@ namespace KitWright.Editor.Tests
                 var badType = ProfilerFunctions.GetTopMemoryObjects(type_name: "DefinitelyNotAUnityObjectType", top_n: 1);
                 Assert.That(badType, Does.Contain("Type not found"));
 
+                // Neither is in the known list, so both resolve through the type search.
+                Assert.That(ProfilerFunctions.GetTopMemoryObjects(type_name: "gameobject", top_n: 1),
+                    Does.Contain("Top memory objects: GameObject"));
+                Assert.That(ProfilerFunctions.GetTopMemoryObjects(type_name: "Object", top_n: 1),
+                    Does.Contain("Top memory objects: Object"));
+                Assert.That(ProfilerFunctions.GetTopMemoryObjects(type_name: "StringBuilder", top_n: 1),
+                    Does.Contain("Type not found"));
+
                 var frameDebuggerDisable = ProfilerFunctions.FrameDebuggerDisable();
                 Assert.That(frameDebuggerDisable, Does.Contain("Frame Debugger"));
             }

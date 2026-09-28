@@ -38,7 +38,7 @@ namespace KitWright.Editor.Tools.Builtins
             var atlas = new SpriteAtlas();
             atlas.SetIncludeInBuild(include_in_build);
             AssetDatabase.CreateAsset(atlas, path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
 
             return Response.Success($"SpriteAtlas created at '{path}'.", new { path, includeInBuild = include_in_build });
@@ -82,7 +82,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             atlas.Add(objects.ToArray());
             EditorUtility.SetDirty(atlas);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
 
             return Response.Success($"Added {objects.Count} packable(s) to '{Path.GetFileName(path)}'.", new { added = objects.Count, packableCount = atlas.GetPackables().Length });
@@ -102,7 +102,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             atlas.Remove(objects.ToArray());
             EditorUtility.SetDirty(atlas);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
 
             return Response.Success($"Removed {objects.Count} packable(s) from '{Path.GetFileName(path)}'.", new { removed = objects.Count, packableCount = atlas.GetPackables().Length });
@@ -157,7 +157,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             EditorUtility.SetDirty(atlas);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
             return Response.Success($"SpriteAtlas settings updated for '{Path.GetFileName(path)}'.");
         }
