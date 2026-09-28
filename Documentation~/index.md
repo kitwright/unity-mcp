@@ -17,7 +17,7 @@ KitWright MCP for Unity is an open-source MCP server for the Unity Editor.
 - 271 built-in tool functions across 57 modules — see [TOOLS.md](../TOOLS.md) for the full list
 - Structured `{success, message, data}` JSON returns with stable `instanceId` fields so agents can chain `by_id` lookups
 - `IKitWrightCommand` template for `execute_code` with auto-Undo, structured logs, and a returned changelog of created/modified/destroyed objects
-- Default-on `execute_code` safety checks in the **Settings** tab, overridable per call through the optional `safety_checks` argument — or lockable, so the setting is the only input and a client's argument is ignored
+- Default-on `execute_code` safety checks, skippable per call through the optional `safety_checks` argument
 - Loopback-only server with an `Origin` check and a per-project pin in the request path, so a web page cannot POST into the editor and a stale client config cannot reach a sibling project
 - No approval prompts: the first connection from a new client executable is named in the Unity console so you can see what is driving the editor, and never blocks on a dialog
 - MCP `structuredContent` on tool results: the `{success, message, data}` envelope is returned as structured output alongside text, with `isError` set on failed calls
@@ -35,7 +35,7 @@ KitWright MCP for Unity is an open-source MCP server for the Unity Editor.
 
 Add a public static class marked with `[ToolProvider("CategoryName")]`, then expose `public static` methods with `[ToolParam]` metadata. Method return types may be `string` (legacy text response) or any object — non-string returns are serialized to JSON via Newtonsoft. Use `KitWright.Editor.Tools.Helpers.Response.Success/Error` for the structured envelope. Tool names are exported in snake_case automatically.
 
-`execute_code` safety checks and the strict filesystem guard are enabled by default in the **Settings** tab. They block obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths before compilation. This catches accidents, not intent: `safety_checks` is a tool argument, so any client that can call `execute_code` can pass `safety_checks=false` and skip both the source blocklist and the compiled-assembly guard. It is neither a sandbox nor a security boundary — unless **Lock execute_code safety checks** is on, in which case the setting is the only input and the argument is ignored in both directions.
+`execute_code` runs its safety checks by default. They block obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths before compilation. This catches accidents, not intent: `safety_checks` is a tool argument, so any client that can call `execute_code` can pass `safety_checks=false` and skip both the source blocklist and the compiled-assembly guard. It is neither a sandbox nor a security boundary; to keep an agent from passing `safety_checks=false`, require approval for `execute_code` in your MCP client.
 
 ## Requirements
 

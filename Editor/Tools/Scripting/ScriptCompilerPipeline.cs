@@ -122,7 +122,10 @@ namespace KitWright.Editor.Tools.Scripting
                 }
                 catch (Exception ex)
                 {
-                    result = ScriptCompilationResult.Unavailable(compiler.Name, ex.Message);
+                    // CodeDom is driven through reflection, so its real failure arrives wrapped in a
+                    // TargetInvocationException whose own message says nothing.
+                    result = ScriptCompilationResult.Unavailable(compiler.Name,
+                        Builtins.ScriptExecutionFunctions.UnwrapTargetInvocationException(ex).Message);
                 }
 
                 attempts.Add(new ScriptCompilerAttempt
@@ -413,15 +416,13 @@ namespace KitWright.Editor.Tools.Scripting
             return sb.ToString();
         }
 
-        // Bare -shared on purpose: a value after it is the server's pipe name, not an off switch.
-        // Left bare, Roslyn derives the pipe from the compiler directory and user, so two Unity
-        // installs never reach each other's server.
+        // No compiler server. "/shared:false" named a pipe rather than turning the server off, so every
+        // editor on this code shared one VBCSCompiler: a sub-second snippet queued behind it past the
+        // timeout, and killing the client left the server holding the output file. In-process costs
+        // about the same (~0.75s against ~0.6s measured with 448 references).
         internal static string BuildCompilerArguments(string cscPath, string responsePath)
         {
-            var sharedFlag = string.Equals(Path.GetFileName(cscPath), "csc.dll", StringComparison.OrdinalIgnoreCase)
-                ? " -shared"
-                : string.Empty;
-            return $"{QuoteArgument(cscPath)} -noconfig{sharedFlag} @{QuoteArgument(responsePath)}";
+            return $"{QuoteArgument(cscPath)} -noconfig @{QuoteArgument(responsePath)}";
         }
 
         private static bool TryResolvePreferredCompilerHost(out string compilerHostPath, out string cscPath)
@@ -636,7 +637,15 @@ namespace KitWright.Editor.Tools.Scripting
         private static bool _typesResolved;
         private static string _typeLoadError;
 
+        private readonly IReadOnlyList<string> _referencePathsOverride;
+
         public string Name => "CodeDom";
+
+        // referencePaths is only passed by tests; production references every loaded assembly.
+        public CodeDomScriptCompiler(IReadOnlyList<string> referencePaths = null)
+        {
+            _referencePathsOverride = referencePaths;
+        }
 
         public ScriptCompilationResult Compile(string code)
         {
@@ -645,6 +654,7 @@ namespace KitWright.Editor.Tools.Scripting
 
             var provider = Activator.CreateInstance(_providerType);
             var outputPath = Path.Combine(Path.GetTempPath(), $"kitwright-codedom-{Guid.NewGuid():N}.dll");
+            var responsePath = Path.ChangeExtension(outputPath, ".rsp");
             try
             {
                 var parameters = Activator.CreateInstance(_paramsType);
@@ -653,12 +663,12 @@ namespace KitWright.Editor.Tools.Scripting
                 _paramsType.GetProperty("GenerateExecutable")?.SetValue(parameters, false, null);
                 _paramsType.GetProperty("TreatWarningsAsErrors")?.SetValue(parameters, false, null);
 
-                var referencedAssembliesProperty = _paramsType.GetProperty("ReferencedAssemblies");
-                var referencedAssemblies = referencedAssembliesProperty?.GetValue(parameters, null);
-                var addMethod = referencedAssemblies?.GetType().GetMethod("Add", new[] { typeof(string) });
-
-                foreach (var location in ScriptCompilerReferences.GetCodeDomPaths())
-                    addMethod?.Invoke(referencedAssemblies, new object[] { location });
+                // Mono's CodeDom writes every ReferencedAssemblies entry onto mcs's command line, and a
+                // project with a few hundred loaded assemblies passes the 32,767-character CreateProcess
+                // limit ("The filename or extension is too long"). mcs reads the same /r: from a file.
+                var references = _referencePathsOverride ?? ScriptCompilerReferences.GetCodeDomPaths();
+                File.WriteAllLines(responsePath, references.Select(path => "/r:\"" + path + "\""));
+                _paramsType.GetProperty("CompilerOptions")?.SetValue(parameters, "@\"" + responsePath + "\"", null);
 
                 var compileMethod = _providerType.GetMethod("CompileAssemblyFromSource", new[] { _paramsType, typeof(string[]) });
                 var results = compileMethod?.Invoke(provider, new object[] { parameters, new[] { code } });
@@ -683,6 +693,8 @@ namespace KitWright.Editor.Tools.Scripting
                     disposable.Dispose();
 
                 try { if (File.Exists(outputPath)) File.Delete(outputPath); }
+                catch { }
+                try { if (File.Exists(responsePath)) File.Delete(responsePath); }
                 catch { }
             }
         }

@@ -47,32 +47,27 @@ namespace KitWright.Editor.Tools.Builtins
                      "When a full-class snippet implements IKitWrightCommand, the required KitWright.Editor.Tools.Scripting using is added automatically if omitted. " +
                      "safety_checks blocks a small set of obviously dangerous patterns " +
                      "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
-                     "and, when strict filesystem safety is enabled, broad System.IO writes plus obvious absolute/system/traversal paths. " +
-                     "This catches accidents, not intent: it is neither a sandbox nor a security boundary. When the MCP Settings window locks it, the setting wins and the argument is ignored, but the check stays best-effort. " +
-                     "If omitted, the MCP Settings window's default safety-check setting is used " +
-                     "(enabled by default); explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
+                     "plus broad System.IO writes and obvious absolute/system/traversal paths. " +
+                     "This catches accidents, not intent: safety_checks is an argument you control, so it is neither a sandbox nor a security boundary. " +
+                     "It is on when omitted; pass false to skip it. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
                      "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
         public static async Task<object> ExecuteCode(
             [ToolParam("C# code to execute: a bare method body, or a full class (IKitWrightCommand or static Run()).")] string code,
-            [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through, unless the MCP Settings window locks safety checks, in which case this argument is ignored. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
+            [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. Defaults to true.", Required = false)] bool? safety_checks = null,
             [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false)
         {
-            var effectiveSafetyChecks = ResolveSafetyChecks(safety_checks);
+            var effectiveSafetyChecks = safety_checks ?? true;
             if (effectiveSafetyChecks)
             {
-                var strictFilesystemChecks = ResolveStrictFilesystemSafety();
-                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks, out var pattern, out var reason))
+                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason))
                 {
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
                             pattern,
                             reason,
-                            strict_filesystem_checks = strictFilesystemChecks,
-                            hint = SafetyChecksLocked()
-                                ? "Rewrite the snippet to avoid the pattern. safety_checks is locked in the MCP Settings window, so passing safety_checks=false does nothing — only the project owner can lift it."
-                                : "Rewrite the snippet to avoid the pattern. safety_checks=false and the Settings window's strict filesystem guard both lift this, but that is the user's call to make — do not retry with it on your own."
+                            hint = "Rewrite the snippet to avoid the pattern. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}");
                     return blocked;
@@ -186,10 +181,10 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). " +
                      "The original code is re-compiled and executed; this also appends a new history entry. " +
-                     "Pass safety_checks to override the MCP Settings window default.")]
+                     "safety_checks behaves as in execute_code: on unless you pass false.")]
         public static async Task<object> ReplayExecuteCode(
             [ToolParam("History index to replay (as returned by get_execute_code_history).")] int index,
-            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through, unless the MCP Settings window locks safety checks, in which case this argument is ignored. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null)
+            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. Defaults to true.", Required = false)] bool? safety_checks = null)
         {
             var entries = LoadHistory().entries;
             if (entries.Count == 0)
@@ -216,39 +211,6 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // ---- History helpers ----------------------------------------------------
-
-        // Locked makes the setting the only input: the client's safety_checks argument stops overriding it
-        // in either direction. That takes the one-argument off switch away; it does not make the guard a
-        // boundary, since the checks are pattern-based and a caller can write a script Unity compiles
-        // outside them. The access token is the boundary. Unlocked (the default) keeps the argument as
-        // the override it has always been.
-        internal static bool ResolveSafetyChecks(bool? safetyChecks, bool settingDefault, bool locked)
-        {
-            return locked ? settingDefault : safetyChecks ?? settingDefault;
-        }
-
-        private static bool ResolveSafetyChecks(bool? safetyChecks)
-        {
-            var settings = RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
-            if (settings == null)
-                return safetyChecks ?? true;
-
-            return ResolveSafetyChecks(safetyChecks,
-                settings.ExecuteCodeSafetyChecksEnabled,
-                settings.ExecuteCodeSafetyChecksLocked);
-        }
-
-        private static bool SafetyChecksLocked()
-        {
-            var settings = RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
-            return settings?.ExecuteCodeSafetyChecksLocked ?? false;
-        }
-
-        private static bool ResolveStrictFilesystemSafety()
-        {
-            var settings = RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
-            return settings?.ExecuteCodeStrictFilesystemSafetyEnabled ?? true;
-        }
 
         private static bool ResolveProjectNamespaceInjection()
         {
@@ -401,7 +363,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             if (safetyChecks &&
-                CompiledCodeGuard.TryFindViolation(compilation.Assembly, ResolveStrictFilesystemSafety(), out var reference, out var guardReason))
+                CompiledCodeGuard.TryFindViolation(compilation.Assembly, strict: true, out var reference, out var guardReason))
             {
                 // A modal call is a liveness hazard, not a safety preference: retrying it with
                 // safety_checks=false freezes the editor and hangs the very request that would
@@ -414,9 +376,7 @@ namespace KitWright.Editor.Tools.Builtins
                     stage = "compiled",
                     hint = modal
                         ? "Do not retry with safety_checks=false: this call blocks the editor's message loop, so the request would hang instead of failing."
-                        : SafetyChecksLocked()
-                            ? "Detected in the compiled assembly's metadata, so aliasing or building the name at runtime does not get around it. safety_checks is locked in the MCP Settings window, so passing safety_checks=false does nothing — only the project owner can lift it."
-                            : "Detected in the compiled assembly's metadata, so aliasing or building the name at runtime does not get around it. safety_checks=false lifts the guard, but that is the user's call to make — do not retry with it on your own."
+                        : "Detected in the compiled assembly's metadata, so aliasing or building the name at runtime does not get around it. safety_checks=false lifts the guard, but that is the user's call to make — do not retry with it on your own."
                 });
             }
 
