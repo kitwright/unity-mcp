@@ -40,6 +40,7 @@ window. Batchmode will not do, since it skips these tests too.
 - [ ] `EditorThreadHelperStallTests.SinceLastPump_IsFreshWhileTheEditorIsRunningThisTest` (editor loop ticking)
 - [ ] `ShaderFunctionsTests.ListShaders_CountCapReportsThePreCapTotalAndTheShownCount` (a project with two or more shaders)
 - [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
+- [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
 - [ ] Add-on: `UIReconstructToolsTests`, the whole match pipeline (graphics device), and `RuntimeToolsPlayModeTests` drag and scroll (a screen larger than 640x480)
 
 A skip in CI whose reason `scripts/report_test_skips.py` does not list fails the build. Add the reason
