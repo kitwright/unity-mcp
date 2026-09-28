@@ -354,23 +354,6 @@ namespace KitWright.Editor.Tests
             AssertAllowed(code, false);
         }
 
-        [Test]
-        public void ResolveSafetyChecks_Unlocked_LetsTheArgumentOverrideTheSetting()
-        {
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(false, true, false));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(true, false, false));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, true, false));
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(null, false, false));
-        }
-
-        [Test]
-        public void ResolveSafetyChecks_Locked_IgnoresTheArgumentInBothDirections()
-        {
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(false, true, true));
-            Assert.IsFalse(ScriptExecutionFunctions.ResolveSafetyChecks(true, false, true));
-            Assert.IsTrue(ScriptExecutionFunctions.ResolveSafetyChecks(null, true, true));
-        }
-
         private static void AssertBlocked(string code, bool strict, string expectedReasonPart)
         {
             Assert.IsTrue(ExecuteCodeSafetyPolicy.TryFindViolation(code, strict, out _, out var reason));

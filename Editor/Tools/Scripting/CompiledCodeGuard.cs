@@ -49,7 +49,7 @@ namespace KitWright.Editor.Tools.Scripting
         // cannot hide is the invocation primitive itself, which is a real MemberRef here. Blocking the
         // primitives is the enforceable choke point.
         // ponytail: best-effort, not a boundary. A determined caller can still reach IL through paths
-        // not listed here; the real boundary is safety_checks=false being unavailable, or out-of-process
+        // not listed here; the real boundary is the client's tool approval, or out-of-process
         // execution. Legitimate reflection under safety_checks=true must pass safety_checks=false.
         private static readonly string[] BlockedReflectionMembers =
         {

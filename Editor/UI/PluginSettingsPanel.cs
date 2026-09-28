@@ -37,7 +37,7 @@ namespace KitWright.Editor.MCP.Server
             _container.Clear();
 
             _container.Add(MCPSection.PanelTitle("MCP Settings"));
-            _container.Add(MCPSection.PanelHint("Project-level settings for the KitWright MCP for Unity plugin. Safety checks and debug logging are stored per project."));
+            _container.Add(MCPSection.PanelHint("Project-level settings for the KitWright MCP for Unity plugin."));
 
             var (settingsSection, settingsFoldout) = MCPSection.Create(
                 "Settings", "Settings", labelColor: MCPPalette.HeadingBlue);
@@ -50,24 +50,6 @@ namespace KitWright.Editor.MCP.Server
             autostartToggle.RegisterValueChangedCallback(value => _settingsController.MCPAutostartEnabled = value);
             autostartSection.Add(autostartToggle);
             settingsFoldout.Add(autostartSection);
-
-            AddToggleCard(settingsFoldout,
-                "Default execute_code safety checks",
-                "The default for execute_code calls that omit safety_checks. On its own it stops accidents, not a caller that wants through: any client can pass safety_checks=false. Lock it below to make that argument inert.",
-                _settingsController.ExecuteCodeSafetyChecksEnabled,
-                value => _settingsController.ExecuteCodeSafetyChecksEnabled = value);
-
-            AddToggleCard(settingsFoldout,
-                "Lock execute_code safety checks",
-                "Off by default. When on, the setting above becomes the only input and a client's safety_checks argument is ignored, so a caller cannot switch the checks off with one argument. It is still a best-effort check, not a sandbox: a client can write a script through create_script or write_file (or, without the strict filesystem guard, from inside a snippet), and Unity compiles that script outside these checks. The access token in the client's URL is what keeps other processes out. Legitimate reflection, P/Invoke, or serialization snippets need the lock turned off again.",
-                _settingsController.ExecuteCodeSafetyChecksLocked,
-                value => _settingsController.ExecuteCodeSafetyChecksLocked = value);
-
-            AddToggleCard(settingsFoldout,
-                "Strict filesystem guard",
-                "Adds checks for broad System.IO file writes, raw file streams, and absolute/user/system/traversal paths. This is a defensive guard, not a complete sandbox.",
-                _settingsController.ExecuteCodeStrictFilesystemSafetyEnabled,
-                value => _settingsController.ExecuteCodeStrictFilesystemSafetyEnabled = value);
 
             AddToggleCard(settingsFoldout,
                 "Auto-inject project namespaces",
