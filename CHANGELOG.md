@@ -37,6 +37,7 @@
 - `SECURITY.md` with a private reporting channel, plus a `## Security` link from the README.
 
 ### Changed
+- The sprite atlas, ScriptableObject, animation, terrain and volume tools save the asset they changed instead of every dirty asset in the project. `AssetDatabase.SaveAssets()` wrote whatever else happened to be modified in memory as a side effect of, say, adding a sprite to an atlas; `SaveAssetIfDirty` writes that atlas.
 - `fetch_docs` requests every page of a call at once instead of one after another. Five pages took 2.5-3.5 s and now take 0.5-0.6 s.
 - `find_references` scans without a search index in a fraction of the time on an editor in the background. The manual reverse scan yielded to the editor every 64 assets, a few milliseconds of work, and an unfocused editor resumes a yield only on its next tick, up to 100 ms later. It now yields every 50 ms of work and asks for that tick first. Over 4,037 assets in an unfocused editor the scan took 3.9-7.0 s before and 0.7-1.1 s after.
 - Object ids stop getting slower as a scene grows (Unity 6.3 and later). The id cache compacted itself on every new id once it held more than 1024 live objects, so listing a 20k-object scene walked the whole cache about 19k times. It now compacts when it doubles past what survived the last compaction, and an id already cached reuses its entry instead of allocating a new one.
