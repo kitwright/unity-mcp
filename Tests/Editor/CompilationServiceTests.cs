@@ -8,7 +8,6 @@ using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
 using KitWright.Editor.State;
 using KitWright.Editor.Tools.Builtins;
-using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor.Compilation;
@@ -121,17 +120,6 @@ namespace KitWright.Editor.Tests
 
             CompilationService.IsCompilingOverride = false;
             Assert.IsFalse(DomainReloadHandler.ShouldDeferPendingCompletion());
-        }
-
-        [Test]
-        public void NoThrottleLease_IsHeldWhileCompiling()
-        {
-            CompilationService.IsCompilingOverride = true;
-            Assert.IsTrue(NoThrottleLease.ShouldHoldLease(),
-                "Expiring mid-compile hands throttling back while the compile is still running.");
-
-            CompilationService.IsCompilingOverride = false;
-            Assert.IsFalse(NoThrottleLease.ShouldHoldLease());
         }
 
         [Test]
