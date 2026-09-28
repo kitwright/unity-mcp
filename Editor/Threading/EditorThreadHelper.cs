@@ -104,8 +104,16 @@ namespace KitWright.Editor.Threading
 
         private static void FailIfEditorIsBlocked<T>(TaskCompletionSource<T> tcs, CancellationTokenSource queuedItem)
         {
-            Task.Delay(StallProbeMs).ContinueWith(_ =>
+            // An answered call stops its probe: an uncancelled 20 s timer kept every call's result,
+            // a screenshot included, reachable for 20 s after the client already had it.
+            var answered = new CancellationTokenSource();
+            tcs.Task.ContinueWith(static (_, state) => ((CancellationTokenSource)state).Cancel(), answered,
+                CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+            Task.Delay(StallProbeMs, answered.Token).ContinueWith(probe =>
             {
+                if (probe.IsCanceled)
+                    return;
+
                 var idle = SinceLastPump;
 
                 // Reading window titles is the expensive half and it talks to the editor thread's
