@@ -2,8 +2,12 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using KitWright.Editor.Services;
 using KitWright.Editor.Settings;
 using UnityEngine;
 
@@ -31,6 +35,15 @@ namespace KitWright.Editor.MCP.Server
         private readonly string _serverName;
         private readonly string _serverVersion;
         private readonly string _projectIdentity;
+        private readonly string _spillDirectory;
+
+        // Claude Code refuses a tool result over MAX_MCP_OUTPUT_TOKENS (25K tokens by default,
+        // ~100 KB), and a refused result is a failed call. 64K chars is ~16K tokens, which leaves
+        // the rest of the response room under the default cap.
+        internal const int MaxInlineTextChars = 64 * 1024;
+        internal const int SpillPreviewChars = 4 * 1024;
+        internal const int SpilledOutputsKept = 20;
+        private const string SpillDirRelative = "Library/KitWrightMcp/Outputs";
 
         // structuredContent only exists from 2025-06-18 on, so a client that negotiated an older
         // revision must not receive it. Kept per session: one handler serves every client, and a
@@ -61,6 +74,9 @@ namespace KitWright.Editor.MCP.Server
             _serverName = string.IsNullOrWhiteSpace(serverName) ? "KitWright MCP Server" : serverName;
             _serverVersion = string.IsNullOrWhiteSpace(serverVersion) ? "0.0.0" : serverVersion;
             _projectIdentity = projectIdentity ?? string.Empty;
+            // Resolved here, on the editor thread: a spill can run on a request thread, and Unity's
+            // API is only guaranteed on the editor thread.
+            _spillDirectory = Path.Combine(ApplicationPaths.ProjectRoot, SpillDirRelative);
         }
 
         public async Task<MCPResponse> HandleRequestAsync(MCPRequest request, CancellationToken ct)
@@ -121,6 +137,7 @@ namespace KitWright.Editor.MCP.Server
 
             var negotiated = NegotiateProtocolVersion(requested);
             _negotiatedBySession[SessionKey(request)] = negotiated;
+            MCPToolListChangeNotifier.Observe(request.SessionId);
 
             var result = new Dictionary<string, object>
             {
@@ -176,14 +193,17 @@ namespace KitWright.Editor.MCP.Server
                 PluginDebugLogger.Log($"[KitWright MCP Server] Calling tool: {toolName}");
                 var result = await _executionBridge.ExecuteToolAsync(toolName, arguments, ct);
 
+                var content = BuildContentFromResult(result);
+                var spilled = SpillOversizedText(content, toolName, _spillDirectory);
                 var callResult = new Dictionary<string, object>
                 {
-                    ["content"] = BuildContentFromResult(result)
+                    ["content"] = content
                 };
                 if (TryParseEnvelope(result, out var envelope, out var isError))
                 {
                     // Version strings are ISO dates, so ordinal compare is a revision compare.
-                    if (string.CompareOrdinal(NegotiatedFor(request), ProtocolVersion) >= 0)
+                    // structuredContent is the same payload again, so a spilled result drops it.
+                    if (!spilled && string.CompareOrdinal(NegotiatedFor(request), ProtocolVersion) >= 0)
                         callResult["structuredContent"] = envelope;
                     if (isError)
                         callResult["isError"] = true;
@@ -200,6 +220,67 @@ namespace KitWright.Editor.MCP.Server
                 Debug.LogError($"[KitWright MCP Server] Error executing tool: {ex.Message}");
                 return CreateErrorResponse(request.Id, -32603, $"Tool execution failed: {ex.Message}");
             }
+        }
+
+        // Only text spills: an image block is sized by the capture tools and is not read as tokens.
+        internal static bool SpillOversizedText(List<Dictionary<string, object>> content, string toolName, string directory)
+        {
+            var spilled = false;
+            foreach (var block in content)
+            {
+                if (!block.TryGetValue("type", out var type) || !"text".Equals(type) ||
+                    !block.TryGetValue("text", out var value) || !(value is string text) ||
+                    text.Length <= MaxInlineTextChars)
+                    continue;
+
+                string path;
+                try
+                {
+                    path = WriteSpillFile(text, toolName, directory);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    // Inline is what the call returned before spilling existed: a client may still
+                    // refuse it, but that beats losing the result to a disk error.
+                    Debug.LogWarning($"[KitWright MCP Server] Could not spill the {text.Length}-char result of {toolName}: {ex.Message}");
+                    continue;
+                }
+
+                var preview = char.IsHighSurrogate(text[SpillPreviewChars - 1]) ? SpillPreviewChars - 1 : SpillPreviewChars;
+                block["text"] =
+                    $"This result is {text.Length} characters, over the {MaxInlineTextChars}-character inline limit, so all of it was written to {path}. " +
+                    "Read that file with your own file tools (read_file returns only the start of a long file), " +
+                    "or repeat the call with the tool's paging or max_* parameters for a smaller answer. " +
+                    $"The first {preview} characters follow.\n\n" + text.Substring(0, preview);
+                spilled = true;
+            }
+
+            return spilled;
+        }
+
+        private static string WriteSpillFile(string text, string toolName, string directory)
+        {
+            Directory.CreateDirectory(directory);
+            var safeName = Regex.Replace(toolName ?? string.Empty, "[^A-Za-z0-9_-]", "_");
+            var path = Path.Combine(directory, $"{DateTime.Now:yyyyMMdd-HHmmss-fff}_{safeName}.txt");
+            File.WriteAllText(path, text);
+
+            // The timestamp prefix makes name order creation order.
+            foreach (var stale in Directory.GetFiles(directory, "*.txt")
+                         .OrderByDescending(file => file, StringComparer.Ordinal)
+                         .Skip(SpilledOutputsKept))
+            {
+                try
+                {
+                    File.Delete(stale);
+                }
+                catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+                {
+                    // A reader still holds it open; the next spill deletes it.
+                }
+            }
+
+            return path;
         }
 
         private MCPResponse HandlePromptsList(MCPRequest request)
@@ -279,7 +360,16 @@ namespace KitWright.Editor.MCP.Server
         private const string ImageDataUriPrefix = "data:image/";
         private const string Base64Marker = ";base64,";
 
-        private List<Dictionary<string, object>> BuildContentFromResult(string result)
+        // A capture run inside batch_execute is not a bare data URI but a string value in its JSON,
+        // which the client would otherwise receive as hundreds of KB of base64 text. The lookbehind
+        // leaves a URI quoted inside another string alone. Base64 carries no quote or backslash, so
+        // the closing quote is the end of the value.
+        private static readonly System.Text.RegularExpressions.Regex EmbeddedImageDataUri =
+            new System.Text.RegularExpressions.Regex(
+                "(?<!\\\\)\"data:(image/[A-Za-z0-9.+-]+);base64,([A-Za-z0-9+/=]*)\"",
+                System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        internal static List<Dictionary<string, object>> BuildContentFromResult(string result)
         {
             var content = new List<Dictionary<string, object>>();
 
@@ -292,13 +382,9 @@ namespace KitWright.Editor.MCP.Server
 
             if (marker > 0)
             {
-                var base64Data = result.Substring(marker + Base64Marker.Length);
-                content.Add(new Dictionary<string, object>
-                {
-                    ["type"] = "image",
-                    ["data"] = base64Data,
-                    ["mimeType"] = result.Substring("data:".Length, marker - "data:".Length)
-                });
+                content.Add(ImageBlock(
+                    result.Substring("data:".Length, marker - "data:".Length),
+                    result.Substring(marker + Base64Marker.Length)));
                 content.Add(new Dictionary<string, object>
                 {
                     ["type"] = "text", ["text"] = "Screenshot captured successfully."
@@ -306,14 +392,39 @@ namespace KitWright.Editor.MCP.Server
             }
             else
             {
+                var images = new List<Dictionary<string, object>>();
                 content.Add(new Dictionary<string, object>
                 {
-                    ["type"] = "text", ["text"] = result
+                    ["type"] = "text", ["text"] = LiftEmbeddedImages(result, images)
                 });
+                content.AddRange(images);
             }
 
             return content;
         }
+
+        // Each embedded image becomes {"image_index": N}, N counting this response's image blocks from 0.
+        // structuredContent goes through the same pass, so the two agree on N.
+        internal static string LiftEmbeddedImages(string result, List<Dictionary<string, object>> images)
+        {
+            if (result == null || result.IndexOf("\"" + ImageDataUriPrefix, StringComparison.Ordinal) < 0)
+                return result;
+
+            var index = 0;
+            return EmbeddedImageDataUri.Replace(result, match =>
+            {
+                images?.Add(ImageBlock(match.Groups[1].Value, match.Groups[2].Value));
+                return "{\"image_index\":" + index++ + "}";
+            });
+        }
+
+        private static Dictionary<string, object> ImageBlock(string mimeType, string base64Data) =>
+            new Dictionary<string, object>
+            {
+                ["type"] = "image",
+                ["data"] = base64Data,
+                ["mimeType"] = mimeType
+            };
 
         // Only the {success, ...} envelope is promoted to structuredContent, so free-form JSON
         // (or JSON-looking text) from a tool never lands there unvalidated.
@@ -321,6 +432,7 @@ namespace KitWright.Editor.MCP.Server
         {
             envelope = null;
             isError = false;
+            result = LiftEmbeddedImages(result, null);
 
             if (string.IsNullOrEmpty(result) || result[0] != '{')
                 return false;

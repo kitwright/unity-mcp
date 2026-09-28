@@ -10,6 +10,7 @@ using System.Net.Http;
 using System.Net.Sockets;
 using System.Reflection;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.State;
@@ -417,8 +418,12 @@ namespace KitWright.Editor
             }
         }
 
+        // The transport no longer waits for one call before pulling the next, so the request behind
+        // the interrupted one is pulled too - active in the broker, not queued - and a detach hands
+        // both to the next session instead of telling the second to retry. The server answers a
+        // redelivered call as interrupted and not re-run, so neither can be applied twice.
         [UnityTest]
-        public IEnumerator BrokerTransport_DetachRejectsQueuedRequestsBehindInterruptedSession()
+        public IEnumerator BrokerTransport_DetachRedeliversEveryRequestTheInterruptedSessionHadPulled()
         {
             var root = CreateTempRoot();
             var paths = CreateBrokerPaths(root);
@@ -434,12 +439,14 @@ namespace KitWright.Editor
                 Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
                 Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
 
-                var firstReceived = new TaskCompletionSource<bool>();
+                var received = 0;
+                var bothReceived = new TaskCompletionSource<bool>();
                 firstTransport = new MCPBrokerClientTransport(port, connection.Token);
                 firstTransport.OnRequestReceived += (request, sendResponse) =>
                 {
-                    firstReceived.TrySetResult(true);
-                    // Simulate domain reload before the active request can return.
+                    // Never answered: a domain reload lands before either returns.
+                    if (Interlocked.Increment(ref received) == 2)
+                        bothReceived.TrySetResult(true);
                 };
 
                 var firstStart = firstTransport.StartAsync();
@@ -447,16 +454,11 @@ namespace KitWright.Editor
                 Assert.IsTrue(firstStart.Result);
 
                 var interruptedRequest = SendToolCallBodyAsync(port, "execute_code");
-                yield return WaitForTask(firstReceived.Task, 5f);
-
-                var queuedRequest = SendToolCallBodyAsync(port, "get_editor_state");
-                yield return new WaitForSecondsRealtime(0.1f);
+                var pulledBehindIt = SendToolCallBodyAsync(port, "get_editor_state");
+                yield return WaitForTask(bothReceived.Task, 5f);
 
                 firstTransport.Dispose();
                 firstTransport = null;
-
-                yield return WaitForTask(queuedRequest, 3f);
-                AssertToolCallToldToRetry(queuedRequest.Result);
 
                 secondTransport = new MCPBrokerClientTransport(port, connection.Token);
                 secondTransport.OnRequestReceived += (request, sendResponse) =>
@@ -470,7 +472,9 @@ namespace KitWright.Editor
                 Assert.IsTrue(secondStart.Result);
 
                 yield return WaitForTask(interruptedRequest, 8f);
+                yield return WaitForTask(pulledBehindIt, 8f);
                 Assert.That(interruptedRequest.Result, Does.Contain("redelivered"));
+                Assert.That(pulledBehindIt.Result, Does.Contain("redelivered"));
             }
             finally
             {
@@ -561,6 +565,81 @@ namespace KitWright.Editor
             finally
             {
                 transport?.Dispose();
+                MCPBrokerProcessManager.Stop(paths);
+                DeleteTempRoot(root);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator BrokerTransport_RefusesAClientWithoutTheAccessTokenAndFollowsARotation()
+        {
+            var root = CreateTempRoot();
+            var paths = CreateBrokerPaths(root);
+            var port = GetFreeTcpPort();
+            // Built, not written out: a 32-char hex literal trips the secret scanner.
+            var token = new string('a', ServerToken.Length);
+            var rotated = new string('b', ServerToken.Length);
+            MCPBrokerClientTransport firstTransport = null;
+            MCPBrokerClientTransport secondTransport = null;
+
+            try
+            {
+                Assume.That(!string.IsNullOrEmpty(MCPBrokerProcessManager.ResolveMono(string.Empty)),
+                    "Unity-bundled Mono is required for broker process tests.");
+
+                Assert.IsTrue(MCPBrokerProcessManager.EnsureRunning(port, string.Empty, paths), MCPBrokerProcessManager.LastError);
+                Assert.IsTrue(MCPBrokerProcessManager.TryGetConnectionInfo(paths, port, out var connection));
+
+                var calls = 0;
+                firstTransport = new MCPBrokerClientTransport(port, connection.Token, token);
+                firstTransport.OnRequestReceived += (request, sendResponse) =>
+                {
+                    calls++;
+                    sendResponse(CreateToolTextResponse(request.Id, "served"));
+                };
+
+                var start = firstTransport.StartAsync();
+                yield return WaitForTask(start);
+                Assert.IsTrue(start.Result);
+
+                var missing = SendToolCallAsync(port, "execute_code");
+                yield return WaitForTask(missing, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, missing.Result.StatusCode,
+                    "a caller with no token must not reach the editor through the broker");
+
+                var wrong = SendToolCallAsync(port, "execute_code", path: "/t/deadbeef/");
+                yield return WaitForTask(wrong, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, wrong.Result.StatusCode);
+                Assert.AreEqual(0, calls, "a refused request is refused before it is queued, not after the editor ran it");
+
+                var right = SendToolCallAsync(port, "get_editor_state", path: "/t/" + token + "/");
+                yield return WaitForTask(right, 8f);
+                Assert.AreEqual(HttpStatusCode.OK, right.Result.StatusCode);
+                Assert.AreEqual(1, calls);
+
+                firstTransport.Dispose();
+                firstTransport = null;
+
+                secondTransport = new MCPBrokerClientTransport(port, connection.Token, rotated);
+                secondTransport.OnRequestReceived += (request, sendResponse) =>
+                    sendResponse(CreateToolTextResponse(request.Id, "served"));
+                var restart = secondTransport.StartAsync();
+                yield return WaitForTask(restart);
+                Assert.IsTrue(restart.Result);
+
+                var stale = SendToolCallAsync(port, "get_editor_state", path: "/t/" + token + "/");
+                yield return WaitForTask(stale, 8f);
+                Assert.AreEqual(HttpStatusCode.Unauthorized, stale.Result.StatusCode,
+                    "a rotated token must retire the old one without restarting the broker");
+
+                var current = SendToolCallAsync(port, "get_editor_state", path: "/t/" + rotated + "/");
+                yield return WaitForTask(current, 8f);
+                Assert.AreEqual(HttpStatusCode.OK, current.Result.StatusCode);
+            }
+            finally
+            {
+                firstTransport?.Dispose();
+                secondTransport?.Dispose();
                 MCPBrokerProcessManager.Stop(paths);
                 DeleteTempRoot(root);
             }
@@ -685,7 +764,7 @@ namespace KitWright.Editor
                 var start = source.IndexOf(method, StringComparison.Ordinal);
                 Assert.Greater(start, 0, method + " not found in " + transport);
 
-                var body = source.Substring(start, Math.Min(1800, source.Length - start));
+                var body = source.Substring(start, Math.Min(2400, source.Length - start));
                 var trackAt = body.IndexOf("Track(request)", StringComparison.Ordinal);
                 var guardAt = body.IndexOf("!_isRunning", StringComparison.Ordinal);
 
@@ -762,10 +841,10 @@ namespace KitWright.Editor
         }
 
         private static async Task<HttpResponseMessage> SendToolCallAsync(int port, string toolName,
-            string origin = null, string mcpSessionId = null)
+            string origin = null, string mcpSessionId = null, string path = "/")
         {
             using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) })
-            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + "/"))
+            using (var request = new HttpRequestMessage(HttpMethod.Post, "http://127.0.0.1:" + port + path))
             {
                 if (origin != null)
                     request.Headers.Add("Origin", origin);
@@ -864,6 +943,94 @@ namespace KitWright.Editor
             {
                 transport.Dispose();
                 try { heldPull?.Close(); } catch { }
+                listener.Stop();
+                serving.Wait(2000);
+            }
+        }
+
+        // The broker hands one request to each pull and never waits for the one before it, so the
+        // only thing that serialized broker mode was the editor awaiting the handler before pulling
+        // again: a ping sent behind a slow call sat in the broker queue until that call answered.
+        [UnityTest]
+        public IEnumerator BrokerTransport_PullsTheNextRequestWhileAHandlerIsStillRunning()
+        {
+            var port = GetFreeTcpPort();
+            var listener = new TcpListener(IPAddress.Loopback, port);
+            listener.Start();
+
+            var pulls = 0;
+            var heldPulls = new List<Socket>();
+            var serving = Task.Run(() =>
+            {
+                while (true)
+                {
+                    Socket socket;
+                    try { socket = listener.AcceptSocket(); }
+                    catch { return; }
+
+                    var head = ReadRequestHead(socket);
+                    if (head.Contains(MCPBrokerProtocol.PullPath))
+                    {
+                        if (Interlocked.Increment(ref pulls) > 1)
+                        {
+                            lock (heldPulls)
+                                heldPulls.Add(socket);
+                            continue;
+                        }
+
+                        var body = Encoding.UTF8.GetBytes(
+                            "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{\"name\":\"get_editor_state\",\"arguments\":{}}}");
+                        var response = "HTTP/1.1 200 OK\r\n" +
+                                       MCPBrokerProtocol.ReqIdHeader + ": 1\r\n" +
+                                       "Content-Type: application/json\r\n" +
+                                       "Content-Length: " + body.Length + "\r\nConnection: close\r\n\r\n";
+                        try
+                        {
+                            socket.Send(Encoding.ASCII.GetBytes(response));
+                            socket.Send(body);
+                            socket.Close();
+                        }
+                        catch { }
+                        continue;
+                    }
+
+                    try
+                    {
+                        socket.Send(Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"));
+                        socket.Close();
+                    }
+                    catch { }
+                }
+            });
+
+            var handled = 0;
+            var transport = new MCPBrokerClientTransport(port, "token");
+            // Never answers, like a tool that takes its time.
+            transport.OnRequestReceived += (request, sendResponse) => Interlocked.Increment(ref handled);
+            try
+            {
+                Assert.IsTrue(transport.StartAsync().Result, "transport should attach to the fake broker");
+
+                var waited = Stopwatch.StartNew();
+                while ((Volatile.Read(ref pulls) < 2 || Volatile.Read(ref handled) < 1) && waited.ElapsedMilliseconds < 5000)
+                    yield return null;
+
+                Assert.AreEqual(1, Volatile.Read(ref handled), "the first request should have reached the handler");
+                Assert.GreaterOrEqual(Volatile.Read(ref pulls), 2,
+                    "the transport waited for the handler before pulling again, so every broker call queues " +
+                    "behind the one before it");
+            }
+            finally
+            {
+                transport.Dispose();
+                lock (heldPulls)
+                {
+                    foreach (var socket in heldPulls)
+                    {
+                        try { socket.Close(); } catch { }
+                    }
+                }
+
                 listener.Stop();
                 serving.Wait(2000);
             }

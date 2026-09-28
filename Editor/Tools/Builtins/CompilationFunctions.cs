@@ -30,7 +30,6 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
-                NoThrottleLease.Acquire(TimeSpan.FromSeconds(timeout_seconds + 60));
 
                 var compilationService = GetCompilationService();
                 if (compilationService == null)
@@ -86,7 +85,6 @@ namespace KitWright.Editor.Tools.Builtins
 
             MarkExternalSyncPending();
             timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
-            NoThrottleLease.Acquire(TimeSpan.FromSeconds(timeout_seconds + 60));
 
             var refreshResult = await EditorRefreshPipeline.RefreshAndRequestCompilationAsync(
                     forceUpdate: true,
@@ -159,19 +157,32 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Get the latest Unity script compilation errors from the most recent compilation cycle. " +
+                     "While Unity is compiling, the call waits up to wait_seconds for the compile to finish instead of answering 'try again'. " +
+                     "If a domain reload interrupts the call, the compile finished and the new code loaded: call it once more for the result. " +
                      "A page cut short by max_entries reports a next_cursor to pass back as cursor for the rest.")]
         [ReadOnlyTool]
-        public static string GetCompilationErrors(
+        public static async Task<string> GetCompilationErrors(
             [ToolParam("Maximum number of issues to return", Required = false)] int max_entries = 50,
             [ToolParam("Include warnings in addition to errors", Required = false)] bool include_warnings = false,
-            [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0)
+            [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0,
+            [ToolParam("Seconds to wait for a running compile to finish before answering (0-30, default 20). 0 answers at once.", Required = false)] int wait_seconds = 20)
         {
             var compilationService = GetCompilationService();
             if (compilationService == null)
                 return ToolResultFormatter.Error("COMPILATION_SERVICE_UNAVAILABLE");
 
             if (compilationService.IsCompiling)
-                return "Currently compiling... Please wait and try again.";
+            {
+                var startedAt = DateTime.UtcNow;
+                wait_seconds = Mathf.Clamp(wait_seconds, 0, 30);
+                // No ConfigureAwait(false): CaptureScriptChangeState below needs the editor thread back.
+                if (wait_seconds == 0 ||
+                    !await compilationService.WaitForCompilationAsync(forceRefresh: false, timeoutSeconds: wait_seconds))
+                {
+                    return "Currently compiling... Please wait and try again. " +
+                           $"Waited {(DateTime.UtcNow - startedAt).TotalSeconds:F1}s for it to finish.";
+                }
+            }
 
             return EditorRefreshPipeline.AnnotatePendingScriptChanges(
                 EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false),

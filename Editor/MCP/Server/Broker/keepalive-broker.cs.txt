@@ -47,6 +47,10 @@ namespace KitWright.UnityMcp.Broker
         private const string StatusHeader = "X-KitWright-Broker-Status";
         private const string ClientPortHeader = "X-KitWright-Broker-Client-Port";
         private const string McpSessionHeader = "X-KitWright-Broker-Mcp-Session";
+        private const string ClientTokenHeader = "X-KitWright-Broker-Client-Token";
+        // Writes to a client happen under Gate, so one that stops reading would otherwise park the
+        // whole broker once the socket buffer fills.
+        private const int SendTimeoutMs = 5000;
         private const string AttachPath = "/_kitwright/broker/attach";
         private const string DetachPath = "/_kitwright/broker/detach";
 
@@ -57,6 +61,11 @@ namespace KitWright.UnityMcp.Broker
         private static Waiter WaitingPull;
         private static TcpListener Listener;
         private static string Token;
+
+        // Handed over by the editor on every pull and attach rather than on the command line, so a
+        // rotated token takes effect on the next pull. Until the first one there is no backend, and
+        // a client request gets the backend-unavailable answer without reaching anything.
+        private static volatile string ClientToken = string.Empty;
         private static string ProjectPin;
         private static long Sequence;
         private static bool Stopping;
@@ -146,6 +155,13 @@ namespace KitWright.UnityMcp.Broker
             Log("listening on http://127.0.0.1:" + port + "/");
 
             LastActivityMs = NowMs();
+
+            // A handler can sit in a read for up to RequestReadTimeoutMs, and the pool only grows
+            // slowly past its minimum, so a burst of parallel calls would otherwise queue for threads.
+            int workers, completion;
+            ThreadPool.GetMinThreads(out workers, out completion);
+            ThreadPool.SetMinThreads(Math.Max(workers, 32), completion);
+
             var sweeper = new Thread(SweepLoop);
             sweeper.IsBackground = true;
             sweeper.Start();
@@ -164,9 +180,9 @@ namespace KitWright.UnityMcp.Broker
                     continue;
                 }
 
-                var thread = new Thread(HandleConnectionThread);
-                thread.IsBackground = true;
-                thread.Start(client);
+                // A thread per connection took up to ~190 ms to start running on a loaded machine
+                // (p99 ~130 ms on Unity's Mono), on every request; a pool thread starts in microseconds.
+                ThreadPool.QueueUserWorkItem(HandleConnectionThread, client);
             }
 
             return 0;
@@ -190,6 +206,7 @@ namespace KitWright.UnityMcp.Broker
         {
             client.NoDelay = true;
             client.ReceiveTimeout = RequestReadTimeoutMs;
+            client.SendTimeout = SendTimeoutMs;
             var stream = client.GetStream();
 
             string method;
@@ -273,6 +290,7 @@ namespace KitWright.UnityMcp.Broker
                 headers.TryGetValue(SessionHeader.ToLowerInvariant(), out session);
                 if (string.IsNullOrEmpty(session))
                     session = "unknown";
+                ClientToken = HeaderOrEmpty(headers, ClientTokenHeader);
                 HandlePull(client, stream, session);
                 return;
             }
@@ -317,6 +335,7 @@ namespace KitWright.UnityMcp.Broker
 
                 string session;
                 headers.TryGetValue(SessionHeader.ToLowerInvariant(), out session);
+                ClientToken = HeaderOrEmpty(headers, ClientTokenHeader);
                 HandleAttach(session);
                 WriteResponse(stream, 200, "OK", "application/json", BrokerHeaderLine(), "{\"ok\":true}");
                 SafeClose(client);
@@ -367,6 +386,15 @@ namespace KitWright.UnityMcp.Broker
                 Log("refused request for project pin " + requestPin + "; this broker serves " + ProjectPin);
                 WriteResponse(stream, 404, "Not Found", "text/plain", BrokerHeaderLine(),
                     "This KitWright MCP broker serves project pin " + ProjectPin + ", not " + requestPin + ".");
+                SafeClose(client);
+                return;
+            }
+
+            var tokenRefusal = ClientTokenRefusal(path);
+            if (tokenRefusal != null)
+            {
+                Log("refused a client request without this project's access token");
+                WriteResponse(stream, 401, "Unauthorized", "text/plain", BrokerHeaderLine(), tokenRefusal);
                 SafeClose(client);
                 return;
             }
@@ -1052,8 +1080,14 @@ namespace KitWright.UnityMcp.Broker
                    string.Equals(host, "::1", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Mirrors HttpMCPTransport.ExtractPin: this process cannot reference the package assembly.
+        // Mirrors HttpMCPTransport.ExtractPin and ServerToken.ExtractToken: this process cannot
+        // reference the package assembly.
         private static string ExtractPin(string path)
+        {
+            return ExtractSegmentAfter(path, "p");
+        }
+
+        private static string ExtractSegmentAfter(string path, string marker)
         {
             if (string.IsNullOrEmpty(path))
                 return string.Empty;
@@ -1065,11 +1099,35 @@ namespace KitWright.UnityMcp.Broker
             var segments = path.Split(new[] { '/' }, StringSplitOptions.RemoveEmptyEntries);
             for (var i = 0; i < segments.Length - 1; i++)
             {
-                if (string.Equals(segments[i], "p", StringComparison.OrdinalIgnoreCase))
+                if (string.Equals(segments[i], marker, StringComparison.OrdinalIgnoreCase))
                     return segments[i + 1];
             }
 
             return string.Empty;
+        }
+
+        // Mirrors ServerToken.Check and RefusalMessage. Null when the request may pass.
+        private static string ClientTokenRefusal(string path)
+        {
+            var expected = ClientToken;
+            if (expected.Length == 0)
+                return null;
+
+            var presented = ExtractSegmentAfter(path, "t");
+            if (presented.Length == 0)
+                return "This editor only answers a URL that carries its access token. Press Configure in the KitWright " +
+                       "window, or restart the editor, to write the current URL into the client's config, then restart the client.";
+
+            return FixedTimeEquals(presented, expected)
+                ? null
+                : "That access token is not this project's. Press Configure in the KitWright window " +
+                  "to rewrite the client's config with the current URL.";
+        }
+
+        private static string HeaderOrEmpty(Dictionary<string, string> headers, string name)
+        {
+            string value;
+            return headers.TryGetValue(name.ToLowerInvariant(), out value) && value != null ? value : string.Empty;
         }
 
         private static int GetPendingCount()

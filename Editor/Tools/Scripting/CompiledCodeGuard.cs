@@ -3,7 +3,6 @@
 using System;
 using System.Collections.Generic;
 using System.Reflection;
-using UnityEngine;
 
 namespace KitWright.Editor.Tools.Scripting
 {
@@ -56,6 +55,13 @@ namespace KitWright.Editor.Tools.Scripting
         {
             "System.Activator.CreateInstance",
             "System.Reflection.MethodBase.Invoke",
+            // The one-argument overload lives on ConstructorInfo itself, so MethodBase.Invoke above
+            // never sees it.
+            "System.Reflection.ConstructorInfo.Invoke",
+            "System.Delegate.DynamicInvoke",
+            // Writes a private field or property, including a guard's own: no call to the target at all.
+            "System.Reflection.FieldInfo.SetValue",
+            "System.Reflection.PropertyInfo.SetValue",
             "System.Reflection.MethodInfo.CreateDelegate",
             "System.Delegate.CreateDelegate",
             "System.Type.InvokeMember",
@@ -131,13 +137,18 @@ namespace KitWright.Editor.Tools.Scripting
 
         public static bool TryFindViolation(Assembly assembly, bool strict, out string reference, out string reason)
         {
+            return TryFindViolation(assembly, strict, MaxRows, out reference, out reason);
+        }
+
+        internal static bool TryFindViolation(Assembly assembly, bool strict, int maxRows, out string reference, out string reason)
+        {
             reference = null;
             reason = null;
 
             foreach (var module in assembly.GetModules())
             {
-                if (ScanTypeRefs(module, strict, ref reference, ref reason) ||
-                    ScanMemberRefs(module, strict, ref reference, ref reason) ||
+                if (ScanTypeRefs(module, strict, maxRows, ref reference, ref reason) ||
+                    ScanMemberRefs(module, strict, maxRows, ref reference, ref reason) ||
                     ScanForPInvoke(module, ref reference, ref reason))
                     return true;
             }
@@ -145,16 +156,17 @@ namespace KitWright.Editor.Tools.Scripting
             return false;
         }
 
-        private static bool ScanTypeRefs(Module module, bool strict, ref string reference, ref string reason)
+        private static bool ScanTypeRefs(Module module, bool strict, int maxRows, ref string reference, ref string reason)
         {
-            for (var row = 1; row <= MaxRows; row++)
+            for (var row = 1; ; row++)
             {
-                if (!TryResolve(() => module.ResolveType(TypeRefTable | row), out Type type, out var exhausted))
-                {
-                    if (exhausted)
-                        return false;
+                var resolved = TryResolve(() => module.ResolveType(TypeRefTable | row), out Type type, out var exhausted);
+                if (exhausted)
+                    return false;
+                if (row > maxRows)
+                    return RefuseUnscanned(module, "TypeRef", maxRows, ref reference, ref reason);
+                if (!resolved)
                     continue;
-                }
 
                 var name = type?.FullName;
                 if (name == null)
@@ -167,21 +179,19 @@ namespace KitWright.Editor.Tools.Scripting
                     return true;
                 }
             }
-
-            WarnScanTruncated(module, "TypeRef");
-            return false;
         }
 
-        private static bool ScanMemberRefs(Module module, bool strict, ref string reference, ref string reason)
+        private static bool ScanMemberRefs(Module module, bool strict, int maxRows, ref string reference, ref string reason)
         {
-            for (var row = 1; row <= MaxRows; row++)
+            for (var row = 1; ; row++)
             {
-                if (!TryResolve(() => module.ResolveMember(MemberRefTable | row), out MemberInfo member, out var exhausted))
-                {
-                    if (exhausted)
-                        return false;
+                var resolved = TryResolve(() => module.ResolveMember(MemberRefTable | row), out MemberInfo member, out var exhausted);
+                if (exhausted)
+                    return false;
+                if (row > maxRows)
+                    return RefuseUnscanned(module, "MemberRef", maxRows, ref reference, ref reason);
+                if (!resolved)
                     continue;
-                }
 
                 var declaring = member?.DeclaringType?.FullName;
                 if (declaring == null)
@@ -206,9 +216,6 @@ namespace KitWright.Editor.Tools.Scripting
                     return true;
                 }
             }
-
-            WarnScanTruncated(module, "MemberRef");
-            return false;
         }
 
         // A [DllImport] method calls native code directly: it never references a blocked managed
@@ -248,13 +255,14 @@ namespace KitWright.Editor.Tools.Scripting
             return false;
         }
 
-        // Only reached when the row cap ran out before the table ended: the snippet is allowed
-        // through, so say that the check was incomplete rather than letting silence read as clean.
-        private static void WarnScanTruncated(Module module, string table)
+        // The cap bounds the scan, so a table longer than it holds references nobody checked. Letting
+        // that through made padding past the cap a way around every list above; no snippet comes near it.
+        private static bool RefuseUnscanned(Module module, string table, int maxRows, ref string reference, ref string reason)
         {
-            Debug.LogWarning(
-                $"[KitWright] execute_code safety scan stopped after {MaxRows} {table} rows in '{module.Name}'; " +
-                "references past that point were not checked.");
+            reference = module.Name;
+            reason = $"The compiled snippet has more than {maxRows} {table} rows, more than the safety scan reads, " +
+                     "so it cannot vouch for the rest and execute_code refuses to run it. Split the snippet.";
+            return true;
         }
 
         // Mono reports a row past the end of the table as ArgumentOutOfRangeException; anything else

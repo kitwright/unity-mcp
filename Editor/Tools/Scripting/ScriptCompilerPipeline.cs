@@ -227,6 +227,7 @@ namespace KitWright.Editor.Tools.Scripting
     internal sealed class RoslynCscScriptCompiler : IScriptCompiler
     {
         private const int DefaultTimeoutMilliseconds = 15000;
+        private const int OutputDrainMilliseconds = 5000;
 
         private readonly string _compilerHostPathOverride;
         private readonly string _cscPathOverride;
@@ -277,16 +278,22 @@ namespace KitWright.Editor.Tools.Scripting
                     WorkingDirectory = tempRoot
                 };
 
+                using (var stdoutClosed = new System.Threading.ManualResetEventSlim())
+                using (var stderrClosed = new System.Threading.ManualResetEventSlim())
                 using (var process = new Process { StartInfo = psi })
                 {
                     process.OutputDataReceived += (_, args) =>
                     {
-                        if (args.Data != null)
+                        if (args.Data == null)
+                            stdoutClosed.Set();
+                        else
                             stdout.AppendLine(args.Data);
                     };
                     process.ErrorDataReceived += (_, args) =>
                     {
-                        if (args.Data != null)
+                        if (args.Data == null)
+                            stderrClosed.Set();
+                        else
                             stderr.AppendLine(args.Data);
                     };
 
@@ -309,8 +316,11 @@ namespace KitWright.Editor.Tools.Scripting
                         return ScriptCompilationResult.Unavailable(Name, $"Roslyn csc timed out after {_timeoutMilliseconds} ms.");
                     }
 
-                    // Lets the async output readers flush; bounded so it cannot hang the editor thread.
-                    process.WaitForExit(500);
+                    // The readers reach end-of-stream after the process has exited, not when it does: a
+                    // fixed 500 ms wait could return first, and the Linux CI then got "exited with code 1"
+                    // and no line to report. Bounded, so a child holding the pipe cannot hang the editor.
+                    stdoutClosed.Wait(OutputDrainMilliseconds);
+                    stderrClosed.Wait(OutputDrainMilliseconds);
 
                     var compilerOutput = (stdout.ToString() + stderr.ToString()).Trim();
                     if (process.ExitCode != 0)
@@ -403,10 +413,13 @@ namespace KitWright.Editor.Tools.Scripting
             return sb.ToString();
         }
 
-        private static string BuildCompilerArguments(string cscPath, string responsePath)
+        // Bare -shared on purpose: a value after it is the server's pipe name, not an off switch.
+        // Left bare, Roslyn derives the pipe from the compiler directory and user, so two Unity
+        // installs never reach each other's server.
+        internal static string BuildCompilerArguments(string cscPath, string responsePath)
         {
             var sharedFlag = string.Equals(Path.GetFileName(cscPath), "csc.dll", StringComparison.OrdinalIgnoreCase)
-                ? " /shared:false"
+                ? " -shared"
                 : string.Empty;
             return $"{QuoteArgument(cscPath)} -noconfig{sharedFlag} @{QuoteArgument(responsePath)}";
         }

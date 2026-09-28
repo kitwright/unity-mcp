@@ -476,6 +476,13 @@ namespace KitWright.Editor.MCP.Server
                         return;
                     }
 
+                    var notPumping = EditorNotPumpingResponse(request, editorThreadTask);
+                    if (notPumping != null)
+                    {
+                        sendResponse(notPumping);
+                        return;
+                    }
+
                     sendResponse(editorThreadTask.Result);
                 }
             }
@@ -488,6 +495,20 @@ namespace KitWright.Editor.MCP.Server
                     Error = new MCPError { Code = -32603, Message = $"Internal error: {ex.Message}" }
                 });
             }
+        }
+
+        // The stall watchdog's verdict is an answer, not a crash: left to the generic catch it
+        // reads "-32603 Internal error: One or more errors occurred" and logs an error.
+        internal static MCPResponse EditorNotPumpingResponse(MCPRequest request, Task editorThreadTask)
+        {
+            if (editorThreadTask.Exception?.InnerException is not EditorNotPumpingException notPumping)
+                return null;
+
+            return new MCPResponse
+            {
+                Id = request?.Id,
+                Error = new MCPError { Code = -32001, Message = notPumping.Message }
+            };
         }
 
         // Only tools/call touches live scene/asset state; metadata requests skip the editor thread.
@@ -519,12 +540,25 @@ namespace KitWright.Editor.MCP.Server
             var toolExposureChanged = !string.Equals(toolExposureSetting, _toolExposureSetting, StringComparison.Ordinal);
             var transportChanged = !string.Equals(transportSetting, _transportSetting, StringComparison.Ordinal);
 
-            if ((toolExposureChanged || transportChanged) && _isRunning)
+            if (!_isRunning)
+                return;
+
+            if (transportChanged)
             {
                 PluginDebugLogger.Log("[KitWright MCP Server] Server settings changed, restarting MCP transport...");
                 _toolExposureSetting = toolExposureSetting;
                 _transportSetting = transportSetting;
                 ScheduleRestart();
+                return;
+            }
+
+            // The exporter and the execution bridge read the profile live from settings, so a new
+            // exposure only needs clients told to re-read tools/list - a restart would refuse
+            // requests for a frame or two and drop the reply to set_tool_profile itself.
+            if (toolExposureChanged)
+            {
+                _toolExposureSetting = toolExposureSetting;
+                MCPToolListChangeNotifier.CheckForChanges(new MCPToolExporter(_settings));
             }
         }
 
@@ -596,7 +630,7 @@ namespace KitWright.Editor.MCP.Server
                 if (brokerReady &&
                     MCPBrokerProcessManager.TryGetConnectionInfo(startupPort, out var broker))
                 {
-                    return new MCPBrokerClientTransport(startupPort, broker.Token);
+                    return new MCPBrokerClientTransport(startupPort, broker.Token, ServerToken.Get());
                 }
 
                 Debug.LogWarning(

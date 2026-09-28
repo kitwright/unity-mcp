@@ -30,6 +30,28 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void RoslynArguments_UseTheSharedServerOnItsDerivedPipe()
+        {
+            var dotnet = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/DotNetSdkRoslyn/csc.dll", "/tmp/csc.rsp");
+            Assert.That(dotnet, Does.Contain(" -shared "));
+            Assert.That(dotnet, Does.Not.Contain("shared:"),
+                "a value after shared: names the pipe, so shared:false put every Unity install on a pipe called \"false\"");
+
+            var mono = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/Roslyn/csc.exe", "/tmp/csc.rsp");
+            Assert.That(mono, Does.Not.Contain("shared"));
+        }
+
+        [Test]
+        public void ExecuteCode_RefreshThatStartsNoCompile_AnswersWithItsOwnCodeAndTheWayOut()
+        {
+            var result = ScriptExecutionFunctions.RefreshDidNotStartCompilationError(
+                new Tools.Helpers.EditorRefreshDidNotStartCompilationException(new Tools.Helpers.EditorRefreshResult()));
+
+            AssertError(result, "REFRESH_DID_NOT_START_COMPILATION");
+            StringAssert.Contains("skip_refresh=true", GetProperty<string>(GetProperty<object>(result, "data"), "hint"));
+        }
+
+        [Test]
         public void CompilerPipeline_FallsBackToCodeDomWhenRoslynUnavailable()
         {
             var result = ScriptCompilerPipeline.Compile(
@@ -339,6 +361,24 @@ public class CommandSyntax : IKitWrightCommand
             CollectionAssert.IsNotEmpty(first);
             CollectionAssert.AllItemsAreUnique(
                 first.Select(path => System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant()).ToArray());
+        }
+
+        // A bare body sits under the usings and the wrapper class, so the compiler's line numbers
+        // were the wrapper's: an error on the snippet's third line came back as line 19.
+        [UnityTest]
+        public IEnumerator CompileErrors_PointAtTheSnippetsOwnLines()
+        {
+            yield return ExecuteCodeAndAssert("var a = 1;\nvar b = 2;\nnotDeclaredAnywhere();\nreturn a + b;", result =>
+            {
+                AssertError(result, "COMPILATION_FAILED");
+                var data = result.GetType().GetProperty("data").GetValue(result);
+                var errors = ((System.Collections.IEnumerable)data.GetType().GetProperty("errors").GetValue(data))
+                    .Cast<ScriptCompilationError>().ToList();
+                Assert.AreEqual(3, errors[0].line, Describe(result));
+                Assert.AreEqual(1, errors[0].column, Describe(result));
+                Assert.IsNull(data.GetType().GetProperty("compiler_attempts"),
+                    "one Roslyn attempt repeats what \"compiler\" already says");
+            }, skipRefresh: true);
         }
 
         private static IEnumerator ExecuteCodeAndAssert(

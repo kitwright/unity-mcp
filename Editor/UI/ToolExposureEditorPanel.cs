@@ -88,7 +88,7 @@ namespace KitWright.Editor.MCP.Server
             _root.Clear();
 
             _root.Add(MCPSection.PanelTitle("Tool Exposure"));
-            _root.Add(MCPSection.PanelHint("Edit exactly which tools each MCP profile exposes. Choose the active profile from the Server tab. Saving changes restarts the running server automatically."));
+            _root.Add(MCPSection.PanelHint("Edit exactly which tools each MCP profile exposes. Choose the active profile from the Server tab. Saving changes takes effect immediately and tells connected clients to refresh their tool list."));
 
             LoadAllTools();
 

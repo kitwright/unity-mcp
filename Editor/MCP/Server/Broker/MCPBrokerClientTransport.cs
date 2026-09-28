@@ -20,9 +20,11 @@ namespace KitWright.Editor.MCP.Server
         private const int DetachTimeoutMs = 750;
         private const int ReconnectBackoffMs = 500;
         private const int RequestExecutionTimeoutSeconds = 300;
+        private const int MaxConcurrentPushes = 8;
 
         private readonly int _port;
         private readonly string _token;
+        private readonly string _clientToken;
         private readonly string _baseUrl;
         private readonly string _sessionId;
         private CancellationTokenSource _cts;
@@ -34,6 +36,11 @@ namespace KitWright.Editor.MCP.Server
         // 30s for a push). Aborting the request is the only thing that frees the thread, so Stop()
         // needs a handle on whatever is in flight.
         private readonly HashSet<HttpWebRequest> _inFlight = new HashSet<HttpWebRequest>();
+
+        // Handlers run concurrently, and each push parks a thread pool thread in a blocking socket
+        // write; the handlers themselves are not gated, or eight slow tools would bring the
+        // head-of-line wait back.
+        private readonly SemaphoreSlim _pushGate = new SemaphoreSlim(MaxConcurrentPushes);
 
         /// <summary>
         /// Set while <c>beforeAssemblyReload</c> is tearing the server down, so <see cref="Stop"/>
@@ -80,10 +87,13 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        public MCPBrokerClientTransport(int port, string token)
+        /// <param name="clientToken">The token MCP clients must present, handed to the broker on every
+        /// pull and attach so it can refuse them before anything reaches the editor. Empty asks for none.</param>
+        public MCPBrokerClientTransport(int port, string token, string clientToken = null)
         {
             _port = port;
             _token = token ?? string.Empty;
+            _clientToken = clientToken ?? string.Empty;
             _baseUrl = "http://127.0.0.1:" + _port;
             _sessionId = Guid.NewGuid().ToString("N");
         }
@@ -160,18 +170,19 @@ namespace KitWright.Editor.MCP.Server
                 if (pull == null)
                     continue;
 
+                // Pull again right away: awaiting the handler here made every call wait for the one
+                // before it, so a ping queued behind a slow tool waited seconds for nothing.
+                _ = Task.Run(() => HandleAsync(pull));
+            }
+
+            async Task HandleAsync(BrokerPullResult pulled)
+            {
                 try
                 {
-                    await HandleAndPushAsync(pull, ct);
+                    await HandleAndPushAsync(pulled, ct);
                 }
-                catch (OperationCanceledException)
+                catch (Exception ex) when (!(ex is OperationCanceledException))
                 {
-                    break;
-                }
-                catch (Exception ex)
-                {
-                    // Never let a single bad request kill the poll loop -- that would
-                    // leave the broker queueing requests with nobody pulling them.
                     Debug.LogError("[KitWright MCP Server] Broker request handling failed: " + ex.Message);
                 }
             }
@@ -250,7 +261,9 @@ namespace KitWright.Editor.MCP.Server
             }
 
             var contentType = clientContentTypeOverride;
-            if (canPiggybackNotification && pull.AcceptsSse && MCPToolListChangeNotifier.TryConsumePending())
+            var notified = canPiggybackNotification && pull.AcceptsSse &&
+                           MCPToolListChangeNotifier.TryConsumePending(pull.McpSessionId);
+            if (notified)
             {
                 responseJson = MCPToolListChangeNotifier.BuildSseBody(responseJson);
                 contentType = "text/event-stream";
@@ -259,18 +272,26 @@ namespace KitWright.Editor.MCP.Server
 
             try
             {
-                await Task.Run(() => PushOnce(pull.RequestId, responseJson, contentType, issuedSessionId, clientStatus), ct);
+                await _pushGate.WaitAsync(ct);
+                try
+                {
+                    await Task.Run(() => PushOnce(pull.RequestId, responseJson, contentType, issuedSessionId, clientStatus), ct);
+                }
+                finally
+                {
+                    _pushGate.Release();
+                }
             }
             catch (OperationCanceledException)
             {
                 // The broker will make this request available to the next Unity session.
-                if (contentType != null)
-                    MCPToolListChangeNotifier.RestorePending();
+                if (notified)
+                    MCPToolListChangeNotifier.RestorePending(pull.McpSessionId);
             }
             catch (Exception ex)
             {
-                if (contentType != null)
-                    MCPToolListChangeNotifier.RestorePending();
+                if (notified)
+                    MCPToolListChangeNotifier.RestorePending(pull.McpSessionId);
                 Debug.LogError("[KitWright MCP Server] Broker push failed: " + ex.Message);
             }
         }
@@ -282,8 +303,10 @@ namespace KitWright.Editor.MCP.Server
             request.Timeout = PullTimeoutMs;
             request.ReadWriteTimeout = PullTimeoutMs;
             request.KeepAlive = false;
+            request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
             request.Headers[MCPBrokerProtocol.TokenHeader] = _token;
             request.Headers[MCPBrokerProtocol.SessionHeader] = _sessionId;
+            request.Headers[MCPBrokerProtocol.ClientTokenHeader] = _clientToken;
 
             Track(request);
             if (!_isRunning)
@@ -359,6 +382,7 @@ namespace KitWright.Editor.MCP.Server
             request.ReadWriteTimeout = PushTimeoutMs;
             request.ContentType = "application/json; charset=utf-8";
             request.KeepAlive = false;
+            request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
             request.Headers[MCPBrokerProtocol.TokenHeader] = _token;
             request.Headers[MCPBrokerProtocol.SessionHeader] = _sessionId;
             request.Headers[MCPBrokerProtocol.ReqIdHeader] = requestId.ToString();
@@ -419,8 +443,10 @@ namespace KitWright.Editor.MCP.Server
                 request.ReadWriteTimeout = timeoutMs;
                 request.ContentLength = 0;
                 request.KeepAlive = false;
+                request.ServicePoint.ConnectionLimit = MCPBrokerProtocol.ConnectionLimit;
                 request.Headers[MCPBrokerProtocol.TokenHeader] = _token;
                 request.Headers[MCPBrokerProtocol.SessionHeader] = _sessionId;
+                request.Headers[MCPBrokerProtocol.ClientTokenHeader] = _clientToken;
 
                 Track(request);
                 try

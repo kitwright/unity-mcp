@@ -37,8 +37,17 @@ namespace KitWright.Editor.Tools.Helpers
         /// without it.
         /// </summary>
         public static List<PropertySnapshot> ReadProperties(UnityEngine.Object component, out int totalCount, bool includeScriptField = false, bool descend = false, int maxProperties = int.MaxValue, bool includeHidden = false)
+            => ReadProperties(component, out totalCount, out _, null, includeScriptField, descend, maxProperties, includeHidden);
+
+        /// <summary>
+        /// <paramref name="keep"/> decides by name what fills the window and what <paramref name="keptCount"/>
+        /// counts; <paramref name="totalCount"/> is still every property. Filtering after the window hid
+        /// every match past the first maxProperties properties.
+        /// </summary>
+        public static List<PropertySnapshot> ReadProperties(UnityEngine.Object component, out int totalCount, out int keptCount, Func<string, bool> keep, bool includeScriptField = false, bool descend = false, int maxProperties = int.MaxValue, bool includeHidden = false)
         {
             totalCount = 0;
+            keptCount = 0;
             var list = new List<PropertySnapshot>();
             if (component == null) return list;
 
@@ -53,6 +62,11 @@ namespace KitWright.Editor.Tools.Helpers
                         continue;
 
                     totalCount++;
+                    var name = descend ? prop.propertyPath : prop.name;
+                    if (keep != null && !keep(name))
+                        continue;
+
+                    keptCount++;
                     // Past the cap keep counting but stop building: reading the values is what makes
                     // a descended read of a few thousand array elements expensive.
                     if (list.Count >= maxProperties)
@@ -60,7 +74,7 @@ namespace KitWright.Editor.Tools.Helpers
 
                     list.Add(new PropertySnapshot
                     {
-                        Name = descend ? prop.propertyPath : prop.name,
+                        Name = name,
                         Type = prop.propertyType.ToString(),
                         Value = ReadPropertyValue(prop)
                     });

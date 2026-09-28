@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.MCP.Server;
@@ -40,6 +41,60 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("2025-03-26", MCPRequestHandler.NegotiateProtocolVersion("2025-03-26"));
             Assert.AreEqual("2025-06-18", MCPRequestHandler.NegotiateProtocolVersion(null));
             Assert.AreEqual("2025-06-18", MCPRequestHandler.NegotiateProtocolVersion("1999-01-01"));
+        }
+
+        [Test]
+        public void AssetResource_ReadsInsideTheProjectAndNothingOutsideIt()
+        {
+            var outside = Path.Combine(Path.GetTempPath(), "kw-resource-outside-" + Guid.NewGuid().ToString("N") + ".txt");
+            File.WriteAllText(outside, "outside-the-project");
+            var big = Path.Combine(KitWright.Editor.Services.ApplicationPaths.ProjectRoot, "Temp",
+                "kw-resource-big-" + Guid.NewGuid().ToString("N") + ".txt");
+            Directory.CreateDirectory(Path.GetDirectoryName(big));
+            File.WriteAllText(big, new string('x', 20000));
+
+            try
+            {
+                using (var provider = new MCPResourceProvider(null, null))
+                {
+                    string Read(string path)
+                    {
+                        var contents = (List<object>)provider.ReadResource("unity://asset/path/" + path)["contents"];
+                        return (string)((Dictionary<string, object>)contents[0])["text"];
+                    }
+
+                    Assert.That(Read("Packages/manifest.json"), Does.StartWith("[Packages/manifest.json]"));
+
+                    foreach (var escape in new[]
+                             {
+                                 outside,
+                                 "../" + Path.GetFileName(outside),
+                                 "Assets/../../" + Path.GetFileName(outside),
+                                 Uri.EscapeDataString("Assets/../../" + Path.GetFileName(outside))
+                             })
+                    {
+                        var text = Read(escape);
+                        Assert.That(text, Does.Contain("escaped the project"), escape);
+                        Assert.That(text, Does.Not.Contain("outside-the-project"), escape);
+                    }
+
+                    // Only Windows reads a backslash as a separator; elsewhere this is one file name
+                    // inside the project, which must not reach the file outside either.
+                    var backslashed = Read("Assets\\..\\..\\" + Path.GetFileName(outside));
+                    Assert.That(backslashed, Does.Not.Contain("outside-the-project"));
+                    if (Path.DirectorySeparatorChar == '\\')
+                        Assert.That(backslashed, Does.Contain("escaped the project"));
+
+                    var truncated = Read("Temp/" + Path.GetFileName(big));
+                    Assert.That(truncated, Does.EndWith("... (truncated)"));
+                    Assert.Less(truncated.Length, 12200);
+                }
+            }
+            finally
+            {
+                File.Delete(outside);
+                File.Delete(big);
+            }
         }
 
         [Test]
@@ -127,6 +182,66 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(MCPRequestHandler.TryParseEnvelope("{not json", out _, out _));
         }
 
+        private static List<Dictionary<string, object>> TextContent(string text) =>
+            new List<Dictionary<string, object>> { new Dictionary<string, object> { ["type"] = "text", ["text"] = text } };
+
+        [Test]
+        public void AnOversizedTextResultSpillsToAFileThatHoldsAllOfIt()
+        {
+            var text = "{\"success\":true,\"data\":\"" + new string('x', MCPRequestHandler.MaxInlineTextChars) + "\"}";
+            var content = TextContent(text);
+
+            Assert.IsTrue(MCPRequestHandler.SpillOversizedText(content, "get_hierarchy", _tempRoot));
+
+            var files = Directory.GetFiles(_tempRoot, "*.txt");
+            Assert.AreEqual(1, files.Length);
+            StringAssert.EndsWith("_get_hierarchy.txt", files[0]);
+            Assert.AreEqual(text, File.ReadAllText(files[0]), "The file must hold the whole result, not the preview.");
+
+            var inline = (string)content[0]["text"];
+            StringAssert.Contains(files[0], inline, "The answer must say where the rest is.");
+            StringAssert.EndsWith(text.Substring(0, MCPRequestHandler.SpillPreviewChars), inline);
+            Assert.Less(inline.Length, MCPRequestHandler.SpillPreviewChars + 1024);
+        }
+
+        [Test]
+        public void ASmallResultAndAnImageStayInline()
+        {
+            var small = TextContent("small");
+            var image = new List<Dictionary<string, object>>
+            {
+                new Dictionary<string, object>
+                {
+                    ["type"] = "image",
+                    ["data"] = new string('A', MCPRequestHandler.MaxInlineTextChars * 2),
+                    ["mimeType"] = "image/png"
+                }
+            };
+
+            Assert.IsFalse(MCPRequestHandler.SpillOversizedText(small, "get_selection", _tempRoot));
+            Assert.IsFalse(MCPRequestHandler.SpillOversizedText(image, "capture_game_view", _tempRoot));
+            Assert.AreEqual("small", small[0]["text"]);
+            Assert.AreEqual(MCPRequestHandler.MaxInlineTextChars * 2, ((string)image[0]["data"]).Length);
+            Assert.IsFalse(Directory.Exists(_tempRoot), "Nothing to spill must write nothing.");
+        }
+
+        [Test]
+        public void SpillingKeepsOnlyTheNewestOutputs()
+        {
+            Directory.CreateDirectory(_tempRoot);
+            for (var i = 0; i < 25; i++)
+                File.WriteAllText(Path.Combine(_tempRoot, $"20000101-000000-{i:000}_old.txt"), "old");
+
+            MCPRequestHandler.SpillOversizedText(
+                TextContent(new string('x', MCPRequestHandler.MaxInlineTextChars + 1)), "find_assets", _tempRoot);
+
+            var names = Directory.GetFiles(_tempRoot, "*.txt").Select(Path.GetFileName).ToArray();
+            Assert.AreEqual(MCPRequestHandler.SpilledOutputsKept, names.Length);
+            Assert.IsTrue(names.Any(name => name.EndsWith("_find_assets.txt")), "The spill just written must survive.");
+            Assert.IsFalse(names.Contains("20000101-000000-005_old.txt"), "The oldest go first.");
+            Assert.IsTrue(names.Contains("20000101-000000-006_old.txt"));
+        }
+
         [Test]
         public async Task WaitForHotReloadOutcome_CompilationAlreadyStarted_ReturnsTrueImmediately()
         {
@@ -153,6 +268,46 @@ namespace KitWright.Editor.Tests
                 () => ++calls >= 2, TimeSpan.FromSeconds(5));
 
             Assert.IsTrue(result);
+        }
+
+        // A capture run inside batch_execute is a string value in the batch's JSON, not a bare
+        // data URI, so it used to reach the client as ~300 KB of base64 text.
+        [Test]
+        public void ACaptureInsideABatchComesBackAsAnImageBlock()
+        {
+            var base64 = new string('A', 300 * 1024);
+            var batch = Newtonsoft.Json.JsonConvert.SerializeObject(KitWright.Editor.Tools.Helpers.Response.Success(
+                "Batch executed 2 command(s).",
+                new
+                {
+                    count = 2,
+                    total = 2,
+                    aborted = false,
+                    results = new object[]
+                    {
+                        new { index = 0, name = "capture_game_view", result = "data:image/jpeg;base64," + base64 },
+                        new { index = 1, name = "get_selection", result = Newtonsoft.Json.Linq.JToken.Parse("{\"success\":true}") }
+                    }
+                }));
+
+            var content = MCPRequestHandler.BuildContentFromResult(batch);
+
+            Assert.AreEqual(2, content.Count);
+            Assert.AreEqual("text", content[0]["type"]);
+            Assert.AreEqual("image", content[1]["type"]);
+            Assert.AreEqual("image/jpeg", content[1]["mimeType"]);
+            Assert.AreEqual(base64, content[1]["data"]);
+
+            var text = (string)content[0]["text"];
+            Assert.Less(text.Length, 1024, "The base64 must leave the text.");
+            var parsed = Newtonsoft.Json.Linq.JToken.Parse(text);
+            Assert.AreEqual(0, (int)parsed["data"]["results"][0]["result"]["image_index"]);
+            Assert.IsTrue((bool)parsed["data"]["results"][1]["result"]["success"]);
+
+            Assert.IsTrue(MCPRequestHandler.TryParseEnvelope(batch, out var envelope, out var isError));
+            Assert.IsFalse(isError);
+            StringAssert.DoesNotContain("base64", Newtonsoft.Json.JsonConvert.SerializeObject(envelope),
+                "structuredContent carries the same payload, so it is lifted too.");
         }
 
     }

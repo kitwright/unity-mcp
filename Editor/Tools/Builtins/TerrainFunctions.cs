@@ -40,7 +40,7 @@ namespace KitWright.Editor.Tools.Builtins
                 go.transform.position = pos;
 
             Selection.activeGameObject = go;
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(data);
 
             return Response.Success($"Created terrain '{name}'.", new
             {
@@ -137,7 +137,7 @@ namespace KitWright.Editor.Tools.Builtins
 
                 var layerPath = AssetDatabase.GenerateUniqueAssetPath($"Assets/{tex.name}.terrainlayer");
                 AssetDatabase.CreateAsset(layer, layerPath);
-                AssetDatabase.SaveAssets();
+                AssetDatabase.SaveAssetIfDirty(layer);
             }
 
             var d = terrain.terrainData;

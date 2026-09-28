@@ -98,6 +98,35 @@ namespace KitWright.Editor
             }
         }
 
+        [Test]
+        public void LogNotificationGuard_NeedsAnAttachedStreamWithALevel()
+        {
+            var manager = SSESessionManager.Instance;
+            manager.ResetForTests();
+            var closers = new List<IDisposable>();
+
+            try
+            {
+                Assert.IsFalse(manager.HasLogSubscribers, "no session, nobody to notify");
+
+                var session = manager.CreateSession();
+                manager.SetLoggingLevel(null, "info");
+                Assert.IsFalse(manager.HasLogSubscribers,
+                    "a session with no stream — every broker-mode session — cannot receive a notification");
+
+                manager.TryAttachStream(session.SessionId, LoopbackStream(closers), out _);
+                Assert.IsTrue(manager.HasLogSubscribers, "a stream with a level set is a real subscriber");
+
+                manager.SetLoggingLevel(null, null);
+                Assert.IsFalse(manager.HasLogSubscribers, "a stream with no level set asked for no logs");
+            }
+            finally
+            {
+                foreach (var closer in closers)
+                    closer.Dispose();
+            }
+        }
+
         private static NetworkStream LoopbackStream(List<IDisposable> closers)
         {
             var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -723,7 +752,7 @@ namespace KitWright.Editor
         }
 
         [UnityTest]
-        public IEnumerator AClientPresentingAnotherProjectsTokenIsTurnedAway()
+        public IEnumerator AClientWithoutThisProjectsTokenIsTurnedAway()
         {
             // Built, not written out: a 32-char hex literal trips the secret scanner.
             var token = new string('a', ServerToken.Length);
@@ -752,11 +781,17 @@ namespace KitWright.Editor
                     yield return WaitForTask(right, 3f);
                     Assert.AreEqual(HttpStatusCode.OK, right.Result.StatusCode);
 
-                    // Configs written before tokens existed carry none, and are still served so the
-                    // sweep gets a chance to repair them rather than breaking a working install.
-                    var legacy = client.PostAsync(root + "/", Body("init-3"));
-                    yield return WaitForTask(legacy, 3f);
-                    Assert.AreEqual(HttpStatusCode.OK, legacy.Result.StatusCode);
+                    var missing = client.PostAsync(root + "/", Body("init-3"));
+                    yield return WaitForTask(missing, 3f);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized, missing.Result.StatusCode,
+                        "Serving a config that carries no token is serving any process on the machine.");
+
+                    var stream = new HttpRequestMessage(HttpMethod.Get, root + "/");
+                    stream.Headers.Accept.ParseAdd("text/event-stream");
+                    var unauthenticatedStream = client.SendAsync(stream, HttpCompletionOption.ResponseHeadersRead);
+                    yield return WaitForTask(unauthenticatedStream, 3f);
+                    Assert.AreEqual(HttpStatusCode.Unauthorized, unauthenticatedStream.Result.StatusCode,
+                        "The notification stream is behind the same check as calls.");
                 }
             }
             finally

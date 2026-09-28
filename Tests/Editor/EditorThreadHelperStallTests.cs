@@ -4,6 +4,7 @@ using System;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
+using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Threading;
 using NUnit.Framework;
 using UnityEditor.PackageManager;
@@ -152,6 +153,42 @@ namespace KitWright.Editor.Tests
                 Assert.IsTrue(queuedItem.IsCancellationRequested,
                     "an item left queued runs once the modal closes - and again on the client's retry");
             }
+        }
+
+        // ExecuteAsyncOnEditorThreadAsync disposes the item's source in a synchronous continuation
+        // of the call's own task, so completing the call first left Cancel throwing on a disposed
+        // source and the item queued to run once the modal closed.
+        [Test]
+        public void FailBlockedCall_CancelsTheItemEvenWhenCompletingTheCallDisposesIt()
+        {
+            var tcs = new TaskCompletionSource<string>();
+            var queuedItem = new CancellationTokenSource();
+            var itemToken = queuedItem.Token;
+            tcs.Task.ContinueWith(_ => queuedItem.Dispose(), TaskContinuationOptions.ExecuteSynchronously);
+
+            Assert.IsTrue(EditorThreadHelper.FailBlockedCall(tcs, TimeSpan.FromSeconds(21), null, queuedItem));
+
+            Assert.IsTrue(itemToken.IsCancellationRequested,
+                "an item left queued runs once the modal closes - and again on the client's retry");
+            Assert.IsInstanceOf<EditorNotPumpingException>(tcs.Task.Exception?.InnerException);
+        }
+
+        [Test]
+        public void EditorNotPumpingResponse_AnswersTheWatchdogVerdictAsATimeoutNotAnInternalError()
+        {
+            var request = new MCPRequest { Id = 7 };
+            var blocked = Task.FromException<MCPResponse>(new EditorNotPumpingException("EDITOR_NOT_PUMPING: stalled"));
+
+            var response = MCPServerService.EditorNotPumpingResponse(request, blocked);
+
+            Assert.AreEqual(-32001, response.Error.Code);
+            Assert.AreEqual("EDITOR_NOT_PUMPING: stalled", response.Error.Message);
+            Assert.AreEqual(7, response.Id);
+
+            Assert.IsNull(MCPServerService.EditorNotPumpingResponse(
+                    request, Task.FromException<MCPResponse>(new TimeoutException("the tool's own"))),
+                "a tool's own timeout is not the watchdog's verdict");
+            Assert.IsNull(MCPServerService.EditorNotPumpingResponse(request, Task.FromResult(new MCPResponse())));
         }
 
         [Test]

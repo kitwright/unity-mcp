@@ -1,8 +1,16 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
+using System.IO;
+using System.Threading;
+using System.Threading.Tasks;
+using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Api.Models;
+using KitWright.Editor.Settings;
+using KitWright.Editor.State;
+using KitWright.Editor.Threading;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Helpers;
 using NUnit.Framework;
@@ -11,6 +19,32 @@ using UnityEngine.TestTools;
 
 namespace KitWright.Editor.Tests
 {
+    // Two tools that stay mid-call until the test lets them go, one of them read-only.
+    [ToolProvider("Test")]
+    public static class ToolGateProbeProvider
+    {
+        internal static TaskCompletionSource<bool> Finish = new TaskCompletionSource<bool>();
+        internal static int WritesStarted;
+        internal static int ReadsStarted;
+
+        [Description("Test-only probe: a mutating tool that waits until the test lets it finish.")]
+        public static async Task<object> ToolGateWriteProbe()
+        {
+            Interlocked.Increment(ref WritesStarted);
+            await Finish.Task;
+            return "write done";
+        }
+
+        [Description("Test-only probe: a read-only tool that waits until the test lets it finish.")]
+        [ReadOnlyTool]
+        public static async Task<object> ToolGateReadProbe()
+        {
+            Interlocked.Increment(ref ReadsStarted);
+            await Finish.Task;
+            return "read done";
+        }
+    }
+
     /// <summary>
     /// Integration tests that exercise <see cref="FunctionInvoker"/> end-to-end
     /// with manual tool registration, unknown function handling, parameter validation,
@@ -464,6 +498,58 @@ namespace KitWright.Editor.Tests
             finally
             {
                 System.Threading.Thread.CurrentThread.CurrentCulture = previous;
+            }
+        }
+
+        // Broker mode used to run one call at a time, so nothing could interleave with a mutating
+        // tool that awaits - batch_execute collapsing its undo group, say. Serving calls side by side
+        // keeps that for everything not marked [ReadOnlyTool], and only for that.
+        [UnityTest]
+        public IEnumerator MutatingToolsRunOneAtATimeWhileReadOnlyToolsDoNotWait()
+        {
+            const string writeProbe = "tool_gate_write_probe";
+            const string readProbe = "tool_gate_read_probe";
+            var tempRoot = Path.Combine(Path.GetTempPath(), "kitwright-bridge-" + Guid.NewGuid().ToString("N"));
+            var threadHelper = new EditorThreadHelper();
+            ToolGateProbeProvider.Finish = new TaskCompletionSource<bool>();
+            ToolGateProbeProvider.WritesStarted = 0;
+            ToolGateProbeProvider.ReadsStarted = 0;
+
+            try
+            {
+                // The ambient scan leaves test assemblies out, so the probes are scanned deliberately.
+                ToolRegistry.ScanAssemblies(new[] { typeof(ToolRegistry).Assembly, typeof(ToolGateProbeProvider).Assembly });
+                var bridge = new MCP.Server.MCPExecutionBridge(
+                    threadHelper, new SettingsController(tempRoot), new StateController(), new FunctionInvoker(), null);
+                var noArgs = new Dictionary<string, object>();
+
+                var first = bridge.ExecuteToolAsync(writeProbe, noArgs, CancellationToken.None);
+                var second = bridge.ExecuteToolAsync(writeProbe, noArgs, CancellationToken.None);
+                var read = bridge.ExecuteToolAsync(readProbe, noArgs, CancellationToken.None);
+
+                Assert.AreEqual(1, ToolGateProbeProvider.WritesStarted,
+                    "a second mutating call started while the first was still awaiting");
+                Assert.AreEqual(1, ToolGateProbeProvider.ReadsStarted,
+                    "a read-only call queued behind a mutating one");
+
+                ToolGateProbeProvider.Finish.SetResult(true);
+                var all = Task.WhenAll(first, second, read);
+                var startedAt = Time.realtimeSinceStartup;
+                while (!all.IsCompleted && Time.realtimeSinceStartup - startedAt < 5f)
+                    yield return null;
+
+                Assert.IsTrue(all.IsCompleted, "the waiting mutating call never ran after the first one finished");
+                Assert.AreEqual(2, ToolGateProbeProvider.WritesStarted);
+                StringAssert.Contains("write done", second.Result);
+                StringAssert.Contains("read done", read.Result);
+            }
+            finally
+            {
+                ToolGateProbeProvider.Finish.TrySetResult(true);
+                threadHelper.Dispose();
+                ToolRegistry.ScanAssemblies();
+                if (Directory.Exists(tempRoot))
+                    Directory.Delete(tempRoot, recursive: true);
             }
         }
     }

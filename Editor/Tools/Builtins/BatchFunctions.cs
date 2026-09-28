@@ -1,5 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.DI;
@@ -18,6 +20,8 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Run multiple MCP tool calls sequentially in a single request, on the main thread, saving round-trips. " +
                      "Pass a JSON array of {\"name\": \"<tool_name>\", \"params\": {..}} objects. Each result is returned in order. " +
                      "By default a failing call stops the batch; set stop_on_error=false to continue past failures. " +
+                     "A capture in the batch comes back as an image block of the response, with {\"image_index\": N} " +
+                     "standing in for it in results (N counts the response's images from 0). " +
                      "The scene changes the whole batch makes collapse into a single Undo step, so the user can revert " +
                      "the batch with one Ctrl+Z instead of one per command. File writes, asset imports and play-mode " +
                      "changes are outside Unity's undo system and are not reverted by it.")]
@@ -44,20 +48,38 @@ namespace KitWright.Editor.Tools.Builtins
             var invoker = new FunctionInvoker();
             var results = new List<object>();
             bool aborted = false;
+            bool timedOut = false;
 
-            // Snapshot the group before the first command so everything the batch registers can be
-            // collapsed into it. Commands await across editor frames, and Unity opens a new group
-            // each frame, so without this a 12-command batch costs the user 12 presses of Ctrl+Z.
+            // The request is cut off at the ceiling, after which the client has its timeout and
+            // every command still to come would run unseen. Stopping short of it leaves the batch to
+            // answer for itself. A command already running cannot be stopped, hence the margin.
+            var names = parsed.Select(command => (command as JObject)?["name"]?.ToString()).ToList();
+            var budgetSeconds = ToolRegistry.BatchBudgetSeconds(names, MCPServerService.ToolCallTimeoutMs / 1000);
+            var clock = Stopwatch.StartNew();
+
+            // A fresh group, so collapsing takes in only what the batch registered: collapsing onto
+            // the current one also swallowed whatever the user had just done in the same group.
+            // Commands await across editor frames, and Unity opens a new group each frame, so
+            // without the collapse a 12-command batch costs the user 12 presses of Ctrl+Z.
+            Undo.IncrementCurrentGroup();
             var undoGroup = Undo.GetCurrentGroup();
-            Undo.SetCurrentGroupName(string.IsNullOrWhiteSpace(undo_label)
+            var undoName = string.IsNullOrWhiteSpace(undo_label)
                 ? $"MCP batch ({parsed.Count} command(s))"
-                : undo_label);
+                : undo_label;
+            Undo.SetCurrentGroupName(undoName);
 
             try
             {
                 for (int i = 0; i < parsed.Count; i++)
                 {
-                    var name = (parsed[i] as JObject)?["name"]?.ToString();
+                    if (clock.Elapsed.TotalSeconds > budgetSeconds - DeadlineMarginSeconds)
+                    {
+                        timedOut = true;
+                        aborted = true;
+                        break;
+                    }
+
+                    var name = names[i];
                     if (string.IsNullOrEmpty(name))
                     {
                         results.Add(new { index = i, success = false, error = "MISSING_NAME" });
@@ -96,10 +118,20 @@ namespace KitWright.Editor.Tools.Builtins
             }
             finally
             {
+                // RecordObject entries are finalized at end of frame, so without the flush the last
+                // command's component changes land in a group opened after the collapse.
+                Undo.FlushUndoRecordObjects();
+                Undo.SetCurrentGroupName(undoName);
                 Undo.CollapseUndoOperations(undoGroup);
             }
 
             var payload = new { count = results.Count, total = parsed.Count, aborted, results };
+
+            if (timedOut)
+                return Response.Error("BATCH_TIMED_OUT", payload,
+                    $"Batch stopped after {results.Count} of {parsed.Count} command(s): it ran " +
+                    $"{clock.Elapsed.TotalSeconds:0}s of its {budgetSeconds}s budget, and the rest did not run. " +
+                    "Send the remaining commands as another batch.");
 
             // An aborted batch has to read as a failure: MCPRequestHandler derives isError from this
             // envelope's success field, so reporting true hands the caller - a parent batch, or the
@@ -110,6 +142,9 @@ namespace KitWright.Editor.Tools.Builtins
                     "Inspect results for the failing step; pass stop_on_error=false to run past failures.")
                 : Response.Success($"Batch executed {results.Count} command(s).", payload);
         }
+
+        // Settable so a test can reach the deadline without running for minutes.
+        internal static int DeadlineMarginSeconds = 15;
 
         private static SettingsController Settings() =>
             RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;

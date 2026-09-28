@@ -491,7 +491,7 @@ namespace KitWright.Editor.Tools.Builtins
             Undo.RecordObject(clip, $"Set curve {property} on {clip.name}");
             AnimationUtility.SetEditorCurve(clip, binding, curve);
             EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(clip);
 
             return $"Set {curve.length}-key curve on '{property}' ({componentType.Name}, path '{relative_path}') in '{clip_path}'. " +
                    $"Clip length is now {clip.length:0.###}s.";
@@ -611,7 +611,7 @@ namespace KitWright.Editor.Tools.Builtins
         private static void SaveController(AnimatorController controller)
         {
             EditorUtility.SetDirty(controller);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(controller);
         }
 
         private struct ResolvedAnimator
