@@ -157,8 +157,6 @@ namespace KitWright.Editor.Tools.Builtins
             if (EditorUserBuildSettings.activeBuildTarget == buildTarget)
                 return Response.Success($"Active build target already {buildTarget}.");
 
-            // Target switch reimports assets + recompiles; both stall while the editor is unfocused.
-            NoThrottleLease.Acquire(TimeSpan.FromMinutes(30));
             bool ok = EditorUserBuildSettings.SwitchActiveBuildTarget(group, buildTarget);
             return ok
                 ? Response.Success($"Switched active build target to {buildTarget}.")

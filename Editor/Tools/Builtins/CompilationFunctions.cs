@@ -30,7 +30,6 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
-                NoThrottleLease.Acquire(TimeSpan.FromSeconds(timeout_seconds + 60));
 
                 var compilationService = GetCompilationService();
                 if (compilationService == null)
@@ -86,7 +85,6 @@ namespace KitWright.Editor.Tools.Builtins
 
             MarkExternalSyncPending();
             timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
-            NoThrottleLease.Acquire(TimeSpan.FromSeconds(timeout_seconds + 60));
 
             var refreshResult = await EditorRefreshPipeline.RefreshAndRequestCompilationAsync(
                     forceUpdate: true,
