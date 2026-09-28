@@ -93,7 +93,8 @@ namespace KitWright.Editor.Tests
                     return directory + string.Concat(Enumerable.Repeat(separator + ".", padding)) + separator + System.IO.Path.GetFileName(path);
                 })
                 .ToArray();
-            Assume.That(references.Sum(path => path.Length + 6), Is.GreaterThan(CreateProcessLimit));
+            Assume.That(references.Sum(path => path.Length + 6), Is.GreaterThan(CreateProcessLimit),
+                "Too few assemblies loaded for the references to pass the CreateProcess limit.");
 
             var result = new CodeDomScriptCompiler(references)
                 .Compile("public class CodeDomLongReferences { public static string Run() { return \"ok\"; } }");
