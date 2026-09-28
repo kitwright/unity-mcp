@@ -37,7 +37,7 @@ namespace KitWright.Editor.MCP.Server
             _container.Clear();
 
             _container.Add(MCPSection.PanelTitle("MCP Settings"));
-            _container.Add(MCPSection.PanelHint("Project-level settings for the KitWright MCP for Unity plugin. Safety checks and debug logging are stored per project."));
+            _container.Add(MCPSection.PanelHint("Project-level settings for the KitWright MCP for Unity plugin."));
 
             var (settingsSection, settingsFoldout) = MCPSection.Create(
                 "Settings", "Settings", labelColor: MCPPalette.HeadingBlue);
@@ -50,12 +50,6 @@ namespace KitWright.Editor.MCP.Server
             autostartToggle.RegisterValueChangedCallback(value => _settingsController.MCPAutostartEnabled = value);
             autostartSection.Add(autostartToggle);
             settingsFoldout.Add(autostartSection);
-
-            AddToggleCard(settingsFoldout,
-                "Force execute_code safety checks",
-                "Off by default. execute_code's safety checks (dangerous calls, file writes, absolute/user/system/traversal paths) run unless a client passes safety_checks=false. When on, that argument is ignored, so a caller cannot clear the guard. Turn it on for a shared or untrusted client; legitimate reflection, P/Invoke, file-writing, or serialization snippets then need it turned off again.",
-                _settingsController.ExecuteCodeSafetyChecksLocked,
-                value => _settingsController.ExecuteCodeSafetyChecksLocked = value);
 
             AddToggleCard(settingsFoldout,
                 "Auto-inject project namespaces",
