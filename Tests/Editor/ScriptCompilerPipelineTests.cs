@@ -48,6 +48,50 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("Success", result.Attempts[1].status);
         }
 
+        [Test]
+        public void CompilerPipeline_ReportsTheFailureInsideATargetInvocationException()
+        {
+            var result = ScriptCompilerPipeline.Compile(
+                "public class WrappedFailure { }",
+                new IScriptCompiler[] { new FakeThrowingCompiler("CodeDom") });
+
+            Assert.AreEqual(ScriptCompilationStatus.Unavailable, result.Status);
+            Assert.AreEqual("the real reason", result.Attempts[0].message);
+        }
+
+        [Test]
+        public void RoslynArguments_DoNotUseTheSharedCompilerServer()
+        {
+            var arguments = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/DotNetSdkRoslyn/csc.dll", "/tmp/csc.rsp");
+
+            StringAssert.DoesNotContain("shared", arguments);
+        }
+
+        // Each reference is lengthened with "./" segments, which resolve to the same file, so the list
+        // passes the 32,767-character CreateProcess limit even in a project with few assemblies loaded.
+        [Test]
+        public void CodeDomCompiler_CompilesWhenTheReferencesOutgrowTheCommandLine()
+        {
+            const int CreateProcessLimit = 32767;
+            const int MaxPathLength = 250;
+            var separator = System.IO.Path.DirectorySeparatorChar;
+            var references = ScriptCompilerReferences.GetCodeDomPaths()
+                .Select(path =>
+                {
+                    var directory = System.IO.Path.GetDirectoryName(path);
+                    var padding = Math.Max(0, (MaxPathLength - path.Length) / 2);
+                    return directory + string.Concat(Enumerable.Repeat(separator + ".", padding)) + separator + System.IO.Path.GetFileName(path);
+                })
+                .ToArray();
+            Assume.That(references.Sum(path => path.Length + 6), Is.GreaterThan(CreateProcessLimit));
+
+            var result = new CodeDomScriptCompiler(references)
+                .Compile("public class CodeDomLongReferences { public static string Run() { return \"ok\"; } }");
+
+            Assert.AreEqual(ScriptCompilationStatus.Success, result.Status, result.Message);
+            Assert.NotNull(result.Assembly);
+        }
+
         [UnityTest]
         public IEnumerator ExecuteCode_TraditionalSyntax_RunsWithRoslyn()
         {
@@ -454,6 +498,21 @@ public class CommandSyntax : IKitWrightCommand
             public ScriptCompilationResult Compile(string code)
             {
                 return ScriptCompilationResult.Unavailable(Name, "forced unavailable");
+            }
+        }
+
+        private sealed class FakeThrowingCompiler : IScriptCompiler
+        {
+            public FakeThrowingCompiler(string name)
+            {
+                Name = name;
+            }
+
+            public string Name { get; }
+
+            public ScriptCompilationResult Compile(string code)
+            {
+                throw new System.Reflection.TargetInvocationException(new InvalidOperationException("the real reason"));
             }
         }
 
