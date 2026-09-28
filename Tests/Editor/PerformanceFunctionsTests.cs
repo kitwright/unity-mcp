@@ -84,6 +84,36 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        [Test]
+        public void AMeshWithoutCpuDataStillCountsItsTriangleSubmeshes()
+        {
+            var scene = SceneManager.GetActiveScene();
+            var wasDirty = scene.isDirty;
+            var name = "PerformanceUploadedMesh_" + Guid.NewGuid().ToString("N");
+            var go = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
+            var mesh = new Mesh { subMeshCount = 2 };
+            try
+            {
+                mesh.SetVertices(new[] { Vector3.zero, Vector3.right, Vector3.up, Vector3.one });
+                mesh.SetIndices(new[] { 0, 1, 2, 2, 1, 3 }, MeshTopology.Triangles, 0);
+                mesh.SetIndices(new[] { 0, 1, 1, 3 }, MeshTopology.Lines, 1);
+                mesh.UploadMeshData(true);
+                Assert.IsFalse(mesh.isReadable);
+                go.GetComponent<MeshFilter>().sharedMesh = mesh;
+
+                var analysis = PerformanceFunctions.AnalyzeSceneComplexity(top_n: 1000, include_inactive: true);
+
+                Assert.That(analysis, Does.Contain(name + ": triangles=2,"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                UnityEngine.Object.DestroyImmediate(mesh);
+                if (!wasDirty && scene.IsValid())
+                    HierarchyFunctionsTests.ClearSceneDirtiness(scene);
+            }
+        }
+
         private static bool CanRestoreSceneSetup(SceneSetup[] setup)
         {
             foreach (var scene in setup)

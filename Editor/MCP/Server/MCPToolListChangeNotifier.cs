@@ -1,8 +1,10 @@
 // Copyright (C) KitWright. All rights reserved.
 
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Text;
+using System.Threading;
 using KitWright.Editor.Settings;
 using UnityEditor;
 
@@ -15,22 +17,35 @@ namespace KitWright.Editor.MCP.Server
     /// clients then refresh their tool list without reconnecting -- previously the only
     /// way for an already-connected client to see newly added or re-exposed tools was
     /// a full client restart.
-    /// Threading: transports consume the pending flag from background threads, so the
-    /// hot path only touches volatile statics. SessionState (main-thread-only API) is
-    /// read/written exclusively on the main thread -- at server start and via an
-    /// EditorApplication.update sync -- and is what lets the flag survive domain
-    /// reloads within an editor session.
+    ///
+    /// Each change bumps a version, and each client session remembers the version it was last
+    /// told about, so every session gets the notification once. A single pending flag used to be
+    /// consumed by whichever client asked first, and the other clients on the editor kept a stale
+    /// list. Requests with no Mcp-Session-Id share one slot, as they did before sessions existed.
+    ///
+    /// Threading: transports consume from background threads, so the hot path only touches the
+    /// concurrent map and an interlocked version. SessionState (main-thread-only API) is read at
+    /// server start and written from an EditorApplication.update sync, which is what lets the
+    /// version and the per-session marks survive a domain reload within an editor session.
     /// </summary>
     internal static class MCPToolListChangeNotifier
     {
         private const string HashKey = "KitWright.MCP.ExposedToolsHash";
-        private const string PendingKey = "KitWright.MCP.ToolsChangedPending";
+        private const string VersionKey = "KitWright.MCP.ToolListVersion";
+        private const string SeenKey = "KitWright.MCP.ToolListVersionSeen";
+
+        // Below any version, so a restored mark always re-notifies.
+        private const long Unseen = -1;
 
         internal const string NotificationJson =
             "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/tools/list_changed\"}";
 
-        private static volatile bool _pending;
+        private static long _version;
+        private static readonly ConcurrentDictionary<string, long> _seen =
+            new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+
         private static volatile bool _persistedFlagDirty;
+        private static bool _loaded;
         private static bool _updateHooked;
 
         /// <summary>
@@ -42,9 +57,10 @@ namespace KitWright.Editor.MCP.Server
         {
             try
             {
+                LoadPersistedState();
+
                 var hash = ComputeToolListHash(toolExporter);
                 var previous = SessionState.GetString(HashKey, null);
-                var pending = SessionState.GetBool(PendingKey, false);
 
                 if (string.IsNullOrEmpty(previous))
                 {
@@ -53,14 +69,10 @@ namespace KitWright.Editor.MCP.Server
                 else if (!string.Equals(previous, hash, StringComparison.Ordinal))
                 {
                     SessionState.SetString(HashKey, hash);
-                    SessionState.SetBool(PendingKey, true);
-                    pending = true;
+                    MarkChanged();
                     PluginDebugLogger.Log(
                         "[KitWright MCP Server] Exposed tool list changed; clients will be notified via tools/list_changed.");
                 }
-
-                _pending = pending;
-                _persistedFlagDirty = false;
 
                 if (!_updateHooked)
                 {
@@ -74,27 +86,44 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        /// <summary>Consume the pending flag. Thread-safe; returns true at most once per change.</summary>
-        public static bool TryConsumePending()
+        /// <summary>Main thread only: persists the new version.</summary>
+        internal static void MarkChanged()
         {
-            if (!_pending)
-                return false;
+            LoadPersistedState();
+            SessionState.SetInt(VersionKey, (int)Interlocked.Increment(ref _version));
+        }
 
-            lock (typeof(MCPToolListChangeNotifier))
-            {
-                if (!_pending)
-                    return false;
-                _pending = false;
-            }
+        /// <summary>
+        /// Marks a session as holding the current list. Called when it initializes, since a client
+        /// lists the tools right after that and a notification on its next call would be redundant.
+        /// </summary>
+        public static void Observe(string sessionId)
+        {
+            _seen[Key(sessionId)] = Interlocked.Read(ref _version);
+            _persistedFlagDirty = true;
+        }
+
+        /// <summary>
+        /// True at most once per change for this session. A session never seen before counts as
+        /// holding the list from the start of the editor session, so it is told about any change since.
+        /// Thread-safe.
+        /// </summary>
+        public static bool TryConsumePending(string sessionId = null)
+        {
+            var key = Key(sessionId);
+            var current = Interlocked.Read(ref _version);
+            var seen = _seen.GetOrAdd(key, 0L);
+            if (seen >= current || !_seen.TryUpdate(key, current, seen))
+                return false;
 
             _persistedFlagDirty = true;
             return true;
         }
 
-        /// <summary>Re-arm the pending flag when a piggybacked send failed before reaching the client. Thread-safe.</summary>
-        public static void RestorePending()
+        /// <summary>Re-arm this session's notification when the piggybacked send failed before reaching the client. Thread-safe.</summary>
+        public static void RestorePending(string sessionId = null)
         {
-            _pending = true;
+            _seen[Key(sessionId)] = Unseen;
             _persistedFlagDirty = true;
         }
 
@@ -108,14 +137,34 @@ namespace KitWright.Editor.MCP.Server
                    "data: " + (responseJson ?? string.Empty) + "\n\n";
         }
 
-        /// <summary>Main-thread pump that mirrors the volatile flag into SessionState.</summary>
+        private static string Key(string sessionId) => sessionId ?? string.Empty;
+
+        private static void LoadPersistedState()
+        {
+            if (_loaded)
+                return;
+
+            _loaded = true;
+            Interlocked.Exchange(ref _version, SessionState.GetInt(VersionKey, 0));
+            foreach (var line in SessionState.GetString(SeenKey, string.Empty).Split('\n'))
+            {
+                var tab = line.IndexOf('\t');
+                if (tab >= 0 && long.TryParse(line.Substring(tab + 1), out var seen))
+                    _seen.TryAdd(line.Substring(0, tab), seen);
+            }
+        }
+
+        /// <summary>Main-thread pump that mirrors the per-session marks into SessionState.</summary>
         private static void SyncPersistedFlag()
         {
             if (!_persistedFlagDirty)
                 return;
 
             _persistedFlagDirty = false;
-            SessionState.SetBool(PendingKey, _pending);
+            var lines = new StringBuilder();
+            foreach (var entry in _seen)
+                lines.Append(entry.Key).Append('\t').Append(entry.Value).Append('\n');
+            SessionState.SetString(SeenKey, lines.ToString());
         }
 
         private static string ComputeToolListHash(MCPToolExporter toolExporter)

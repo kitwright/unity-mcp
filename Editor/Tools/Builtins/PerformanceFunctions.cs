@@ -369,14 +369,15 @@ namespace KitWright.Editor.Tools.Builtins
             if (mesh == null)
                 return 0;
 
-            try
+            // Index counts, not mesh.triangles: that copies the whole index array (twice, here) and
+            // throws on a mesh without CPU data, which counted every non-readable mesh as 0.
+            long triangles = 0;
+            for (var subMesh = 0; subMesh < mesh.subMeshCount; subMesh++)
             {
-                return mesh.triangles != null ? mesh.triangles.Length / 3 : 0;
+                if (mesh.GetTopology(subMesh) == MeshTopology.Triangles)
+                    triangles += mesh.GetIndexCount(subMesh) / 3;
             }
-            catch
-            {
-                return 0;
-            }
+            return (int)Math.Min(triangles, int.MaxValue);
         }
 
         private static int CalculateEntryScore(int triangles, int materialSlots, int componentCount, int rendererCount)

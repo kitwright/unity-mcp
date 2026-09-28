@@ -15,6 +15,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("References")]
     internal static class ReferenceFunctions
     {
+        private const long YieldEveryMs = 50;
+
         [Description("Find asset references in both directions. 'depends_on' = the target's direct forward " +
                      "dependencies (AssetDatabase.GetDependencies(path, recursive:false)). 'referenced_by' = assets that " +
                      "depend on the target, answered from Unity's Search dependency index when available (milliseconds, " +
@@ -76,6 +78,7 @@ namespace KitWright.Editor.Tools.Builtins
                 else if (include_referenced_by)
                 {
                     reverseScanMethod = "manual_scan";
+                    long lastYieldMs = 0;
                     var allPaths = AssetDatabase.GetAllAssetPaths();
                     foreach (var p in allPaths)
                     {
@@ -111,9 +114,16 @@ namespace KitWright.Editor.Tools.Builtins
                         }
 
                         // Keep the Editor responsive and let broker traffic/UI updates run during
-                        // large reverse scans instead of monopolizing the main thread.
-                        if (scanned % 64 == 0)
+                        // large reverse scans instead of monopolizing the main thread. By time, not
+                        // count: an unfocused editor resumes a yield on its next tick, up to 100 ms
+                        // away, and 64 assets were a few ms of work - the scan spent most of its
+                        // budget waiting.
+                        if (stopwatch.ElapsedMilliseconds - lastYieldMs >= YieldEveryMs)
+                        {
+                            EditorApplication.QueuePlayerLoopUpdate();
                             await Task.Yield();
+                            lastYieldMs = stopwatch.ElapsedMilliseconds;
+                        }
                     }
                 }
 

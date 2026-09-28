@@ -193,6 +193,13 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrEmpty(base_prefab_path) || string.IsNullOrEmpty(variant_path))
                 return Response.Error("INVALID_ARGUMENT", new { base_prefab_path, variant_path });
 
+            try { PathSafety.ResolveAssetPath(variant_path); }
+            catch (PathOutsideProjectException ex)
+            {
+                return Response.Error("INVALID_PATH", new { variant_path, message = ex.Message },
+                    "variant_path must be under Assets/, and must stay there once '..' segments are resolved");
+            }
+
             var basePrefab = AssetDatabase.LoadAssetAtPath<GameObject>(base_prefab_path);
             if (basePrefab == null)
                 return Response.Error("PREFAB_NOT_FOUND", new { base_prefab_path });

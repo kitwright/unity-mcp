@@ -63,20 +63,20 @@ namespace KitWright.Editor.Tools.Builtins
 
             max_properties = Mathf.Clamp(max_properties, 1, 5000);
             cursor = Mathf.Clamp(cursor, 0, 1000000);
-            var window = ComponentSerializer.ReadProperties(resolved.Component, out var total, descend: descend, maxProperties: cursor + max_properties);
+            var terms = SplitFilterTerms(name_filter);
+            Func<string, bool> keep = null;
+            if (terms.Length > 0)
+                keep = name => MatchesAnyTerm(name, terms);
+            var window = ComponentSerializer.ReadProperties(resolved.Component, out var total, out var kept, keep,
+                descend: descend, maxProperties: cursor + max_properties);
             // The window already stops at cursor + max_properties, so skipping is the whole page.
             var props = window.Skip(cursor).ToList();
-            var scanned = props.Count;
-
-            var terms = SplitFilterTerms(name_filter);
-            if (terms.Length > 0)
-                props = props.Where(p => MatchesAnyTerm(p.Name, terms)).ToList();
 
             var typeName = resolved.Component.GetType().Name;
-            var pageSuffix = Paging.Suffix(cursor, scanned, total);
+            var pageSuffix = Paging.Suffix(cursor, props.Count, kept);
             var message = terms.Length > 0
                 ? $"{props.Count} of {total} properties on {typeName} (filter: {name_filter}).{pageSuffix}"
-                : total > scanned
+                : total > props.Count
                     ? $"{props.Count} of {total} properties on {typeName}.{pageSuffix}"
                     : $"{props.Count} properties on {typeName}.";
 

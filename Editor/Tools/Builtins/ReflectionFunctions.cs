@@ -180,11 +180,9 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 foreach (var type in candidates)
                 {
-                    if (!MatchesScope(type.Assembly.GetName().Name, scope))
-                        continue;
-
+                    // Rank first: GetName() builds a new AssemblyName, and most types do not match.
                     var rank = Rank(type, query);
-                    if (rank >= 0)
+                    if (rank >= 0 && MatchesScope(type.Assembly.GetName().Name, scope))
                         ranked.Add((type, rank));
                 }
             }

@@ -195,6 +195,17 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("void Renamed()", Read("PatchSha.txt"));
         }
 
+        [Test]
+        public void PatchScript_RefusesAnEmptyOldTextInsteadOfLoopingForever()
+        {
+            var path = Write("EmptyNeedle.txt", Sound);
+
+            var refused = CodeFunctions.PatchScript(path, "", "x");
+
+            StringAssert.Contains("EMPTY_OLD_TEXT", refused);
+            Assert.AreEqual(Sound, Read("EmptyNeedle.txt"));
+        }
+
         private static string Write(string fileName, string content)
         {
             File.WriteAllText(FullPath(fileName), content);

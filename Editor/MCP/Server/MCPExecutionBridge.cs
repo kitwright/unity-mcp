@@ -20,6 +20,9 @@ namespace KitWright.Editor.MCP.Server
     /// </summary>
     internal class MCPExecutionBridge
     {
+        // Static, so a server restarted mid-call still serializes against the call it left running.
+        private static readonly SemaphoreSlim MutatingToolGate = new SemaphoreSlim(1, 1);
+
         private readonly EditorThreadHelper _threadHelper;
         private readonly SettingsController _settings;
         private readonly StateController _stateController;
@@ -58,7 +61,40 @@ namespace KitWright.Editor.MCP.Server
                     : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey });
             }
 
-            return await _threadHelper.ExecuteAsyncOnEditorThreadAsync(async () =>
+            var method = ToolRegistry.GetMethod(toolName);
+            if (method != null && ToolRegistry.IsReadOnly(method))
+                return await InvokeOnEditorThreadAsync(toolName, arguments, isAllowed, profileKey, ct);
+
+            // Calls run side by side in both transports, and a tool that awaits lets another one run
+            // in the gap: batch_execute's undo collapse would swallow the other call's undo entries.
+            // A call the ceiling already answered gives the gate up, as broker mode used to move on to
+            // the next request then, so a tool that never returns cannot lock every mutation out
+            // until the next domain reload.
+            await MutatingToolGate.WaitAsync(ct);
+            var released = 0;
+            void Release()
+            {
+                if (Interlocked.Exchange(ref released, 1) == 0)
+                    MutatingToolGate.Release();
+            }
+
+            using (ct.Register(Release))
+            {
+                try
+                {
+                    return await InvokeOnEditorThreadAsync(toolName, arguments, isAllowed, profileKey, ct);
+                }
+                finally
+                {
+                    Release();
+                }
+            }
+        }
+
+        private Task<string> InvokeOnEditorThreadAsync(string toolName, Dictionary<string, object> arguments,
+            bool isAllowed, string profileKey, CancellationToken ct)
+        {
+            return _threadHelper.ExecuteAsyncOnEditorThreadAsync(async () =>
             {
                 try
                 {

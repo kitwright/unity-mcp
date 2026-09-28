@@ -42,7 +42,7 @@ namespace KitWright.Editor.Tools.Builtins
             var profile = ScriptableObject.CreateInstance<VolumeProfile>();
             var path = AssetDatabase.GenerateUniqueAssetPath($"Assets/{name}.asset");
             AssetDatabase.CreateAsset(profile, path);
-            AssetDatabase.SaveAssets();
+            AssetDatabase.SaveAssetIfDirty(profile);
             volume.sharedProfile = profile;
 
 #if KITWRIGHT_PHYSICS
@@ -106,7 +106,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (AssetDatabase.Contains(profile))
             {
                 AssetDatabase.AddObjectToAsset(comp, profile);
-                AssetDatabase.SaveAssets();
+                EditorUtility.SetDirty(profile);
+                AssetDatabase.SaveAssetIfDirty(profile);
             }
 
             EditorUtility.SetDirty(profile);
@@ -138,7 +139,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (AssetDatabase.Contains(comp))
             {
                 AssetDatabase.RemoveObjectFromAsset(comp);
-                AssetDatabase.SaveAssets();
+                EditorUtility.SetDirty(profile);
+                AssetDatabase.SaveAssetIfDirty(profile);
             }
             UnityEngine.Object.DestroyImmediate(comp, true);
 

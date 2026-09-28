@@ -230,16 +230,14 @@ namespace KitWright.Editor.MCP.Server
             return 1000;
         }
 
-        public static string BuildDescriptionPrefix(string toolName, MCPToolExportProfile profile)
+        // A "[core] " tag used to lead every description under a narrowed profile. It is the same
+        // tag on every tool the client is given, so it told the client nothing, and a client that
+        // loads the whole schema paid for it once per tool.
+        public static string BuildDescriptionPrefix(string toolName)
         {
-            var profilePrefix = profile == MCPToolExportProfile.Full
-                ? string.Empty
-                : $"[{ToSettingValue(profile)}] ";
-
-            if (string.Equals(toolName, "execute_code", StringComparison.OrdinalIgnoreCase))
-                return "[primary] " + profilePrefix;
-
-            return profilePrefix;
+            return string.Equals(toolName, "execute_code", StringComparison.OrdinalIgnoreCase)
+                ? "[primary] "
+                : string.Empty;
         }
     }
 }

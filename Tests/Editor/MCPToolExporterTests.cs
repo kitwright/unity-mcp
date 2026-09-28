@@ -42,6 +42,24 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void CompactDescriptionsDoNotStopAtAnAbbreviation()
+        {
+            Assert.AreEqual("Moves an object (e.g. a prefab) into a folder.",
+                MCPToolExporter.FirstSentence("Moves an object (e.g. a prefab) into a folder. Undo reverts it."));
+            Assert.AreEqual("Reads a value, i.e. the stored one.",
+                MCPToolExporter.FirstSentence("Reads a value, i.e. the stored one. Nothing is written."));
+            Assert.AreEqual("One sentence", MCPToolExporter.FirstSentence("One sentence."));
+        }
+
+        // The profile tag was the same on every tool a client was handed, so it said nothing.
+        [Test]
+        public void OnlyThePrimaryToolCarriesADescriptionTag()
+        {
+            Assert.AreEqual("[primary] ", MCPToolExportPolicy.BuildDescriptionPrefix("execute_code"));
+            Assert.AreEqual(string.Empty, MCPToolExportPolicy.BuildDescriptionPrefix("get_hierarchy"));
+        }
+
+        [Test]
         public void ReadOnlyToolsCarryReadOnlyHint()
         {
             Assert.IsTrue(HasReadOnlyHint(Tool("get_hierarchy")));

@@ -81,42 +81,30 @@ namespace KitWright.Editor.MCP.Server
         }
 
         private readonly string _expectedToken;
-        private bool _warnedAboutMissingToken;
+        private bool _warnedAboutRefusedToken;
 
         /// <summary>
-        /// Whether to serve a request that presents no token, or the wrong one.
-        ///
-        /// A WRONG token is refused outright: no legitimate client invents one, so it is either a
-        /// config left over from a token this project no longer uses or somebody guessing. The
-        /// config sweep repairs a stale URL on the next editor start, so the window is short.
-        ///
-        /// A MISSING token is served, once with a warning: configs written before tokens existed are
-        /// out there, the same compatibility problem the project pin has, and refusing them would
-        /// break working installs before the sweep has had a chance to repair them. Tightening this
-        /// to a refusal is the second half of the change, once a release has been out long enough
-        /// for the sweep to have run everywhere.
+        /// A request is served only with this project's token. A MISSING one is refused as well as
+        /// a wrong one: serving tokenless configs for compatibility is serving any process on the
+        /// machine, and the config sweep already rewrites a pre-token URL on the next editor start.
+        /// The refusal is logged once so a user whose client stopped connecting sees why.
         /// </summary>
-        private bool ShouldServe(string path)
+        private bool ShouldServe(string path, out ServerToken.Verdict verdict)
         {
-            switch (ServerToken.Check(path, _expectedToken))
+            verdict = ServerToken.Check(path, _expectedToken);
+            if (verdict == ServerToken.Verdict.Ok)
+                return true;
+
+            if (!_warnedAboutRefusedToken)
             {
-                case ServerToken.Verdict.Ok:
-                    return true;
-
-                case ServerToken.Verdict.Missing:
-                    if (!_warnedAboutMissingToken)
-                    {
-                        _warnedAboutMissingToken = true;
-                        Debug.LogWarning(
-                            "[KitWright MCP Server] A client connected without this project's access token. " +
-                            "Any process on this machine can reach the editor that way. Press Configure in the " +
-                            "KitWright window, or restart the editor, to write the current URL into the client's config.");
-                    }
-                    return true;
-
-                default:
-                    return false;
+                _warnedAboutRefusedToken = true;
+                Debug.LogWarning("[KitWright MCP Server] Refused a client " +
+                                 (verdict == ServerToken.Verdict.Missing
+                                     ? "that sent no access token. "
+                                     : "that sent another access token. ") +
+                                 ServerToken.RefusalMessage(verdict));
             }
+            return false;
         }
 
         // A client configured for THIS project posts to /p/<pin>/. Ports are assigned by
@@ -390,11 +378,10 @@ namespace KitWright.Editor.MCP.Server
                         return;
                     }
 
-                    if (!ShouldServe(httpRequest.Path))
+                    if (!ShouldServe(httpRequest.Path, out var tokenVerdict))
                     {
                         await SendHtmlStatusAsync(stream, HttpStatusCode.Unauthorized, "Unauthorized",
-                            "That access token is not this project's. Press Configure in the KitWright window " +
-                            "to rewrite the client's config with the current URL.", ct);
+                            ServerToken.RefusalMessage(tokenVerdict), ct);
                         return;
                     }
 
@@ -488,9 +475,9 @@ namespace KitWright.Editor.MCP.Server
                                 }
                                 else if (httpRequest.AcceptsEventStream &&
                                          !string.Equals(request.Method, "initialize", StringComparison.Ordinal) &&
-                                         MCPToolListChangeNotifier.TryConsumePending())
+                                         MCPToolListChangeNotifier.TryConsumePending(request.SessionId))
                                 {
-                                    await SendSseResponseAsync(stream, response, ct, extraHeaders);
+                                    await SendSseResponseAsync(stream, response, request.SessionId, ct, extraHeaders);
                                 }
                                 else
                                 {
@@ -693,7 +680,8 @@ namespace KitWright.Editor.MCP.Server
         /// Streamable-HTTP style response: an SSE body that carries the pending
         /// tools/list_changed notification followed by the JSON-RPC response.
         /// Only used when the client declared Accept: text/event-stream.
-        private async Task SendSseResponseAsync(NetworkStream stream, MCPResponse mcpResponse, CancellationToken ct, string extraHeaders = "")
+        private async Task SendSseResponseAsync(NetworkStream stream, MCPResponse mcpResponse, string sessionId,
+            CancellationToken ct, string extraHeaders = "")
         {
             try
             {
@@ -703,12 +691,12 @@ namespace KitWright.Editor.MCP.Server
             }
             catch (Exception ex) when (IsExpectedClientDisconnect(ex, ct))
             {
-                MCPToolListChangeNotifier.RestorePending();
+                MCPToolListChangeNotifier.RestorePending(sessionId);
                 PluginDebugLogger.Log($"[KitWright MCP Server] SSE response not sent because the client disconnected: {ex.Message}");
             }
             catch (Exception ex)
             {
-                MCPToolListChangeNotifier.RestorePending();
+                MCPToolListChangeNotifier.RestorePending(sessionId);
                 Debug.LogError($"[KitWright MCP Server] Failed to send response: {ex.Message}");
             }
         }

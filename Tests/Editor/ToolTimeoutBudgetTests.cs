@@ -36,7 +36,7 @@ namespace KitWright.Editor.Tests
         }
 
         // CoplayDev/unity-mcp #1130.
-        // ponytail: hand-kept list; alternative is parsing NoThrottleLease durations out of source.
+        // ponytail: hand-kept list; alternative is finding the long blocking calls in source.
         [Test]
         public void EveryToolThatBlocksTheMainThreadForMinutes_DeclaresABudget()
         {

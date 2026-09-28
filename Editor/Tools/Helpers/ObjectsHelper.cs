@@ -460,10 +460,11 @@ namespace KitWright.Editor.Tools.Helpers
                 if (++scanned > MaxCandidateScan)
                     break;
 
-                var path = GetGameObjectPath(go);
+                // A path is a walk to the root; build it only for a name that scored.
+                var path = matchPath ? GetGameObjectPath(go) : null;
                 var score = ScoreCandidate(query, matchPath ? path : go.name);
                 if (score >= 0)
-                    scored.Add(new KeyValuePair<int, string>(score, path));
+                    scored.Add(new KeyValuePair<int, string>(score, path ?? GetGameObjectPath(go)));
             }
 
             return scored
