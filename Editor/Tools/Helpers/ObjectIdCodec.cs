@@ -109,15 +109,32 @@ namespace KitWright.Editor.Tools.Helpers
         }
 
 #if UNITY_6000_3_OR_NEWER
+        // A fixed threshold compacted on every new id once more than 1024 were alive, so listing a
+        // 20k-object scene walked the whole cache 19k times. Doubling past what survives keeps the
+        // walk amortised O(1) per id.
+        private static int s_compactAt = CacheCompactThreshold;
+
+        internal static int CompactionCount { get; private set; }
+
         private static void CacheEntityId(string id, UnityObject obj)
         {
+            if (EntityIdCache.TryGetValue(id, out var existing))
+            {
+                existing.SetTarget(obj);
+                return;
+            }
+
             EntityIdCache[id] = new WeakReference<UnityObject>(obj);
-            if (EntityIdCache.Count > CacheCompactThreshold)
+            if (EntityIdCache.Count > s_compactAt)
+            {
                 CompactCache();
+                s_compactAt = Math.Max(CacheCompactThreshold, EntityIdCache.Count * 2);
+            }
         }
 
         private static void CompactCache()
         {
+            CompactionCount++;
             List<string> dead = null;
             foreach (var kv in EntityIdCache)
             {
