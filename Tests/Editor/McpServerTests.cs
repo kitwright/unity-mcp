@@ -69,14 +69,20 @@ namespace KitWright.Editor.Tests
                                  outside,
                                  "../" + Path.GetFileName(outside),
                                  "Assets/../../" + Path.GetFileName(outside),
-                                 Uri.EscapeDataString("Assets/../../" + Path.GetFileName(outside)),
-                                 "Assets\\..\\..\\" + Path.GetFileName(outside)
+                                 Uri.EscapeDataString("Assets/../../" + Path.GetFileName(outside))
                              })
                     {
                         var text = Read(escape);
                         Assert.That(text, Does.Contain("escaped the project"), escape);
                         Assert.That(text, Does.Not.Contain("outside-the-project"), escape);
                     }
+
+                    // Only Windows reads a backslash as a separator; elsewhere this is one file name
+                    // inside the project, which must not reach the file outside either.
+                    var backslashed = Read("Assets\\..\\..\\" + Path.GetFileName(outside));
+                    Assert.That(backslashed, Does.Not.Contain("outside-the-project"));
+                    if (Path.DirectorySeparatorChar == '\\')
+                        Assert.That(backslashed, Does.Contain("escaped the project"));
 
                     var truncated = Read("Temp/" + Path.GetFileName(big));
                     Assert.That(truncated, Does.EndWith("... (truncated)"));
