@@ -25,6 +25,7 @@ EXPECTED = [
     r"VolumeProfile is not available",
     r"URP is not installed",
     r"Needs at least two shaders",
+    r"Too few assemblies loaded",
     r"root scope, which is not up here",
     r"Unity-bundled Mono is required",
     r"legacy Input Manager",
