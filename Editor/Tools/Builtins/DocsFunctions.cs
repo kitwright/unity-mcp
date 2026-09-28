@@ -97,10 +97,19 @@ namespace KitWright.Editor.Tools.Builtins
             var report = new StringBuilder();
             var found = 0;
 
-            foreach (var entry in requested)
+            // All requested at once: the pages are independent, and one at a time a five-page call
+            // waited out five round trips in a row.
+            var fetches = requested.Select(entry =>
             {
-                bool isManual = entry.StartsWith("manual:", StringComparison.OrdinalIgnoreCase);
-                var name = isManual ? entry.Substring("manual:".Length).Trim() : entry;
+                var pageName = PageName(entry, out var manual);
+                return pageName.Length == 0 ? Task.FromResult<DocPage>(null)
+                    : GetPageAsync(manual ? ManualUrl(pageName) : ScriptReferenceUrl(pageName));
+            }).ToList();
+
+            for (var e = 0; e < requested.Count; e++)
+            {
+                var entry = requested[e];
+                var name = PageName(entry, out var isManual);
 
                 if (name.Length == 0)
                 {
@@ -109,7 +118,7 @@ namespace KitWright.Editor.Tools.Builtins
                 }
 
                 var url = isManual ? ManualUrl(name) : ScriptReferenceUrl(name);
-                var page = await GetPageAsync(url);
+                var page = await fetches[e];
 
                 if (page == null)
                 {
@@ -141,6 +150,12 @@ namespace KitWright.Editor.Tools.Builtins
                 header += $" {dropped} page(s) past the {MaxPagesPerCall}-per-call limit were dropped.";
 
             return header + "\n" + report;
+        }
+
+        private static string PageName(string entry, out bool isManual)
+        {
+            isManual = entry.StartsWith("manual:", StringComparison.OrdinalIgnoreCase);
+            return isManual ? entry.Substring("manual:".Length).Trim() : entry;
         }
 
         private static async Task<DocPage> GetPageAsync(string url)
