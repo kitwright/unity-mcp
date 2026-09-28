@@ -33,6 +33,7 @@ EXPECTED = [
     r"Device Simulator module is not available",
     r"AI module is not installed",
     r"compiled out without the com\.unity\.ugui package",
+    r"no Game View to route",
 ]
 
 
