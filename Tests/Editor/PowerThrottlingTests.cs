@@ -12,7 +12,7 @@ namespace KitWright.Editor
         public void TheEditorOptsOutOfPowerThrottling()
         {
             if (Application.platform != RuntimePlatform.WindowsEditor)
-                Assert.Ignore("Power throttling is a Windows feature.");
+                Assert.Ignore("Power throttling is Windows-only.");
 
             PowerThrottling.OptOut();
 
