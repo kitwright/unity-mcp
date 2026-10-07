@@ -49,15 +49,16 @@ namespace KitWright.Editor.Tools.Builtins
                      "(File.Delete, Process.Start, while(true), Environment.Exit, AssetDatabase.DeleteAsset, etc) " +
                      "plus broad System.IO writes and obvious absolute/system/traversal paths. " +
                      "This catches accidents, not intent: safety_checks is an argument you control, so it is neither a sandbox nor a security boundary. " +
-                     "It is on when omitted; pass false to skip it. Project namespaces are not auto-injected " +
+                     "If omitted, the MCP Settings window's default safety-check setting is used (enabled by default); " +
+                     "explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
                      "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
         public static async Task<object> ExecuteCode(
             [ToolParam("C# code to execute: a bare method body, or a full class (IKitWrightCommand or static Run()).")] string code,
-            [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. Defaults to true.", Required = false)] bool? safety_checks = null,
+            [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
             [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false)
         {
-            var effectiveSafetyChecks = safety_checks ?? true;
+            var effectiveSafetyChecks = safety_checks ?? ResolveSafetyChecksDefault();
             if (effectiveSafetyChecks)
             {
                 if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason))
@@ -181,10 +182,10 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). " +
                      "The original code is re-compiled and executed; this also appends a new history entry. " +
-                     "safety_checks behaves as in execute_code: on unless you pass false.")]
+                     "Pass safety_checks to override the MCP Settings window default.")]
         public static async Task<object> ReplayExecuteCode(
             [ToolParam("History index to replay (as returned by get_execute_code_history).")] int index,
-            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. Defaults to true.", Required = false)] bool? safety_checks = null)
+            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null)
         {
             var entries = LoadHistory().entries;
             if (entries.Count == 0)
@@ -211,6 +212,12 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // ---- History helpers ----------------------------------------------------
+
+        private static bool ResolveSafetyChecksDefault()
+        {
+            var settings = RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
+            return settings?.ExecuteCodeSafetyChecksEnabled ?? true;
+        }
 
         private static bool ResolveProjectNamespaceInjection()
         {

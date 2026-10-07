@@ -52,6 +52,12 @@ namespace KitWright.Editor.MCP.Server
             settingsFoldout.Add(autostartSection);
 
             AddToggleCard(settingsFoldout,
+                "Default execute_code safety checks",
+                "The default for execute_code calls that omit safety_checks. On by default. It stops accidents, not a caller that wants through: a call can still pass safety_checks=true or false to override it.",
+                _settingsController.ExecuteCodeSafetyChecksEnabled,
+                value => _settingsController.ExecuteCodeSafetyChecksEnabled = value);
+
+            AddToggleCard(settingsFoldout,
                 "Auto-inject project namespaces",
                 "Off by default. When enabled, only namespaces from loaded Library/ScriptAssemblies assemblies are injected; explicit using directives remain the least ambiguous option.",
                 _settingsController.ExecuteCodeProjectNamespaceInjectionEnabled,
