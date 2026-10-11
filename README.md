@@ -76,7 +76,7 @@ Or add the scoped registry manually in `Packages/manifest.json`:
     }
   ],
   "dependencies": {
-    "com.kitwright.unity.mcp": "1.0.0"
+    "com.kitwright.unity.mcp": "1.0.1"
   }
 }
 ```

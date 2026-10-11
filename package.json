@@ -1,6 +1,6 @@
 {
   "name": "com.kitwright.unity.mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "displayName": "KitWright MCP for Unity",
   "description": "MIT-licensed MCP server for Unity Editor with execute_code, prompts/resources, input simulation, screenshots, and play mode automation.",
   "license": "MIT",
