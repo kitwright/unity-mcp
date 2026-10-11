@@ -19,6 +19,11 @@ namespace KitWright.Editor
             {
                 var controller = new SettingsController(projectPath);
 
+                Assert.IsTrue(controller.ExecuteCodeSafetyChecksEnabled);
+                Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
+                Assert.IsFalse(controller.PluginDebugLoggingEnabled);
+                Assert.IsTrue(controller.MCPBrokerModeEnabled);
+                Assert.AreEqual(string.Empty, controller.MCPBrokerMonoPath);
                 StringAssert.Contains("\"executeCodeSafetyChecksEnabled\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeSafetyChecksConfigured\": true", ReadSettingsJson(projectPath));
                 StringAssert.Contains("\"executeCodeProjectNamespaceInjectionEnabled\": false", ReadSettingsJson(projectPath));
@@ -35,6 +40,42 @@ namespace KitWright.Editor
         }
 
         [Test]
+        public void ExecuteCodeSafetyChecksSetting_PersistsFalseValue()
+        {
+            var projectPath = CreateTempProjectPath();
+
+            try
+            {
+                var controller = new SettingsController(projectPath);
+                controller.ExecuteCodeSafetyChecksEnabled = false;
+
+                var reloaded = new SettingsController(projectPath);
+
+                Assert.IsFalse(reloaded.ExecuteCodeSafetyChecksEnabled);
+                StringAssert.Contains("\"executeCodeSafetyChecksEnabled\": false", ReadSettingsJson(projectPath));
+                StringAssert.Contains("\"executeCodeSafetyChecksConfigured\": true", ReadSettingsJson(projectPath));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectPath);
+            }
+        }
+
+        [Test]
+        public void ExistingSettingsWithoutNewerFields_MigrateToTheDefaults()
+        {
+            var projectPath = CreateTempProjectPath();
+
+            try
+            {
+                var settingsDirectory = Path.Combine(projectPath, "UserSettings");
+                Directory.CreateDirectory(settingsDirectory);
+                File.WriteAllText(
+                    Path.Combine(settingsDirectory, "KitWrightMcpSettings.json"),
+                    "{\"enabled\":false,\"port\":8765,\"toolExportProfile\":\"core\"}");
+
+                var controller = new SettingsController(projectPath);
+
                 Assert.IsTrue(controller.ExecuteCodeSafetyChecksEnabled);
                 Assert.IsFalse(controller.ExecuteCodeProjectNamespaceInjectionEnabled);
                 Assert.IsFalse(controller.PluginDebugLoggingEnabled);
