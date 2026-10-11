@@ -479,6 +479,48 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        // A .png's main asset is a Texture2D, which a Sprite field wrote as null and reported success:
+        // a match run swapped a header to the right sprite and rendered a blank box.
+        [Test]
+        public void SpriteFieldFromPngPath_TakesTheSpriteUnderTheTexture()
+        {
+            const string folderName = "__KitWrightSpritePathProbe";
+            var folder = "Assets/" + folderName;
+            if (!AssetDatabase.IsValidFolder(folder))
+                AssetDatabase.CreateFolder("Assets", folderName);
+            var go = new GameObject("__KitWrightSpritePathProbe");
+            try
+            {
+                var path = folder + "/Probe.png";
+                System.IO.File.WriteAllBytes(path, new Texture2D(4, 4).EncodeToPNG());
+                AssetDatabase.ImportAsset(path);
+                var importer = (TextureImporter)AssetImporter.GetAtPath(path);
+                importer.textureType = TextureImporterType.Sprite;
+                importer.SaveAndReimport();
+
+                var renderer = go.AddComponent<SpriteRenderer>();
+                foreach (var field in new[] { "sprite", "m_Sprite" })
+                {
+                    renderer.sprite = null;
+                    var result = ComponentSerializer.WriteProperties(renderer,
+                        JObject.Parse($@"{{""{field}"": {{""assetPath"": ""{path}""}}}}"))[0];
+                    Assert.IsTrue(result.Success, result.Error);
+                    Assert.IsNotNull(renderer.sprite, field);
+                }
+
+                var camera = go.AddComponent<Camera>();
+                var wrong = ComponentSerializer.WriteProperties(camera,
+                    JObject.Parse($@"{{""m_TargetTexture"": {{""assetPath"": ""{path}""}}}}"))[0];
+                Assert.IsFalse(wrong.Success, "a Texture2D in a RenderTexture field is refused, not written as null");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+                if (AssetDatabase.IsValidFolder(folder))
+                    AssetDatabase.DeleteAsset(folder);
+            }
+        }
+
         // WriteProperties has two callers, so the guard above only half-closed the hole: a typo on
         // an .asset still came back as success, with "asset saved" attached to a write that landed
         // nothing.

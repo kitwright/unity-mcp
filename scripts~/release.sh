@@ -14,7 +14,7 @@ fi
 
 usage() {
   cat <<'EOF'
-Usage: scripts/release.sh <version> [options]
+Usage: scripts~/release.sh <version> [options]
 
 Local release helper for KitWright Unity MCP.
 

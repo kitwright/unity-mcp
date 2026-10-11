@@ -8,7 +8,7 @@ of line are allowed: attribution of code adapted from CoplayDev/unity-mcp, which
 say so, and a sentence about Coplay's own repository. CHANGELOG history is only checked for MIT:
 an old entry saying "the open-source package" records what happened then.
 
-Usage: python3 scripts/check_asset_store_licence.py [root]
+Usage: python3 scripts~/check_asset_store_licence.py [root]
 """
 import json
 import os

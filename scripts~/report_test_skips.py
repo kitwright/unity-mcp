@@ -6,7 +6,7 @@ lacked something looked the same as one that passed. Every skip in a results fil
 its reason (in $GITHUB_STEP_SUMMARY when set), and a skip whose reason matches none of EXPECTED
 fails the step: either add the reason there, saying which environment the test needs, or fix the test.
 
-Usage: python3 scripts/report_test_skips.py <label> <results.xml or folder>...
+Usage: python3 scripts~/report_test_skips.py <label> <results.xml or folder>...
 """
 import glob
 import os
@@ -73,7 +73,7 @@ def main():
         lines += ["| Skipped test | Reason |", "|---|---|"]
         lines += [f"| `{name}` | {reason.replace('|', '/')} |" for name, reason in rows]
     if unexpected:
-        lines += ["", f"**{len(unexpected)} skipped for a reason not in scripts/report_test_skips.py EXPECTED:**"]
+        lines += ["", f"**{len(unexpected)} skipped for a reason not in scripts~/report_test_skips.py EXPECTED:**"]
         lines += [f"- `{name}`: {reason}" for name, reason in unexpected]
 
     text = "\n".join(lines) + "\n"

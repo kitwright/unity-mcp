@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
@@ -453,9 +454,9 @@ namespace KitWright.Editor.Tools.Helpers
 
             // Editor drag-drop auto-extracts a component when a GameObject is dropped on a
             // component-typed field. p.type looks like "PPtr<$Rigidbody>".
+            var wanted = ExtractPPtrTypeName(p.type);
             if (resolved is GameObject droppedGo)
             {
-                var wanted = ExtractPPtrTypeName(p.type);
                 if (!string.IsNullOrEmpty(wanted) && wanted != "GameObject")
                 {
                     var comp = droppedGo.GetComponent(wanted);
@@ -463,9 +464,27 @@ namespace KitWright.Editor.Tools.Helpers
                         resolved = comp;
                 }
             }
+            else if (!string.IsNullOrEmpty(assetPath) && !string.IsNullOrEmpty(wanted) && !IsA(resolved.GetType(), wanted))
+            {
+                // A .png's main asset is its Texture2D; a Sprite field takes the Sprite under it.
+                resolved = AssetDatabase.LoadAllAssetsAtPath(assetPath).FirstOrDefault(a => a != null && IsA(a.GetType(), wanted)) ?? resolved;
+            }
 
+            // Unity writes a reference of the wrong type as null without a word.
             p.objectReferenceValue = resolved;
+            if (p.objectReferenceValue == null)
+            {
+                error = $"'{resolved.name}' is a {resolved.GetType().Name}; the field takes a {wanted}.";
+                return false;
+            }
             return true;
+        }
+
+        private static bool IsA(Type type, string name)
+        {
+            for (; type != null; type = type.BaseType)
+                if (type.Name == name) return true;
+            return false;
         }
 
         internal static string ExtractPPtrTypeName(string propType)
@@ -567,6 +586,9 @@ namespace KitWright.Editor.Tools.Helpers
                 if (token.Type == JTokenType.Integer) id = token.ToString();
                 else if (token is JObject jo && jo.TryGetValue("fileID", out var f)) id = f.ToString();
                 if (!string.IsNullOrWhiteSpace(id)) return ObjectIdCodec.ToObject(id);
+                var path = token.Type == JTokenType.String ? token.ToObject<string>() : (token as JObject)?["assetPath"]?.ToObject<string>();
+                if (!string.IsNullOrEmpty(path))
+                    return AssetDatabase.LoadAssetAtPath(path, targetType) ?? throw new ArgumentException($"No {targetType.Name} at '{path}'.");
             }
             return token.ToObject(targetType);
         }

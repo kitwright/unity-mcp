@@ -181,8 +181,11 @@ namespace KitWright.Editor.MCP.Server
             if (value is string strValue) return strValue;
             if (value is bool boolValue) return boolValue ? "true" : "false";
             // FunctionInvoker parses back with InvariantCulture, where a comma-decimal locale's "1,5"
-            // reads as the group-separated 15 instead of failing.
-            if (value is int || value is long || value is float || value is double)
+            // reads as the group-separated 15 instead of failing. "R" on top of that: the default
+            // format is 15 significant digits, which silently rounds a value the client sent in full.
+            if (value is float floatValue) return floatValue.ToString("R", CultureInfo.InvariantCulture);
+            if (value is double doubleValue) return doubleValue.ToString("R", CultureInfo.InvariantCulture);
+            if (value is int || value is long)
                 return Convert.ToString(value, CultureInfo.InvariantCulture);
             if (value is Dictionary<string, object> dict) return JsonCodec.Serialize(dict);
             if (value is System.Collections.IList list)

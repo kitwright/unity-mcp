@@ -552,5 +552,19 @@ namespace KitWright.Editor.Tests
                     Directory.Delete(tempRoot, recursive: true);
             }
         }
+
+        // The default numeric format keeps 15 significant digits, so a double the client sent in full
+        // came back rounded - a silent edit of the caller's own value.
+        [Test]
+        public void ConvertArgumentToString_ADoubleNeedingEveryDigit_SurvivesTheRoundTrip()
+        {
+            const double precise = 0.1d + 0.2d;
+
+            var formatted = MCP.Server.MCPExecutionBridge.ConvertArgumentToString(precise);
+
+            Assert.AreEqual(precise,
+                double.Parse(formatted, System.Globalization.CultureInfo.InvariantCulture),
+                "the value handed to the tool must be the value the client sent");
+        }
     }
 }

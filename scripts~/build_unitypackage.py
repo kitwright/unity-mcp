@@ -23,7 +23,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PREFIX = "Assets/KitWright/MCPForUnity"
 OUT = os.path.join(REPO, "KitWright-MCPForUnity.unitypackage")
 
-EXCLUDE_PREFIXES = (".github/", "scripts/", "Documentation~/", "Tests/")
+EXCLUDE_PREFIXES = (".github/", "scripts~/", "Documentation~/", "Tests/")
 EXCLUDE_FILES = {"CONTRIBUTING.md", "RELEASE_CHECKLIST.md", ".editorconfig", ".gitattributes", ".gitignore"}
 
 GUID_RE = re.compile(rb"^guid:\s*([0-9a-fA-F]{32})\s*$", re.M)

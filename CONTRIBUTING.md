@@ -25,7 +25,7 @@ Thanks for your interest in contributing! Here's how to get started.
 4. Use `[ToolParam("description")]` on parameters
 5. Method signature: `public static string MethodName(...)`
 6. Use `Undo.*` APIs for scene-modifying tools
-7. Run `python scripts/generate_tools_doc.py` so `TOOLS.md` and the README tool tables pick up the new tool
+7. Run `python scripts~/generate_tools_doc.py` so `TOOLS.md` and the README tool tables pick up the new tool
 
 See [README.md](README.md#adding-custom-tools) for a full example.
 

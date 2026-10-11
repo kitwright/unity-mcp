@@ -310,5 +310,26 @@ namespace KitWright.Editor.Tests
                 "structuredContent carries the same payload, so it is lifted too.");
         }
 
+        [Test]
+        public void BuildContentFromResult_ABareDataUri_BecomesAnImageBlock()
+        {
+            var content = MCPRequestHandler.BuildContentFromResult("data:image/png;base64,iVBORw0KGgo=");
+
+            Assert.AreEqual("image", content[0]["type"]);
+            Assert.AreEqual("image/png", content[0]["mimeType"]);
+            Assert.AreEqual("iVBORw0KGgo=", content[0]["data"]);
+        }
+
+        [Test]
+        public void BuildContentFromResult_PlainJson_IsLeftAlone()
+        {
+            const string json = "{\"success\":true,\"data\":{\"path\":\"Assets/data.png\"}}";
+
+            var content = MCPRequestHandler.BuildContentFromResult(json);
+
+            Assert.AreEqual(1, content.Count);
+            Assert.AreEqual(json, content[0]["text"]);
+        }
+
     }
 }

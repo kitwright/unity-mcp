@@ -60,7 +60,7 @@ jobs:
                   PY
 
             - name: Check generated docs are in sync
-              run: python scripts/generate_tools_doc.py --check
+              run: python scripts~/generate_tools_doc.py --check
 
     # ────────────────────────────────────────────────────────────────
     # Unity EditMode Tests
@@ -195,7 +195,7 @@ jobs:
             # reason, in the job summary, and fails on a skip whose reason nobody declared.
             - name: Report skipped tests
               if: always()
-              run: python3 scripts/report_test_skips.py "EditMode ${{ matrix.unityVersion }}" artifacts/
+              run: python3 scripts~/report_test_skips.py "EditMode ${{ matrix.unityVersion }}" artifacts/
 
     # ────────────────────────────────────────────────────────────────
     # Optional engine modules stripped
