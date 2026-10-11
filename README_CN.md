@@ -46,7 +46,7 @@ KitWright MCP for Unity 是一个 Unity 编辑器 MCP 服务器，让 Claude Cod
 在 Unity 中，打开 **Window → Package Manager → + → Add package from git URL**：
 
 ```
-https://github.com/kitwright/unity-mcp.git
+https://github.com/kitwright/unity-mcp.git#upm
 ```
 
 > 💡 在 clone 或安装之前，如果你愿意顺手点一个 ⭐，会非常感谢。
@@ -75,7 +75,7 @@ openupm add com.kitwright.unity.mcp
     }
   ],
   "dependencies": {
-    "com.kitwright.unity.mcp": "1.0.0"
+    "com.kitwright.unity.mcp": "1.0.1"
   }
 }
 ```

@@ -37,6 +37,16 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("GameObject", ComponentSerializer.ExtractPPtrTypeName("PPtr<$GameObject>"));
         }
 
+        // Unity's own SerializedProperty.type drops the $ for an asset-typed PPtr (confirmed
+        // against SpriteRenderer.m_Sprite: "PPtr<Sprite>", not "PPtr<$Sprite>") — only a
+        // component/GameObject field gets the $ this parser was first written to strip.
+        [Test]
+        public void ExtractPPtrTypeName_ParsesAssetTypeWithNoDollarSign()
+        {
+            Assert.AreEqual("Sprite", ComponentSerializer.ExtractPPtrTypeName("PPtr<Sprite>"));
+            Assert.AreEqual("Texture2D", ComponentSerializer.ExtractPPtrTypeName("PPtr<Texture2D>"));
+        }
+
         [Test]
         public void ExtractPPtrTypeName_NonPPtrReturnsNull()
         {

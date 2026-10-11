@@ -490,9 +490,15 @@ namespace KitWright.Editor.Tools.Helpers
         internal static string ExtractPPtrTypeName(string propType)
         {
             if (string.IsNullOrEmpty(propType)) return null;
-            int lt = propType.IndexOf('$');
+            int lt = propType.IndexOf('<');
             int gt = propType.IndexOf('>');
-            return lt >= 0 && gt > lt ? propType.Substring(lt + 1, gt - lt - 1) : null;
+            if (lt < 0 || gt <= lt) return null;
+
+            // Unity marks a component/GameObject PPtr's inner type with a leading $
+            // ("PPtr<$Rigidbody>") but not an asset PPtr's ("PPtr<Sprite>"); strip it when present
+            // instead of requiring it, or every asset-typed field below fell through as unrecognized.
+            var inner = propType.Substring(lt + 1, gt - lt - 1);
+            return inner.Length > 0 && inner[0] == '$' ? inner.Substring(1) : inner;
         }
 
         private static bool TryWriteArray(SerializedProperty arrayProp, JArray array, out string error)

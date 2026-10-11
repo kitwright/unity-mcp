@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 REPO="kitwright/unity-mcp"
+UPM_BRANCH="upm"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT_ROOT="${UNITY_PROJECT_ROOT:-$(cd "$ROOT/../.." && pwd)}"
 ARTIFACT_ROOT="${RELEASE_ARTIFACT_DIR:-$PROJECT_ROOT/release-artifacts}"
@@ -28,7 +29,10 @@ Default behavior:
   - archive local artifacts under release-artifacts/<version>
 
 Publishing is opt-in:
-  --publish-github     Create or update the GitHub Release asset
+  --publish-github     Build the "$UPM_BRANCH" branch (this release with Tests/ stripped),
+                       tag v<version> there — not on main — and create or update the
+                       GitHub Release asset. The Git URL install and OpenUPM both resolve
+                       to that tag, so this is also what keeps Tests/ out of either.
   --publish-nuget      Push the wrapper nupkg to NuGet; requires NUGET_API_KEY
   --publish-registry   Publish server.json with mcp-publisher after NuGet indexing
   --verify-openupm     Wait for OpenUPM to index the Unity package version
@@ -247,13 +251,36 @@ run_unity_tests() {
   fi
 
   info "Running Unity EditMode tests"
-  run "$unity_bin" \
+  if [[ "$DRY_RUN" == 1 ]]; then
+    run "$unity_bin" \
+      -batchmode \
+      -projectPath "$PROJECT_ROOT" \
+      -runTests \
+      -testPlatform EditMode \
+      -testResults "$OUT_DIR/editmode-results.xml" \
+      -logFile "$OUT_DIR/unity-editmode-tests.log"
+    return
+  fi
+
+  # Unity's own exit code reflects its NUnit "result" attribute, which goes
+  # non-zero on an Ignored/Inconclusive test same as a real failure; this suite
+  # always carries a few declared Ignores, so the gate has to be the "failed"
+  # count in the results XML instead, same as CI's actual pass/fail policy.
+  if ! "$unity_bin" \
     -batchmode \
     -projectPath "$PROJECT_ROOT" \
     -runTests \
     -testPlatform EditMode \
     -testResults "$OUT_DIR/editmode-results.xml" \
-    -logFile "$OUT_DIR/unity-editmode-tests.log"
+    -logFile "$OUT_DIR/unity-editmode-tests.log"; then
+    :
+  fi
+
+  [[ -f "$OUT_DIR/editmode-results.xml" ]] || fail "Unity test results not found: $OUT_DIR/editmode-results.xml (see $OUT_DIR/unity-editmode-tests.log)"
+  local failed
+  failed="$(rg -o 'failed="[0-9]+"' "$OUT_DIR/editmode-results.xml" | head -1 | rg -o '[0-9]+')"
+  [[ -n "$failed" ]] || fail "could not read failed-test count from $OUT_DIR/editmode-results.xml"
+  [[ "$failed" == "0" ]] || fail "$failed Unity EditMode test(s) failed; see $OUT_DIR/unity-editmode-tests.log"
 }
 
 cleanup_exporter() {
@@ -395,7 +422,9 @@ validate_unitypackage() {
   VALIDATION_TMP="$(mktemp -d)"
   trap '[[ -z "${VALIDATION_TMP:-}" ]] || rm -rf "$VALIDATION_TMP"; cleanup_exporter' EXIT
 
-  tar -xzf "$PACKAGE_OUTPUT" -C "$VALIDATION_TMP"
+  # -f with a drive-letter path (C:/...) reads as tar's user@host:path remote
+  # syntax on some tar builds (MSYS/Git Bash); stdin redirection sidesteps it.
+  tar -xz -C "$VALIDATION_TMP" < "$PACKAGE_OUTPUT"
   find "$VALIDATION_TMP" -name pathname -print0 \
     | while IFS= read -r -d '' file; do tr -d '\000' < "$file"; printf '\n'; done \
     | sort > "$OUT_DIR/unitypackage-pathnames.txt"
@@ -462,16 +491,67 @@ pack_wrapper() {
   run cp "$WRAPPER_ROOT/server.json" "$OUT_DIR/server.json"
 }
 
+# Builds the $UPM_BRANCH branch (this release with Tests/ stripped) and pushes it. Sets
+# UPM_COMMIT to the resulting commit so the caller can tag the release there.
+#
+# OpenUPM's tracking config for this package (data/packages/com.kitwright.unity.mcp.yml in
+# openupm/openupm) has no branch field — it watches tags matching gitTagPrefix "v" wherever
+# they land. So does the Git URL install when someone pins a version (#vX.Y.Z). The only way
+# to keep both of those Tests/-free without touching that external config is to put the
+# "vX.Y.Z" tag itself on this branch instead of on main.
+build_upm_branch() {
+  require_command git
+  info "Building $UPM_BRANCH branch (Tests/ stripped) for v$VERSION"
+
+  # bump_versions edits package.json/README in place and never commits — capture the
+  # working tree as it stands (tracked changes included) rather than HEAD, or a release
+  # cut before the version-bump commit lands would publish the branch one version stale.
+  local snapshot
+  snapshot="$(git -C "$ROOT" stash create)"
+  [[ -n "$snapshot" ]] || snapshot="$(git -C "$ROOT" rev-parse HEAD)"
+
+  local worktree_dir
+  worktree_dir="$(mktemp -d)"
+  git -C "$ROOT" worktree add --detach "$worktree_dir" "$snapshot" >/dev/null
+
+  (
+    cd "$worktree_dir"
+    git rm -rq Tests
+    git commit -q -m "chore(upm): strip the package-maintainer test suite for v$VERSION"
+  )
+
+  UPM_COMMIT="$(git -C "$worktree_dir" rev-parse HEAD)"
+  git -C "$worktree_dir" branch -f "$UPM_BRANCH" HEAD
+  git -C "$ROOT" push --force origin "refs/heads/$UPM_BRANCH:refs/heads/$UPM_BRANCH"
+  git -C "$ROOT" worktree remove "$worktree_dir" --force
+}
+
 publish_github() {
   [[ "$PUBLISH_GITHUB" == 1 ]] || return 0
   require_command gh
 
+  if [[ "$DRY_RUN" == 1 ]]; then
+    printf '+ build %s from the working tree (Tests/ stripped), tag v%s there, publish GitHub Release\n' "$UPM_BRANCH" "$VERSION"
+    return
+  fi
+
+  # The Release asset itself (the unitypackage) already excludes Tests/ via
+  # export_unitypackage's IsAllowedPackagePath — this is only about where the "v$VERSION"
+  # tag points, since that tag is also what OpenUPM and a pinned Git URL install resolve.
+  local existing=0
+  gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1 && existing=1
+
+  if [[ "$existing" == 0 ]]; then
+    build_upm_branch
+  fi
+
   info "Publishing GitHub Release v$VERSION"
-  if gh release view "v$VERSION" -R "$REPO" >/dev/null 2>&1; then
+  if [[ "$existing" == 1 ]]; then
     run gh release upload "v$VERSION" "$PACKAGE_OUTPUT" -R "$REPO" --clobber
     run gh release edit "v$VERSION" -R "$REPO" --notes-file "$NOTES_FILE"
   else
-    run gh release create "v$VERSION" "$PACKAGE_OUTPUT" -R "$REPO" --title "v$VERSION" --notes-file "$NOTES_FILE"
+    run gh release create "v$VERSION" "$PACKAGE_OUTPUT" -R "$REPO" \
+      --title "v$VERSION" --notes-file "$NOTES_FILE" --target "$UPM_COMMIT"
   fi
 }
 
