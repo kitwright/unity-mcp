@@ -441,7 +441,6 @@ namespace KitWright.Editor.Tools.Builtins
             catch (TargetInvocationException ex)
             {
                 var inner = ex.InnerException ?? ex;
-                Debug.LogError($"[KitWright] Script runtime error: {inner.Message}\n{inner.StackTrace}");
                 return Response.Error("RUNTIME_ERROR",
                     new { message = inner.Message, stack = inner.StackTrace, compiler = compilerName });
             }
@@ -464,7 +463,6 @@ namespace KitWright.Editor.Tools.Builtins
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[KitWright] Command runtime error: {ex.Message}\n{ex.StackTrace}");
                 return Response.Error("COMMAND_RUNTIME_ERROR", new
                 {
                     message = ex.Message,

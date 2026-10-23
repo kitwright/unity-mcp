@@ -282,7 +282,6 @@ public class CommandSyntax : IKitWrightCommand
         [UnityTest]
         public IEnumerator ExecuteCode_RuntimeError_ReturnsStructuredErrorFormat()
         {
-            LogAssert.Expect(LogType.Error, new System.Text.RegularExpressions.Regex(@"\[KitWright\] Script runtime error: boom from test"));
             return ExecuteCodeAndAssert(
                 "public class RuntimeBoom { public static string Run() { throw new System.InvalidOperationException(\"boom from test\"); } }",
                 result =>
