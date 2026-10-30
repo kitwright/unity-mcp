@@ -138,14 +138,14 @@ namespace KitWright.Editor.Tools.Builtins
                 if (!string.IsNullOrEmpty(cachedLogs))
                     return cachedLogs;
 
-                if (source == "cache")
+                if (source == "cache" || since_seconds > 0)
                     return since_seconds > 0
                         ? $"No {log_type} entries found in cached logs from the last {since_seconds} second(s)"
                         : $"No {log_type} entries found in cached logs";
             }
 
             if (since_seconds > 0)
-                return ToolResultFormatter.Error("INVALID_SINCE_SECONDS", new { since_seconds, hint = "since_seconds is only supported when reading from cache or auto mode with cached results." });
+                return ToolResultFormatter.Error("INVALID_SINCE_SECONDS", new { since_seconds, hint = "since_seconds is only supported with source 'cache' or 'auto'." });
 
             var logEntriesType = Type.GetType("UnityEditor.LogEntries, UnityEditor");
             if (logEntriesType == null)

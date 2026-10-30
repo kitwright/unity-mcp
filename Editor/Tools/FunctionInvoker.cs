@@ -324,13 +324,72 @@ namespace KitWright.Editor.Tools
             for (int i = 0; i < plans.Length; i++)
                 accepted[i] = plans[i].SnakeName;
 
+            var suggestions = new List<string>();
+            foreach (var key in unknown)
+            {
+                var suggestion = SuggestParameter(key, accepted);
+                if (suggestion != null)
+                    suggestions.Add($"'{key}' -> '{suggestion}'");
+            }
+
             throw new ToolArgumentException(
                 "UNKNOWN_PARAM",
                 string.Join(", ", unknown),
                 null,
-                accepted.Length == 0
+                (accepted.Length == 0
                     ? "no parameters"
-                    : $"one of [{string.Join(", ", accepted)}]");
+                    : $"one of [{string.Join(", ", accepted)}]") +
+                (suggestions.Count == 0 ? string.Empty : $". Did you mean {string.Join(", ", suggestions)}?"));
+        }
+
+        private static readonly string[] CountSynonyms = { "limit", "count", "max", "top", "take", "n", "size", "page_size", "max_results", "max_entries", "max_count" };
+        private static readonly string[] CountNames = { "count", "max_entries", "max_results", "limit" };
+
+        internal static string SuggestParameter(string key, string[] accepted)
+        {
+            if (Array.IndexOf(CountSynonyms, key) >= 0)
+            {
+                foreach (var name in CountNames)
+                {
+                    if (Array.IndexOf(accepted, name) >= 0)
+                        return name;
+                }
+            }
+
+            string best = null;
+            var bestDistance = 3;
+            foreach (var name in accepted)
+            {
+                var distance = EditDistance(key, name);
+                if (distance < bestDistance && distance < key.Length)
+                {
+                    best = name;
+                    bestDistance = distance;
+                }
+            }
+
+            return best;
+        }
+
+        private static int EditDistance(string a, string b)
+        {
+            var row = new int[b.Length + 1];
+            for (int j = 0; j <= b.Length; j++)
+                row[j] = j;
+
+            for (int i = 1; i <= a.Length; i++)
+            {
+                var diagonal = row[0];
+                row[0] = i;
+                for (int j = 1; j <= b.Length; j++)
+                {
+                    var above = row[j];
+                    row[j] = Math.Min(Math.Min(row[j] + 1, row[j - 1] + 1), diagonal + (a[i - 1] == b[j - 1] ? 0 : 1));
+                    diagonal = above;
+                }
+            }
+
+            return row[b.Length];
         }
 
         private object[] BuildArguments(MethodInfo method, Dictionary<string, string> parameters)
