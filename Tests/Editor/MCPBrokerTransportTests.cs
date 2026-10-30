@@ -730,6 +730,82 @@ namespace KitWright.Editor
             }
         }
 
+        private static MCPRequest Redelivery(string tool)
+        {
+            return new MCPRequest
+            {
+                Id = "1",
+                Method = "tools/call",
+                IsBrokerRedelivery = true,
+                Params = new Dictionary<string, object> { ["name"] = tool }
+            };
+        }
+
+        [Test]
+        public async Task BrokerRedelivery_OfRecompileWaitsWhileItsRecoveryRecordIsStillPending()
+        {
+            KitWright.Editor.Tools.Builtins.CompilationFunctions.MarkExternalSyncPending();
+            try
+            {
+                DomainReloadHandler.StoreRecoveryInfo("request_recompile", MCPToolCallStatus.Success.ToString(), "compiled after reload");
+
+                var answer = MCPServerService.TryCreateBrokerRedeliveryResponseAsync(
+                    Redelivery("request_recompile"), TimeSpan.FromSeconds(30));
+                await Task.Delay(600);
+                Assert.IsFalse(answer.IsCompleted, "answered while the recompile was still pending");
+
+                KitWright.Editor.Tools.Builtins.CompilationFunctions.ClearExternalSyncPending();
+                var response = await answer;
+
+                Assert.NotNull(response);
+                Assert.That(JsonCodec.Serialize(response.Result), Does.Contain("compiled after reload"));
+            }
+            finally
+            {
+                KitWright.Editor.Tools.Builtins.CompilationFunctions.ClearExternalSyncPending();
+                DomainReloadHandler.GetLastRecoveryInfo(consume: true);
+            }
+        }
+
+        [Test]
+        public async Task BrokerRedelivery_OfRecompileGivesUpWaitingAndAnswersTheStub()
+        {
+            KitWright.Editor.Tools.Builtins.CompilationFunctions.MarkExternalSyncPending();
+            try
+            {
+                DomainReloadHandler.GetLastRecoveryInfo(consume: true);
+
+                var response = await MCPServerService.TryCreateBrokerRedeliveryResponseAsync(
+                    Redelivery("request_recompile"), TimeSpan.FromMilliseconds(300));
+
+                Assert.NotNull(response);
+                Assert.That(JsonCodec.Serialize(response.Result), Does.Contain("was not re-run automatically"));
+            }
+            finally
+            {
+                KitWright.Editor.Tools.Builtins.CompilationFunctions.ClearExternalSyncPending();
+            }
+        }
+
+        [Test]
+        public async Task BrokerRedelivery_OfAnotherToolDoesNotWaitOnAPendingRecompile()
+        {
+            KitWright.Editor.Tools.Builtins.CompilationFunctions.MarkExternalSyncPending();
+            try
+            {
+                var started = DateTime.UtcNow;
+                var response = await MCPServerService.TryCreateBrokerRedeliveryResponseAsync(
+                    Redelivery("execute_code"), TimeSpan.FromSeconds(30));
+
+                Assert.NotNull(response);
+                Assert.Less((DateTime.UtcNow - started).TotalSeconds, 5, "waited on a recompile that is not this call's");
+            }
+            finally
+            {
+                KitWright.Editor.Tools.Builtins.CompilationFunctions.ClearExternalSyncPending();
+            }
+        }
+
         [Test]
         public void BrokerSource_IsVisibleToAssetDatabaseForUnityPackageExport()
         {

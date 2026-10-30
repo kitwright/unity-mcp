@@ -101,6 +101,16 @@ namespace KitWright.Editor.Services
             return completedTask == waitSource.Task && waitSource.Task.IsCompletedSuccessfully;
         }
 
+        // For a caller that ran the refresh itself: it saw an import or compile start, but the compile
+        // an import queues begins a few frames later with the raw flag clear in between.
+        public async Task<bool> WaitAfterRefreshAsync(int timeoutSeconds)
+        {
+            if (!EditorApplication.isCompiling)
+                await WaitForCompilationToStartAsync(timeoutSeconds);
+
+            return await WaitForCompilationAsync(forceRefresh: false, timeoutSeconds: timeoutSeconds);
+        }
+
         public string GetCompilationErrors(int maxEntries = 50, bool includeWarnings = false, int cursor = 0)
         {
             maxEntries = Math.Max(1, maxEntries);

@@ -428,7 +428,7 @@ namespace KitWright.Editor.MCP.Server
                     var editorThreadTask = _threadHelper.ExecuteAsyncOnEditorThreadAsync(
                         async () =>
                         {
-                            var redeliveryResponse = TryCreateBrokerRedeliveryResponse(request);
+                            var redeliveryResponse = await TryCreateBrokerRedeliveryResponseAsync(request);
                             if (redeliveryResponse != null)
                                 return redeliveryResponse;
 
@@ -667,6 +667,22 @@ namespace KitWright.Editor.MCP.Server
                 _settings.MCPBrokerModeEnabled ? "broker=on" : "broker=off",
                 _settings.MCPBrokerMonoPath ?? string.Empty,
                 _settings.MCPServerPort.ToString());
+        }
+
+        private static readonly TimeSpan RecompileRecoveryMaxWait = TimeSpan.FromSeconds(30);
+
+        // The record a recompile leaves is written only once compiling ends, which can be after the
+        // reload; answering before that would hand back the stub, or an older recompile's record.
+        internal static async Task<MCPResponse> TryCreateBrokerRedeliveryResponseAsync(MCPRequest request, TimeSpan? maxWait = null)
+        {
+            if (request != null && request.IsBrokerRedelivery &&
+                string.Equals(GetToolName(request), "request_recompile", StringComparison.Ordinal))
+            {
+                await CompilationFunctions.WaitForHotReloadOutcomeAsync(
+                    () => !CompilationFunctions.HasPendingExternalSync(), maxWait ?? RecompileRecoveryMaxWait);
+            }
+
+            return TryCreateBrokerRedeliveryResponse(request);
         }
 
         internal static MCPResponse TryCreateBrokerRedeliveryResponse(MCPRequest request)

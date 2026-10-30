@@ -5,8 +5,11 @@ using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.DI;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
+using KitWright.Editor.Services.UnityLogs;
 using KitWright.Editor.State;
 using KitWright.Editor.Tools.Helpers;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -18,6 +21,8 @@ namespace KitWright.Editor.Tools.Builtins
         private const string ExternalSyncPendingKey = "KitWright_ExternalSync_Pending";
         private const string ExternalSyncStartedAtKey = "KitWright_ExternalSync_StartedAt";
         private const double ExternalSyncRecoveryMaxAgeSeconds = 120;
+        private const int PlayModeErrorCount = 10;
+        internal const string PlayModeErrorsKey = "KitWright_ExternalSync_PlayModeErrors";
 
         [Description("Force Unity to refresh and wait until script compilation is complete without blocking the editor thread. " +
                      "Use this after editing scripts to ensure the latest code is active before entering Play Mode. " +
@@ -72,20 +77,49 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("IMPORTANT: This should be the AI's default next step immediately after editing project files outside the Unity Editor. " +
                      "Treat this as required after any external code or asset change. " +
                      "Call it after modifying .cs, .asmdef, .shader, prefabs, scenes, ScriptableObjects, or other Assets files, and before running tests, entering Play Mode, executing follow-up tools, or assuming Unity has imported the latest state. " +
-                     "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery.")]
+                     "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery. " +
+                     "wait=true holds the call until compilation finishes and answers with its result (in broker mode it survives the domain reload). " +
+                     "exit_play_mode=true ends Play Mode first, keeping its latest console errors in the response, instead of answering PLAY_MODE_ACTIVE.")]
         public static async Task<string> RequestRecompile(
-            [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
+            [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30,
+            [ToolParam("Hold the call until compilation finishes and answer with the compile result. In broker mode the call is held across the domain reload; without a broker, leave false and call wait_for_compilation.", Required = false)] bool wait = false,
+            [ToolParam("When Unity is in Play Mode: keep its latest error/exception console entries in the response, exit Play Mode, then recompile. false (default) answers PLAY_MODE_ACTIVE and leaves Play Mode running.", Required = false)] bool exit_play_mode = false)
         {
+            timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
+
+            string playModeErrors = null;
             if (EditorApplication.isPlaying)
             {
-                return ToolResultFormatter.Error("PLAY_MODE_ACTIVE", new
+                if (!exit_play_mode)
                 {
-                    hint = "Unity does not process script recompilation or domain reloads while playing. Call exit_play_mode first, then retry request_recompile."
-                });
+                    return ToolResultFormatter.Error("PLAY_MODE_ACTIVE", new
+                    {
+                        hint = "Unity does not process script recompilation or domain reloads while playing. Call exit_play_mode first, then retry request_recompile, or pass exit_play_mode=true."
+                    });
+                }
+
+                playModeErrors = ReadPlayModeErrors();
+                if (playModeErrors != null)
+                    SessionState.SetString(PlayModeErrorsKey, playModeErrors);
+
+                EditorApplication.isPlaying = false;
+                Func<bool> inEditMode = () => !EditorApplication.isPlayingOrWillChangePlaymode;
+                if (!await WaitForHotReloadOutcomeAsync(inEditMode, TimeSpan.FromSeconds(timeout_seconds)))
+                {
+                    SessionState.EraseString(PlayModeErrorsKey);
+                    return AttachPlayModeErrors(
+                        ToolResultFormatter.Error("PLAY_MODE_EXIT_TIMEOUT", new { timeout_seconds }), playModeErrors);
+                }
             }
 
+            var result = await RecompileAsync(timeout_seconds, wait);
+            SessionState.EraseString(PlayModeErrorsKey);
+            return AttachPlayModeErrors(result, playModeErrors);
+        }
+
+        private static async Task<string> RecompileAsync(int timeout_seconds, bool wait)
+        {
             MarkExternalSyncPending();
-            timeout_seconds = Mathf.Clamp(timeout_seconds, 5, 120);
 
             var refreshResult = await EditorRefreshPipeline.RefreshAndRequestCompilationAsync(
                     forceUpdate: true,
@@ -120,7 +154,7 @@ namespace KitWright.Editor.Tools.Builtins
                     });
             }
 
-            if (EditorApplication.isCompiling || refreshResult.CompilationOrImportStarted)
+            if (!wait && (EditorApplication.isCompiling || refreshResult.CompilationOrImportStarted))
             {
                 ExternalSyncRecoveryTracker.TryCompletePendingRecovery();
                 return "External changes imported. Unity started importing or recompiling and may reload the domain. " +
@@ -135,8 +169,9 @@ namespace KitWright.Editor.Tools.Builtins
                 return "External changes imported. Compilation service is unavailable, so compilation status could not be checked.";
             }
 
-            bool completed = await compilationService
-                .WaitForCompilationAsync(forceRefresh: false, timeoutSeconds: timeout_seconds);
+            bool completed = wait && refreshResult.CompilationOrImportStarted
+                ? await compilationService.WaitAfterRefreshAsync(timeout_seconds)
+                : await compilationService.WaitForCompilationAsync(forceRefresh: false, timeoutSeconds: timeout_seconds);
 
             if (!completed)
             {
@@ -206,6 +241,32 @@ namespace KitWright.Editor.Tools.Builtins
                    $"- Status: {info.Status}\n" +
                    $"- Time: {info.Timestamp:O}\n" +
                    $"- Summary: {info.Summary}";
+        }
+
+        private static string ReadPlayModeErrors()
+        {
+            var repository = RootScopeServices.Services?.GetService(typeof(UnityLogsRepository)) as UnityLogsRepository;
+            return repository?.GetRecentLogs("error", PlayModeErrorCount, includeStackTrace: true);
+        }
+
+        internal static string AttachPlayModeErrors(string result, string playModeErrors)
+        {
+            if (string.IsNullOrEmpty(playModeErrors))
+                return result;
+
+            if (!ToolResultFormatter.IsError(result))
+                return ToolResultFormatter.Success(result, new { play_mode_console_errors = playModeErrors });
+
+            var response = JObject.Parse(result);
+            var data = response["data"] as JObject;
+            if (data == null)
+            {
+                data = new JObject();
+                response["data"] = data;
+            }
+
+            data["play_mode_console_errors"] = playModeErrors;
+            return response.ToString(Formatting.None);
         }
 
         private static CompilationService GetCompilationService()
@@ -300,6 +361,12 @@ namespace KitWright.Editor.Tools.Builtins
 
             CompilationFunctions.ClearExternalSyncPending();
 
+            var playModeErrors = SessionState.GetString(CompilationFunctions.PlayModeErrorsKey, string.Empty);
+            SessionState.EraseString(CompilationFunctions.PlayModeErrorsKey);
+            var playModeNote = playModeErrors.Length == 0
+                ? string.Empty
+                : "\n\nPlay Mode console errors before it was exited:\n" + playModeErrors;
+
             var compilationService = RootScopeServices.Services?.GetService(typeof(CompilationService)) as CompilationService
                                      ?? CompilationService.Instance;
             if (compilationService == null)
@@ -307,7 +374,7 @@ namespace KitWright.Editor.Tools.Builtins
                 DomainReloadHandler.StoreRecoveryInfo(
                     "request_recompile",
                     MCPToolCallStatus.Error.ToString(),
-                    "External changes were imported, but compilation service was unavailable after domain reload.");
+                    "External changes were imported, but compilation service was unavailable after domain reload." + playModeNote);
                 return;
             }
 
@@ -320,14 +387,14 @@ namespace KitWright.Editor.Tools.Builtins
                 DomainReloadHandler.StoreRecoveryInfo(
                     "request_recompile",
                     MCPToolCallStatus.Error.ToString(),
-                    "External changes were imported, but compilation reported issues.\n" + issues);
+                    "External changes were imported, but compilation reported issues.\n" + issues + playModeNote);
                 return;
             }
 
             DomainReloadHandler.StoreRecoveryInfo(
                 "request_recompile",
                 MCPToolCallStatus.Success.ToString(),
-                "External changes were imported and script compilation finished successfully after domain reload.");
+                "External changes were imported and script compilation finished successfully after domain reload." + playModeNote);
         }
     }
 }

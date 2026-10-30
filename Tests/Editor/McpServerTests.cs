@@ -270,6 +270,45 @@ namespace KitWright.Editor.Tests
             Assert.IsTrue(result);
         }
 
+        [Test]
+        public void RequestRecompile_TakesWaitAndExitPlayModeAsOptInParameters()
+        {
+            var parameters = typeof(CompilationFunctions).GetMethod("RequestRecompile").GetParameters();
+
+            foreach (var name in new[] { "wait", "exit_play_mode" })
+            {
+                var parameter = parameters.SingleOrDefault(p => p.Name == name);
+                Assert.NotNull(parameter, name + " is missing from request_recompile.");
+                Assert.AreEqual(false, parameter.DefaultValue,
+                    name + " has to default to off, or a plain request_recompile changes behavior.");
+            }
+        }
+
+        [Test]
+        public void AttachPlayModeErrors_KeepsAnErrorsCodeAndAddsTheEvidenceToItsData()
+        {
+            var error = KitWright.Editor.Tools.Helpers.ToolResultFormatter.Error("COMPILATION_FAILED", new { issues = "CS0103" });
+
+            var attached = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.AttachPlayModeErrors(error, "[ERROR] boom"));
+
+            Assert.AreEqual("COMPILATION_FAILED", (string)attached["code"]);
+            Assert.AreEqual("CS0103", (string)attached["data"]["issues"]);
+            Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
+        }
+
+        [Test]
+        public void AttachPlayModeErrors_WrapsAPlainAnswerAndLeavesItAloneWithoutEvidence()
+        {
+            Assert.AreEqual("done", CompilationFunctions.AttachPlayModeErrors("done", null));
+            Assert.AreEqual("done", CompilationFunctions.AttachPlayModeErrors("done", string.Empty));
+
+            var attached = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.AttachPlayModeErrors("done", "[ERROR] boom"));
+
+            Assert.AreEqual(true, (bool)attached["success"]);
+            Assert.AreEqual("done", (string)attached["message"]);
+            Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
+        }
+
         // A capture run inside batch_execute is a string value in the batch's JSON, not a bare
         // data URI, so it used to reach the client as ~300 KB of base64 text.
         [Test]
