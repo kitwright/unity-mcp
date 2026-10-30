@@ -89,6 +89,45 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void BuildCodeForCompilation_BareBody_AliasesObjectToUnityEngine()
+        {
+            var fullCode = ScriptExecutionFunctions.BuildCodeForCompilation(
+                "Object.DestroyImmediate(null);", "TempScript", false, out _);
+
+            StringAssert.Contains("using Object = UnityEngine.Object;", fullCode);
+        }
+
+        [Test]
+        public void BuildCodeForCompilation_ClassSnippetThatWouldBeAmbiguous_GetsTheObjectAlias()
+        {
+            var ambiguous = "using System;\nusing UnityEngine;\npublic class A { public static object Run() { return Object.FindFirstObjectByType<Camera>(); } }";
+            var systemOnly = "using System;\npublic class A { public static object Run() { return Object.ReferenceEquals(1, 2); } }";
+
+            StringAssert.StartsWith("using Object = UnityEngine.Object;",
+                ScriptExecutionFunctions.BuildCodeForCompilation(ambiguous, "TempScript", false, out _));
+            StringAssert.DoesNotContain("UnityEngine.Object",
+                ScriptExecutionFunctions.BuildCodeForCompilation(systemOnly, "TempScript", false, out _));
+        }
+
+        [Test]
+        public void HintForCompileErrors_NamesTheCommandSignatureAndStaysQuietOtherwise()
+        {
+            var wrongSignature = new[]
+            {
+                new ScriptCompilationError
+                {
+                    code = "CS0738",
+                    text = "'A' does not implement interface member 'IKitWrightCommand.Execute(ExecutionContext)'."
+                }
+            };
+            var unrelated = new[] { new ScriptCompilationError { code = "CS0103", text = "The name 'x' does not exist" } };
+
+            StringAssert.Contains("void Execute(ExecutionContext ctx)",
+                ScriptExecutionFunctions.HintForCompileErrors(wrongSignature));
+            Assert.IsNull(ScriptExecutionFunctions.HintForCompileErrors(unrelated));
+        }
+
+        [Test]
         public void ReachableProjectNamespaceUsings_AreDerivedFromLoadedScriptAssemblies()
         {
             var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));

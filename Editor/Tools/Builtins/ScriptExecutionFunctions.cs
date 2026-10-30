@@ -347,6 +347,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
                 var errors = compilation.Errors.Select(placement.ToSnippet).ToList();
+                var hint = HintForCompileErrors(errors);
                 // The attempts only say something when one compiler failed over to another; a lone
                 // Roslyn attempt repeated what "compiler" already says, on every compile error.
                 return compilation.Attempts.Count > 1
@@ -355,8 +356,8 @@ namespace KitWright.Editor.Tools.Builtins
                         compiler = compilation.CompilerName,
                         errors,
                         compiler_attempts = compilation.Attempts
-                    })
-                    : Response.Error("COMPILATION_FAILED", new { compiler = compilation.CompilerName, errors });
+                    }, hint)
+                    : Response.Error("COMPILATION_FAILED", new { compiler = compilation.CompilerName, errors }, hint);
             }
 
             if (compilation.Status != ScriptCompilationStatus.Success || compilation.Assembly == null)
@@ -544,7 +545,8 @@ namespace KitWright.Editor.Tools.Builtins
                     actualClassName = match.Groups[1].Value;
 
                 var requiredUsings = GetRequiredSnippetUsings(code);
-                return PrependMissingUsings(code, requiredUsings + projectUsings);
+                var withUsings = PrependMissingUsings(code, requiredUsings + projectUsings);
+                return NeedsObjectAlias(code) ? "using Object = UnityEngine.Object;\n" + withUsings : withUsings;
             }
 
             return WrapCode(code, className, projectUsings);
@@ -552,7 +554,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         /// <summary>
         /// Where the caller's snippet sits in the source that was compiled. The compiler reports lines
-        /// of that source: a bare body starts on line 17, under the usings and the wrapper class, and
+        /// of that source: a bare body starts on line 18, under the usings and the wrapper class, and
         /// its first line is indented 8. Reported as-is, an error on the snippet's line 3 read as line
         /// 19, and the agent spent a round trip finding the line it had written.
         /// </summary>
@@ -607,6 +609,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using Object = UnityEngine.Object;
 using {KitWrightScriptingNamespace};
 {projectUsings}
 public static class {className}
@@ -743,6 +746,28 @@ public static class {className}
                 return string.Empty;
 
             return $"using {KitWrightScriptingNamespace};\n";
+        }
+
+        // Only the exact case that would otherwise be CS0104, so a snippet that means System.Object
+        // without importing UnityEngine keeps its meaning.
+        internal static bool NeedsObjectAlias(string code)
+        {
+            return Regex.IsMatch(code, @"(?<![\w.])Object(?!\w)") &&
+                   Regex.IsMatch(code, @"^\s*using\s+System\s*;", RegexOptions.Multiline) &&
+                   Regex.IsMatch(code, @"^\s*using\s+UnityEngine\s*;", RegexOptions.Multiline) &&
+                   !Regex.IsMatch(code, @"^\s*using\s+Object\s*=", RegexOptions.Multiline);
+        }
+
+        internal static string HintForCompileErrors(IEnumerable<ScriptCompilationError> errors)
+        {
+            foreach (var error in errors)
+            {
+                if ((error.code == "CS0535" || error.code == "CS0738") &&
+                    error.text != null && error.text.Contains("IKitWrightCommand"))
+                    return "IKitWrightCommand requires `void Execute(ExecutionContext ctx)`; return data through ctx.ReturnValue.";
+            }
+
+            return null;
         }
 
         internal static bool UsesUnqualifiedIKitWrightCommand(string code)
