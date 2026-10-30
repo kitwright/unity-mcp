@@ -453,7 +453,7 @@ namespace KitWright.Editor.MCP.Server
                         sendResponse(new MCPResponse
                         {
                             Id = request?.Id,
-                            Error = new MCPError { Code = -32001, Message = $"Tool call timed out after {ceilingMs}ms." }
+                            Error = new MCPError { Code = -32001, Message = ToolTimeoutMessage(GetToolName(request), ceilingMs) }
                         });
                         return;
                     }
@@ -496,6 +496,19 @@ namespace KitWright.Editor.MCP.Server
                     Error = new MCPError { Code = -32603, Message = $"Internal error: {ex.Message}" }
                 });
             }
+        }
+
+        // A bare "timed out" read as "nothing happened", so agents ran the same work a second time
+        // behind the first.
+        internal static string ToolTimeoutMessage(string toolName, int ceilingMs)
+        {
+            var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled " +
+                          "and may still finish, so check what it did before running it again.";
+
+            return string.Equals(toolName, "execute_code", StringComparison.Ordinal)
+                ? message + " For work that legitimately takes longer, pass timeout_seconds (up to " +
+                  $"{ToolRegistry.MaxExecuteCodeTimeoutSeconds}); get_execute_code_history shows whether it finished."
+                : message;
         }
 
         // The stall watchdog's verdict is an answer, not a crash: left to the generic catch it

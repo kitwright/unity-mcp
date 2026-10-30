@@ -216,6 +216,12 @@ namespace KitWright.Editor.Tools
             if (string.Equals((string)name, BatchToolName, StringComparison.Ordinal))
                 return BatchBudgetSeconds(BatchCommandNames(parameters), fallback);
 
+            if (string.Equals((string)name, ExecuteCodeToolName, StringComparison.Ordinal))
+            {
+                var requested = ExecuteCodeTimeoutSeconds(parameters);
+                return requested > 0 ? Math.Max(requested + ExecuteCodeBudgetMarginSeconds, fallback) : fallback;
+            }
+
             var budget = LongRunningSeconds((string)name);
             return budget > fallback ? budget : fallback;
         }
@@ -234,6 +240,34 @@ namespace KitWright.Editor.Tools
         }
 
         private const int MaxBatchBudgetSeconds = 1800;
+
+        private const string ExecuteCodeToolName = "execute_code";
+
+        // Room for the pre-compile refresh (up to 120 s) and the compile, which run before the snippet's own budget starts.
+        private const int ExecuteCodeBudgetMarginSeconds = 120;
+
+        // Capped so that the call ceiling stays at a batch's 1800 s, under the broker's hold deadline.
+        internal const int MaxExecuteCodeTimeoutSeconds = MaxBatchBudgetSeconds - ExecuteCodeBudgetMarginSeconds;
+
+        internal static int ClampExecuteCodeTimeout(long seconds) =>
+            (int)Math.Min(Math.Max(seconds, 0), MaxExecuteCodeTimeoutSeconds);
+
+        // Absent, zero or unreadable all mean "no request": the ordinary ceiling stays.
+        internal static int ExecuteCodeTimeoutSeconds(IDictionary<string, object> parameters)
+        {
+            if (!(parameters.TryGetValue("arguments", out var arguments) && arguments is IDictionary<string, object> args) ||
+                !args.TryGetValue("timeout_seconds", out var value) || value == null)
+                return 0;
+
+            try
+            {
+                return ClampExecuteCodeTimeout(Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture));
+            }
+            catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
+            {
+                return 0;
+            }
+        }
 
         private static int LongRunningSeconds(string toolName) =>
             string.IsNullOrEmpty(toolName)

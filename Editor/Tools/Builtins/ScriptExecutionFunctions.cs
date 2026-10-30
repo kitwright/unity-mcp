@@ -52,11 +52,14 @@ namespace KitWright.Editor.Tools.Builtins
                      "If omitted, the MCP Settings window's default safety-check setting is used (enabled by default); " +
                      "explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
-                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
+                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code). " +
+                     "A call is cut off after about 170 s while the work already running in the editor goes on; " +
+                     "pass timeout_seconds for work that legitimately takes longer.")]
         public static async Task<object> ExecuteCode(
             [ToolParam("C# code to execute: a bare method body, or a full class (IKitWrightCommand or static Run()).")] string code,
             [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
-            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false)
+            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false,
+            [ToolParam("Seconds the snippet may run, for work that legitimately outlasts the ~170 s call ceiling (up to 1680). Raises the call ceiling to this plus 120 s and the budget for the snippet's loops from 20 s to this, so a runaway loop is stopped only after this long. 0 (default) keeps both ordinary limits; a value never narrows them.", Required = false)] int timeout_seconds = 0)
         {
             var effectiveSafetyChecks = safety_checks ?? ResolveSafetyChecksDefault();
             if (effectiveSafetyChecks)
@@ -108,7 +111,8 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var result = RunInSingleUndoGroup(UndoGroupName(code),
-                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode)));
+                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode),
+                        LoopBudgetFor(timeout_seconds)));
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result));
                 return result;
             }
@@ -341,8 +345,14 @@ namespace KitWright.Editor.Tools.Builtins
             return "execute_code: " + Preview(firstLine, 60);
         }
 
+        internal static TimeSpan LoopBudgetFor(int timeoutSeconds)
+        {
+            var requested = TimeSpan.FromSeconds(ToolRegistry.ClampExecuteCodeTimeout(timeoutSeconds));
+            return requested > LoopBudgetGuard.DefaultBudget ? requested : LoopBudgetGuard.DefaultBudget;
+        }
+
         private static object CompileAndExecute(string code, string className, bool safetyChecks,
-            SnippetPlacement placement = default)
+            SnippetPlacement placement = default, TimeSpan? loopBudget = null)
         {
             var compilation = ScriptCompilerPipeline.Compile(LoopGuardInjector.Inject(code));
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
@@ -389,7 +399,7 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            LoopBudgetGuard.Begin(LoopBudgetGuard.DefaultBudget);
+            LoopBudgetGuard.Begin(loopBudget ?? LoopBudgetGuard.DefaultBudget);
             try
             {
                 return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts);
