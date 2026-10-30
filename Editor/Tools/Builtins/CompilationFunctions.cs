@@ -23,6 +23,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "Use this after editing scripts to ensure the latest code is active before entering Play Mode. " +
                      "Returns compilation errors if any, or a success message.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static async Task<string> WaitForCompilation(
             [ToolParam("Force a reimport/refresh before waiting", Required = false)] bool force_refresh = true,
             [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
@@ -161,6 +162,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "If a domain reload interrupts the call, the compile finished and the new code loaded: call it once more for the result. " +
                      "A page cut short by max_entries reports a next_cursor to pass back as cursor for the rest.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static async Task<string> GetCompilationErrors(
             [ToolParam("Maximum number of issues to return", Required = false)] int max_entries = 50,
             [ToolParam("Include warnings in addition to errors", Required = false)] bool include_warnings = false,
@@ -191,6 +193,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Get the latest domain reload recovery event, if any. Useful after Unity recompiles scripts and an MCP request gets interrupted.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static string GetReloadRecoveryStatus(
             [ToolParam("Consume and clear the stored recovery event after reading", Required = false)] bool consume = false)
         {

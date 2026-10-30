@@ -50,6 +50,11 @@ namespace KitWright.Editor.Tools
     [AttributeUsage(AttributeTargets.Method)]
     public class ReadOnlyToolAttribute : Attribute { }
 
+    /// Broker redelivery after a domain reload runs this tool again instead of answering "interrupted".
+    /// Not implied by [ReadOnlyTool]: input-simulation tools carry that one and would press the key twice.
+    [AttributeUsage(AttributeTargets.Method)]
+    public class ReplaySafeToolAttribute : Attribute { }
+
     /// Runs the tool on the request thread instead of queueing it for the editor loop.
     /// Only for tools that touch no Unity API, because the point is to still answer while a
     /// modal dialog owns the editor loop and nothing queued can run.

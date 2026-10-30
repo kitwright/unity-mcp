@@ -23,6 +23,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Get high-level editor runtime state: which project this editor has open, play mode, paused, compiling, updating, time-since-startup, time scale. " +
                      "Call this first when several editors may be running to confirm which project the server is attached to.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static object GetEditorState()
         {
             // Name alone does not identify an editor -- two clones of the same project share it,

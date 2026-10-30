@@ -187,6 +187,12 @@ namespace KitWright.Editor.Tools
             return method.GetCustomAttribute<ReadOnlyToolAttribute>() != null;
         }
 
+        public static bool IsReplaySafe(string snakeCaseName)
+        {
+            var method = string.IsNullOrEmpty(snakeCaseName) ? null : GetMethod(snakeCaseName);
+            return method != null && method.GetCustomAttribute<ReplaySafeToolAttribute>() != null;
+        }
+
         /// <summary>Default per-request budget, matching the plain HTTP transport's historical cap.</summary>
         public const int DefaultToolTimeoutSeconds = 180;
 

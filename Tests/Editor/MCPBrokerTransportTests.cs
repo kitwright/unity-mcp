@@ -710,6 +710,27 @@ namespace KitWright.Editor
         }
 
         [Test]
+        public void BrokerRedeliveryResponse_LetsReplaySafeToolsRunInTheNewDomain()
+        {
+            foreach (var tool in new[]
+                     {
+                         "wait_for_compilation", "get_compilation_errors", "get_reload_recovery_status",
+                         "get_editor_state", "get_scene_info"
+                     })
+            {
+                var response = MCPServerService.TryCreateBrokerRedeliveryResponse(new MCPRequest
+                {
+                    Id = "1",
+                    Method = "tools/call",
+                    IsBrokerRedelivery = true,
+                    Params = new Dictionary<string, object> { ["name"] = tool }
+                });
+
+                Assert.IsNull(response, tool + " is a pure read: answering it with the interrupted stub is the bug.");
+            }
+        }
+
+        [Test]
         public void BrokerSource_IsVisibleToAssetDatabaseForUnityPackageExport()
         {
             var assetPath = ResolveBrokerSourceAssetPath();

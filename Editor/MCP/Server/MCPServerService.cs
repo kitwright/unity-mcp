@@ -679,7 +679,7 @@ namespace KitWright.Editor.MCP.Server
             }
 
             var toolName = GetToolName(request);
-            if (string.Equals(toolName, "get_reload_recovery_status", StringComparison.OrdinalIgnoreCase))
+            if (ToolRegistry.IsReplaySafe(toolName))
                 return null;
 
             var recovery = DomainReloadHandler.GetLastRecoveryInfo(false);

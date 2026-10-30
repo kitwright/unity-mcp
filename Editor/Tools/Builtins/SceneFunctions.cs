@@ -220,6 +220,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Get information about every loaded scene (the active scene plus any additively loaded ones), " +
                      "including path, dirty state, and a shallow root-object hierarchy per scene.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static string GetSceneInfo()
         {
             var activeScene = EditorSceneManager.GetActiveScene();
