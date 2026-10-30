@@ -393,6 +393,22 @@ namespace KitWright.Editor.Tests
             AssertAllowed(code, false);
         }
 
+        [TestCase("File.Delete(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("AssetDatabase.DeleteAsset(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("while (true) { }", false, "Bound the loop")]
+        [TestCase("var t = Type.GetType(\"Foo\");", false, "typeof(T)")]
+        [TestCase("var m = t.GetMethod(\"Foo\");", false, "reflect_api")]
+        [TestCase("Application.Quit();", false, "exit_play_mode")]
+        [TestCase("File.WriteAllText(\"Assets/x.txt\", \"data\");", true, "write_file")]
+        [TestCase("new StreamReader(\"x\");", true, "read_file")]
+        [TestCase("Directory.CreateDirectory(\"Assets/gen\");", true, "create_folder")]
+        [TestCase("var path = \"/Users/xyz/.ssh/config\";", true, "Assets/")]
+        public void BlockedPattern_NamesTheAllowedAlternative(string code, bool strict, string expectedAlternativePart)
+        {
+            Assert.IsTrue(ExecuteCodeSafetyPolicy.TryFindViolation(code, strict, out _, out _, out var alternative));
+            StringAssert.Contains(expectedAlternativePart, alternative);
+        }
+
         private static void AssertBlocked(string code, bool strict, string expectedReasonPart)
         {
             Assert.IsTrue(ExecuteCodeSafetyPolicy.TryFindViolation(code, strict, out _, out var reason));

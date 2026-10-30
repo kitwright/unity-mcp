@@ -61,13 +61,14 @@ namespace KitWright.Editor.Tools.Builtins
             var effectiveSafetyChecks = safety_checks ?? ResolveSafetyChecksDefault();
             if (effectiveSafetyChecks)
             {
-                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason))
+                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason, out var alternative))
                 {
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
                             pattern,
                             reason,
+                            alternative,
                             hint = "Rewrite the snippet to avoid the pattern. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}");

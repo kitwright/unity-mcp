@@ -249,7 +249,12 @@ public class CommandSyntax : IKitWrightCommand
         {
             return ExecuteCodeAndAssert(
                 "public class Nuke { public static string Run() { System.IO.File.Delete(\"x\"); return \"no\"; } }",
-                result => AssertError(result, "SAFETY_CHECK_BLOCKED"),
+                result =>
+                {
+                    AssertError(result, "SAFETY_CHECK_BLOCKED");
+                    var data = GetProperty<object>(result, "data");
+                    StringAssert.Contains("delete_asset", GetProperty<string>(data, "alternative"));
+                },
                 safetyChecks: null);
         }
 
