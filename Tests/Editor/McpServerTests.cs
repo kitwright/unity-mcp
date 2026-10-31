@@ -309,6 +309,21 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
         }
 
+        [Test]
+        public void ScriptsNewerThanCompilationError_RefusesAnEmptyErrorListThatPredatesTheEdits()
+        {
+            Assert.IsNull(CompilationFunctions.ScriptsNewerThanCompilationError(
+                KitWright.Editor.Tools.Helpers.ScriptChangeState.Empty));
+
+            var stale = new KitWright.Editor.Tools.Helpers.ScriptChangeState();
+            stale.AddOutOfDateSource("Assets/A.cs");
+            var refused = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.ScriptsNewerThanCompilationError(stale));
+
+            Assert.AreEqual("SCRIPT_CHANGES_NOT_COMPILED", (string)refused["code"]);
+            Assert.AreEqual(1, (int)refused["data"]["pending_script_files"]);
+            StringAssert.Contains("request_recompile", (string)refused["data"]["hint"]);
+        }
+
         // A capture run inside batch_execute is a string value in the batch's JSON, not a bare
         // data URI, so it used to reach the client as ~300 KB of base64 text.
         [Test]

@@ -66,7 +66,7 @@ namespace KitWright.Editor.Tools.Builtins
                     return ToolResultFormatter.Error("COMPILATION_FAILED", new { issues });
 
                 double elapsed = (DateTime.UtcNow - startTime).TotalSeconds;
-                return $"Compilation complete ({elapsed:F1}s). No errors detected.";
+                return ScriptsNewerThanCompilationError() ?? $"Compilation complete ({elapsed:F1}s). No errors detected.";
             }
             catch (Exception ex)
             {
@@ -102,10 +102,14 @@ namespace KitWright.Editor.Tools.Builtins
                 if (playModeErrors != null)
                     SessionState.SetString(PlayModeErrorsKey, playModeErrors);
 
+                MarkExternalSyncPending();
                 EditorApplication.isPlaying = false;
-                Func<bool> inEditMode = () => !EditorApplication.isPlayingOrWillChangePlaymode;
+                // isPlayingOrWillChangePlaymode only reports a pending switch INTO Play Mode, so it is
+                // already false while the exit is still queued and isPlaying has to be waited on.
+                Func<bool> inEditMode = () => !EditorApplication.isPlaying && !EditorApplication.isPlayingOrWillChangePlaymode;
                 if (!await WaitForHotReloadOutcomeAsync(inEditMode, TimeSpan.FromSeconds(timeout_seconds)))
                 {
+                    ClearExternalSyncPending();
                     SessionState.EraseString(PlayModeErrorsKey);
                     return AttachPlayModeErrors(
                         ToolResultFormatter.Error("PLAY_MODE_EXIT_TIMEOUT", new { timeout_seconds }), playModeErrors);
@@ -189,7 +193,24 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error("COMPILATION_FAILED", new { issues });
             }
 
-            return "External changes imported. No compilation errors or warnings detected.";
+            return ScriptsNewerThanCompilationError() ?? "External changes imported. No compilation errors or warnings detected.";
+        }
+
+        // A compile that never ran leaves an empty error list, which would read as success.
+        internal static string ScriptsNewerThanCompilationError(ScriptChangeState state = null)
+        {
+            state = state ?? EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            var pending = state.OutOfDateSourceCount + state.UnknownProjectScriptCount;
+            if (pending == 0)
+                return null;
+
+            return ToolResultFormatter.Error("SCRIPT_CHANGES_NOT_COMPILED", new
+            {
+                pending_script_files = pending,
+                hint = EditorApplication.isPlaying
+                    ? "Unity does not compile while playing. Call exit_play_mode, then request_recompile."
+                    : "These files are newer than the last compilation. Call request_recompile, then wait_for_compilation(force_refresh=false)."
+            });
         }
 
         [Description("Get the latest Unity script compilation errors from the most recent compilation cycle. " +

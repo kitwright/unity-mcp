@@ -397,18 +397,11 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            // Screen.width/height on the editor main thread report the focused editor
-            // window, not the game render resolution the UI canvases are laid out in.
-            // Resolve the real Game View target size (same reflection the screenshot
-            // tools use) so normalized coordinates and the top_left flip match what
-            // GraphicRaycaster actually raycasts against.
-            var screenWidth = 0;
-            var screenHeight = 0;
-            if (!ScreenshotFunctions.TryResolveGameViewSize(ref screenWidth, ref screenHeight))
-            {
-                screenWidth = Screen.width;
-                screenHeight = Screen.height;
-            }
+            // The pointer position is in Screen space, the resolution the canvases are laid out in. The
+            // Game View window's own pixel size (what TryResolveGameViewSize reads) is smaller whenever
+            // a fixed resolution is scaled to fit, which put normalized and top_left points off target.
+            var screenWidth = Screen.width;
+            var screenHeight = Screen.height;
 
             var px = normalized ? x * screenWidth : x;
             var py = normalized ? y * screenHeight : y;

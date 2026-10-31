@@ -40,7 +40,6 @@ namespace KitWright.Editor.Tests
             "replay_execute_code",
             // Play Mode, driven from inside a test that is already driving it
             "enter_play_mode",
-            "exit_play_mode",
             // minutes of work, or a file the size of the heap
             "bake_lightmaps",
             "memory_take_full_snapshot",
