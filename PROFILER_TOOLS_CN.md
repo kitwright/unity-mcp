@@ -23,7 +23,7 @@
 | 工具 | 参数 | 返回值 | 说明 |
 |---|---|---|---|
 | `profiler_start` | *(无)* | 确认信息 + recorder 数量 | 启用 `UnityEngine.Profiling.Profiler`,并启动 9 个常驻的 `ProfilerRecorder`(5 个 Render 类、4 个 Memory 类——见[默认计数器](#默认计数器))。幂等——重复调用时安全,不会出错。 |
-| `profiler_stop` | *(无)* | 确认信息 | 释放全部常驻 recorder 并关闭 `Profiler`。 |
+| `profiler_stop` | *(无)* | 确认信息 | 释放全部常驻 recorder 并关闭 `Profiler`,即使 `profiler_start` 之前它就是开着的。没有 `profiler_start` 会话时什么都不做,所以手动开始的录制不会被动。会话标记存在 `SessionState` 里,域重载后(进入 Play Mode 默认会重载)仍然有效。 |
 | `profiler_status` | *(无)* | 多行状态信息 | 会话是否在跑、活跃 recorder 数量,以及每个 recorder 的 `running`/`valid` 标志。 |
 
 ### 帧计时 / 计数器
@@ -31,7 +31,7 @@
 | 工具 | 参数 | 返回值 | 说明 |
 |---|---|---|---|
 | `get_frame_timing` | `sample_frames`(int,可选,默认 1,限制在 1–30) | CPU/GPU 平均帧时间(ms)+ 估算 FPS | 使用 `UnityEngine.FrameTimingManager`。**不需要**先调用 `profiler_start`。如果暂时没有可用的计时样本,会回退到 `Time.unscaledDeltaTime`。 |
-| `get_counters` | `names`(string,可选,逗号分隔) | 每个计数器一行:`last`、`current`、`unit` | 读取 `profiler_start` 启动的常驻 recorder;如果尚未启动,会自动启动(并给出提示)。Render 类计数器的限制见[已知限制](#已知限制)。 |
+| `get_counters` | `names`(string,可选,逗号分隔) | 每个计数器一行:`last`、`current`、`unit` | 读取 `profiler_start` 启动的常驻 recorder。没有会话时只读 Memory 类计数器(一次性读取,recorder 随后释放)并给出提示;此时按名字请求 Render 类计数器会返回 `UNKNOWN_COUNTERS`,因为它们需要先 `profiler_start` 并等几帧。 |
 
 #### 默认计数器
 
@@ -69,13 +69,13 @@ Memory/Gfx Used Memory, Memory/Total Used Memory
 
 有两个不太直观、值得向审阅者特别说明的点,都是通过对着真实运行的 Editor 测试发现的,而不是从 API 文档推测出来的:
 
-1. **`ProfilerRecorder` 必须跨帧存活。** 在单次同步调用里构造一个 `ProfilerRecorder`、读取、再释放,读到的值是 `0`——recorder 需要跨越至少一个真实的帧边界持续运行。`profiler_start` 把一个 `Dictionary<string, ProfilerRecorder>` 作为静态字段常驻保留(在 `AssemblyReloadEvents.beforeAssemblyReload` 时释放,避免原生句柄在域重载时泄漏),而不是每次调用时现场构造 recorder。
+1. **`ProfilerRecorder` 必须跨帧存活。** 在单次同步调用里构造一个 `ProfilerRecorder`、读取、再释放,Render 类计数器读到的值是 `0`——recorder 需要跨越至少一个真实的帧边界持续运行。创建 recorder 时要带 `ProfilerRecorderOptions.StartImmediately`,否则它一直处于停止状态,永远读到 `0`。`profiler_start` 把一个 `Dictionary<string, ProfilerRecorder>` 作为静态字段常驻保留(在 `AssemblyReloadEvents.beforeAssemblyReload` 时释放,避免原生句柄在域重载时泄漏),而不是每次调用时现场构造 recorder。
 
 2. **单独启用 `FrameDebuggerUtility` 不会驱动采集。** `UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerUtility` 只是一个数据容器;真正驱动采集循环的是 `UnityEditor.FrameDebuggerWindow` 的 `Update()`/`OnGUI()`。`frame_debugger_enable` 反射调用 `FrameDebuggerWindow.OpenWindow()`(public static)获取/创建一个窗口实例,再反射调用该实例上的 `EnableFrameDebugger()`(non-public 实例方法)并调用 `Repaint()`。`frame_debugger_disable` 通过 `Resources.FindObjectsOfTypeAll` 找到所有已打开的实例,对每一个调用 `DisableFrameDebugger()` + `Close()`。
 
 ## 已知限制
 
-- **Render 类计数器在 Unity Editor 里持续读到 `0`**,即便确认渲染正在发生。这一点通过同时运行 `frame_debugger_get_events` 和 `get_counters` 得到验证——某次测试里 Frame Debugger 显示了 78–95 个真实渲染事件,而 `Render/Draw Calls Count` 等指标一直是 `0`。切换 `ProfilerDriver.profileEditor = true` 也不改变这个结果。Memory 类计数器(`GC Used Memory`、`Gfx Used Memory`、`Total Used Memory`)不受影响,能可靠读到真实数值。**未验证**这个限制是否同样存在于 Standalone Player 构建——如果有人测试这个 PR 时能确认这一点,会是很有用的补充信息。
+- **Render 类计数器曾经在 Unity Editor 里读到 `0`**,这并不是 Editor 的限制:recorder 创建时没带 `StartImmediately`,所以从未启动。现在它们随会话启动并读到真实数值(例如在有渲染的场景里 `Draw Calls Count`、`Triangles Count` 非零)。下面的测试报告是在这次修复之前做的,所以仍然写着 `0`。
 - **`memory_take_snapshot` 不是真实的 Unity Memory Profiler 快照。** `com.unity.memoryprofiler` 的公开脚本 API 几乎为空(反射其全部程序集只找到 3 个跟捕获/对比无关的公开类型),旧的 `UnityEngine.Profiling.Memory.Experimental.MemoryProfiler.TakeSnapshot` 在 Unity 6 已被完全移除,`ProfilerDriver.RequestMemorySnapshot()` 在测试中也没能可靠落盘生成文件——而且中等规模项目的真实快照文件可能达到数 GB,不适合作为能被 AI agent 频繁调用的工具动作。所以这个工具改成用一套自定义 JSON 格式记录一小组聚合数字,与任何真实的 `.snap` 文件分开存放。
 - **`frame_debugger_disable` 会关闭所有已打开的 Frame Debugger 窗口**,不仅是这个工具自己打开的那一个——如果最终用户手动开着一个窗口,这一点值得让调用方(LLM)知会用户。
 

@@ -89,11 +89,17 @@ namespace KitWright.Editor.Tools.Builtins
 
                     // This runs its own invoker, so MCPExecutionBridge never sees the sub-commands:
                     // without this check a batch reaches tools that a direct call answers with
-                    // TOOL_NOT_EXPOSED.
-                    if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
+                    // TOOL_NOT_EXPOSED. Unknown names answer UNKNOWN_TOOL first, as a direct call does.
+                    string refusal = null;
+                    if (ToolRegistry.GetMethod(name) == null && !ToolRegistry.IsManualTool(name))
+                        refusal = ToolResultFormatter.Error("UNKNOWN_TOOL", new { tool = name });
+                    else if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
+                        refusal = MCPExecutionBridge.WithheldToolError(
+                            name, profileKey, ToolPackageGate.MissingPackageFor(name), MCPExecutionBridge.NotExposedHint(Settings()));
+
+                    if (refusal != null)
                     {
-                        results.Add(new { index = i, name, result = JToken.Parse(
-                            ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = name, profile = profileKey })) });
+                        results.Add(new { index = i, name, result = JToken.Parse(refusal) });
                         if (stop_on_error) { aborted = true; break; }
                         continue;
                     }

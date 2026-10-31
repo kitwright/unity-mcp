@@ -367,6 +367,14 @@ namespace KitWright.Editor.Tools
         /// </summary>
         public static IReadOnlyDictionary<string, ManualToolEntry> ManualTools => _manualTools;
 
+        public static bool IsManualTool(string name)
+        {
+            lock (_lock)
+            {
+                return _manualTools.ContainsKey(name);
+            }
+        }
+
         // --- Utility ---
 
         public static string ToSnakeCase(string pascalCase)

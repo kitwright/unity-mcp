@@ -63,7 +63,7 @@
 | `memory_take_snapshot` | Take a lightweight memory snapshot (aggregate numbers only, NOT a real Unity .snap file openable in the Memory Profiler window) and save it as JSON under MemoryCaptures/mcp-snapshots/. |
 | `profiler_start` | Start a Profiler capture session (enables UnityEngine.Profiling.Profiler and starts a set of persistent ProfilerRecorder counters used by get_counters/get_frame_timing). |
 | `profiler_status` | Report whether a Profiler capture session is currently running and how many counters are active. |
-| `profiler_stop` | Stop the current Profiler capture session and dispose all persistent ProfilerRecorder counters. |
+| `profiler_stop` | Stop the Profiler capture session started by profiler_start: disposes its ProfilerRecorder counters and turns Profiler.enabled off, even when it was already on before profiler_start. |
 
 ## Scene (13)
 
@@ -361,7 +361,7 @@
 | `clear_execute_code_history` | Erase the entire execute_code history for the current Editor session. |
 | `execute_code` *(core)* | Primary high-flexibility execution tool. |
 | `get_execute_code_history` | Return the most recent execute_code invocations (success or failure) from the current Editor session. |
-| `replay_execute_code` | Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). |
+| `replay_execute_code` | Re-run a past execute_code invocation by its history id (use get_execute_code_history to discover ids). |
 
 ## Texture (4)
 

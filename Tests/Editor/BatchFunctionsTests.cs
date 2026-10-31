@@ -70,6 +70,18 @@ namespace KitWright.Editor.Tests
         }
 
         [UnityTest]
+        public IEnumerator BatchExecute_AnUnknownToolAnswersUnknownToolLikeADirectCall()
+        {
+            var batch = BatchFunctions.BatchExecute("[{\"name\":\"no_such_tool_for_tests\",\"params\":{}}]");
+
+            yield return WaitForTask(batch);
+
+            var result = JObject.Parse(JsonConvert.SerializeObject(batch.Result))["data"]["results"][0]["result"];
+            Assert.AreEqual("UNKNOWN_TOOL", result["code"].Value<string>());
+            Assert.AreEqual("no_such_tool_for_tests", result["data"]["tool"].Value<string>());
+        }
+
+        [UnityTest]
         public IEnumerator BatchExecute_AllCommandsSucceed_ReportsSuccess()
         {
             var batch = BatchFunctions.BatchExecute("[{\"name\":\"get_editor_state\",\"params\":{}}]");

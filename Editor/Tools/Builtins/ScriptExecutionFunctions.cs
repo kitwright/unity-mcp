@@ -156,7 +156,8 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Return the most recent execute_code invocations (success or failure) from the current Editor session. " +
-                     "Use replay_execute_code to re-run a past entry by index. History survives domain reloads but is cleared " +
+                     "Each entry has an id that never changes and is never reused, not even after the Editor restarts; pass it to " +
+                     "replay_execute_code to re-run that entry. History survives domain reloads but is cleared " +
                      "when the Editor closes (uses SessionState). Cap is 50 entries; older entries are dropped.")]
         [ReadOnlyTool]
         public static object GetExecuteCodeHistory(
@@ -165,15 +166,13 @@ namespace KitWright.Editor.Tools.Builtins
             var entries = LoadHistory().entries;
             limit = Mathf.Clamp(limit, 1, HistoryMaxEntries);
             var slice = entries.Skip(Math.Max(0, entries.Count - limit)).ToList();
-            // Render newest first, with original index preserved (for replay)
             var view = new List<object>(slice.Count);
             for (int i = slice.Count - 1; i >= 0; i--)
             {
                 var entry = slice[i];
-                var globalIndex = entries.IndexOf(entry);
                 view.Add(new
                 {
-                    index = globalIndex,
+                    id = entry.id,
                     timestamp = entry.timestamp,
                     success = entry.success,
                     summary = entry.summary,
@@ -185,33 +184,50 @@ namespace KitWright.Editor.Tools.Builtins
                 new { total = entries.Count, returned = view.Count, entries = view });
         }
 
-        [Description("Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). " +
+        [Description("Re-run a past execute_code invocation by its history id (use get_execute_code_history to discover ids). " +
                      "The original code is re-compiled and executed; this also appends a new history entry. " +
+                     "An id that has left the history (it keeps the latest 50) is refused rather than matched to another entry. " +
                      "Pass safety_checks to override the MCP Settings window default.")]
         public static async Task<object> ReplayExecuteCode(
-            [ToolParam("History index to replay (as returned by get_execute_code_history).")] int index,
+            [ToolParam("History entry id to replay: the `id` field returned by get_execute_code_history. It is an id, not a list position.")] int index,
             [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null)
         {
-            var entries = LoadHistory().entries;
-            if (entries.Count == 0)
-                return Response.Error("HISTORY_EMPTY");
-            if (index < 0 || index >= entries.Count)
-                return Response.Error("HISTORY_INDEX_OUT_OF_RANGE",
-                    new { provided = index, valid_range = new { min = 0, max = entries.Count - 1 } });
-
-            var entry = entries[index];
-            if (string.IsNullOrEmpty(entry.code))
-                return Response.Error("HISTORY_ENTRY_EMPTY", new { index });
+            var refusal = ResolveReplayEntry(LoadHistory(), index, out var entry);
+            if (refusal != null)
+                return refusal;
 
             return await ExecuteCode(entry.code, safety_checks);
+        }
+
+        internal static object ResolveReplayEntry(HistoryBox box, int id, out HistoryEntry entry)
+        {
+            entry = box.entries.FirstOrDefault(candidate => candidate.id == id);
+            if (entry == null)
+                return Response.Error("HISTORY_ENTRY_NOT_FOUND",
+                    new
+                    {
+                        provided = id,
+                        oldest_id = box.entries.Count > 0 ? (int?)box.entries[0].id : null,
+                        newest_id = box.entries.Count > 0 ? (int?)box.entries[box.entries.Count - 1].id : null
+                    },
+                    "No entry has that id: it was dropped from the history (the latest 50 are kept), cleared, or never existed. " +
+                    "Ids are not reused, so nothing else answers to it. get_execute_code_history lists the current ids.");
+
+            if (string.IsNullOrEmpty(entry.code))
+                return Response.Error("HISTORY_ENTRY_EMPTY", new { id = entry.id });
+
+            return null;
         }
 
         [Description("Erase the entire execute_code history for the current Editor session. " +
                      "Useful when you want a clean slate before a fresh experiment or before sharing a session recording.")]
         public static object ClearExecuteCodeHistory()
         {
-            var before = LoadHistory().entries.Count;
-            SessionState.EraseString(HistorySessionKey);
+            var box = LoadHistory();
+            var before = box.entries.Count;
+            // lastId stays, so an id handed out before the clear is never given to a new entry.
+            box.entries.Clear();
+            SessionState.SetString(HistorySessionKey, JsonConvert.SerializeObject(box));
             return Response.Success($"Cleared {before} history entr{(before == 1 ? "y" : "ies")}.",
                 new { cleared = before });
         }
@@ -231,8 +247,9 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Serializable]
-        private class HistoryEntry
+        internal class HistoryEntry
         {
+            public int id;
             public string timestamp;
             public string code;
             public bool success;
@@ -240,24 +257,56 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Serializable]
-        private class HistoryBox
+        internal class HistoryBox
         {
             public List<HistoryEntry> entries = new List<HistoryEntry>();
+            public int lastId;
         }
+
+        // 2026-01-01 UTC. A new history starts numbering from the clock, so an id a client kept from
+        // before an Editor restart (or from a history that could not be read back) matches nothing.
+        private const long HistoryIdEpochSeconds = 1767225600L;
+
+        private static HistoryBox NewHistoryBox() =>
+            new HistoryBox { lastId = (int)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - HistoryIdEpochSeconds) };
 
         private static HistoryBox LoadHistory()
         {
             var raw = SessionState.GetString(HistorySessionKey, null);
             if (string.IsNullOrEmpty(raw))
-                return new HistoryBox();
+                return NewHistoryBox();
             try
             {
-                return JsonConvert.DeserializeObject<HistoryBox>(raw) ?? new HistoryBox();
+                var box = JsonConvert.DeserializeObject<HistoryBox>(raw) ?? NewHistoryBox();
+                // Entries written before ids existed all read as 0, which would make them share one id.
+                foreach (var entry in box.entries)
+                    if (entry.id <= 0)
+                        entry.id = ++box.lastId;
+                return box;
             }
             catch
             {
-                return new HistoryBox();
+                return NewHistoryBox();
             }
+        }
+
+        internal static HistoryEntry AddHistoryEntry(HistoryBox box, string code, bool success, string summary)
+        {
+            var entry = new HistoryEntry
+            {
+                id = ++box.lastId,
+                timestamp = DateTime.UtcNow.ToString("o"),
+                // SessionState holds the whole history as one string and rewrites it on every call,
+                // so a generated 200 KB snippet costs every later call. Too large to keep means too
+                // large to replay, which the replay tool already answers for an empty entry.
+                code = code != null && code.Length <= HistoryMaxCodeChars ? code : string.Empty,
+                success = success,
+                summary = Preview(summary, 200)
+            };
+            box.entries.Add(entry);
+            if (box.entries.Count > HistoryMaxEntries)
+                box.entries.RemoveRange(0, box.entries.Count - HistoryMaxEntries);
+            return entry;
         }
 
         private static void AppendHistory(string code, bool success, string summary)
@@ -265,18 +314,7 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var box = LoadHistory();
-                box.entries.Add(new HistoryEntry
-                {
-                    timestamp = DateTime.UtcNow.ToString("o"),
-                    // SessionState holds the whole history as one string and rewrites it on every call,
-                    // so a generated 200 KB snippet costs every later call. Too large to keep means too
-                    // large to replay, which the replay tool already answers for an empty entry.
-                    code = code != null && code.Length <= HistoryMaxCodeChars ? code : string.Empty,
-                    success = success,
-                    summary = Preview(summary, 200)
-                });
-                if (box.entries.Count > HistoryMaxEntries)
-                    box.entries.RemoveRange(0, box.entries.Count - HistoryMaxEntries);
+                AddHistoryEntry(box, code, success, summary);
                 SessionState.SetString(HistorySessionKey, JsonConvert.SerializeObject(box));
             }
             catch (Exception ex)

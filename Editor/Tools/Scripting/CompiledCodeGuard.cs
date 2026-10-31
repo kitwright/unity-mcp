@@ -124,6 +124,8 @@ namespace KitWright.Editor.Tools.Scripting
             "System.Net.WebClient",
             "System.Net.WebRequest",
             "System.Net.Http.HttpClient",
+            "System.Net.Http.HttpClientHandler",
+            "System.Net.Http.HttpMessageInvoker",
             "System.Net.Sockets.Socket",
             "System.Net.Sockets.TcpClient"
         };

@@ -387,6 +387,20 @@ public class EarlyBird
             Assert.IsFalse(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out _, out _));
         }
 
+        [TestCase("System.Net.Http.HttpClient")]
+        [TestCase("System.Net.Http.HttpClientHandler")]
+        [TestCase("System.Net.Http.HttpMessageInvoker")]
+        public void Guard_BlocksEveryHttpSenderWhenStrict(string typeName)
+        {
+            var compilation = ScriptCompilerPipeline.Compile(
+                "public static class HttpNameProbe { public static string Run() { return typeof(" + typeName + ").Name; } }");
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, true, out var reference, out _));
+            Assert.AreEqual(typeName, reference);
+            Assert.IsFalse(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out _, out _));
+        }
+
         // A modal dialog hangs the request rather than damaging anything, so it is blocked
         // regardless of the strict filesystem setting.
         [Test]

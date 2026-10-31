@@ -27,12 +27,30 @@ namespace KitWright.Editor.MCP.Server
         private readonly SettingsController _settings;
         private readonly StateController _stateController;
         private readonly FunctionInvoker _invoker;
-        private readonly MCPInteractionLog _interactionLog;
+        private readonly MCPInteractionLog _interactionLog;
 
-        private string NotExposedHint() =>
-            MCPToolExportPolicy.IsToolAllowed("set_tool_profile", _settings, out _)
+        internal static string NotExposedHint(SettingsController settings) =>
+            MCPToolExportPolicy.IsToolAllowed("set_tool_profile", settings, out _)
                 ? "set_tool_profile 'full' exposes it. A profile only shortens the tool list; it does not restrict access."
                 : null;
+
+        private string WithheldToolError(string toolName, string profileKey) =>
+            WithheldToolError(toolName, profileKey, ToolPackageGate.MissingPackageFor(toolName), NotExposedHint(_settings));
+
+        // A tool whose package is missing is withheld under every profile, including full, so telling
+        // the caller to switch profile sends it round in a circle: name the package instead.
+        internal static string WithheldToolError(
+            string toolName, string profileKey, string missingPackage, string notExposedHint)
+        {
+            if (string.IsNullOrEmpty(missingPackage))
+                return ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey }, notExposedHint);
+
+            return ToolResultFormatter.Error("PACKAGE_NOT_INSTALLED", new { tool = toolName, package = missingPackage },
+                $"This tool needs the package '{missingPackage}', which is not installed. " +
+                $"Install it with install_package (package_id '{missingPackage}') or Window > Package Manager, then retry. " +
+                "install_package is not listed under the minimal and core profiles; the extended and full profiles list it. " +
+                "A profile alone does not make this tool appear.");
+        }
 
         public MCPExecutionBridge(
             EditorThreadHelper threadHelper,
@@ -63,11 +81,14 @@ namespace KitWright.Editor.MCP.Server
                 // No interaction log: it writes SessionState, which is main-thread only.
                 return isAllowed
                     ? await InvokeOffEditorThreadAsync(toolName, arguments)
-                    : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey }, NotExposedHint());
+                    : WithheldToolError(toolName, profileKey);
             }
 
+            // A refused or unknown call changes nothing, so it must not queue behind a running
+            // mutating one just to be told no.
             var method = ToolRegistry.GetMethod(toolName);
-            if (method != null && ToolRegistry.IsReadOnly(method))
+            var answersWithoutRunning = !isAllowed || (method == null && !ToolRegistry.IsManualTool(toolName));
+            if (answersWithoutRunning || (method != null && ToolRegistry.IsReadOnly(method)))
                 return await InvokeOnEditorThreadAsync(toolName, arguments, isAllowed, profileKey, ct);
 
             // Calls run side by side in both transports, and a tool that awaits lets another one run
@@ -121,11 +142,7 @@ namespace KitWright.Editor.MCP.Server
 
                     if (!isAllowed)
                     {
-                        var error = ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new
-                        {
-                            tool = toolName,
-                            profile = profileKey
-                        }, NotExposedHint());
+                        var error = WithheldToolError(toolName, profileKey);
                         _interactionLog?.Add(toolName, MCPToolCallStatus.Error, error);
                         return error;
                     }

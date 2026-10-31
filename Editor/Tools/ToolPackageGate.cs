@@ -15,6 +15,8 @@ namespace KitWright.Editor.Tools
     /// package -- its methods answer with a "not installed" error so a direct caller gets a hint
     /// rather than "unknown tool". Those tools must still stay out of the exported surface and out
     /// of the Tool Exposure switches, or a profile happily turns on tools that can only fail.
+    /// A call through MCPExecutionBridge never reaches those methods: it is refused with
+    /// PACKAGE_NOT_INSTALLED, naming <see cref="MissingPackageFor"/>.
     internal static class ToolPackageGate
     {
         // Built on the main thread; tools/list can read it from the server's thread, which only
