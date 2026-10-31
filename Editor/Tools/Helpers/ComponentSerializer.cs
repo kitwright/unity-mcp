@@ -587,6 +587,11 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     var converted = ConvertJTokenToType(value, prop.PropertyType);
                     prop.SetValue(component, converted);
+                    if (component is Transform transform && prop.Name == "parent" && transform.parent != converted as Transform)
+                    {
+                        error = "Unity refused the change and left the hierarchy as it was (for example a non-root object of a prefab instance cannot change parent); use set_parent.";
+                        return false;
+                    }
                     return true;
                 }
                 catch (Exception ex) { error = ex.Message; return false; }

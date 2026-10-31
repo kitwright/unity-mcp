@@ -34,7 +34,7 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
-                File.WriteAllText(fullPath, contents ?? DefaultShader(name), new System.Text.UTF8Encoding(false));
+                AtomicFile.WriteAllText(fullPath, contents ?? DefaultShader(name));
                 AssetDatabase.ImportAsset(relativePath);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 return Response.Success($"Shader '{name}.shader' created.", new { path = relativePath });
@@ -79,7 +79,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             try
             {
-                File.WriteAllText(fullPath, contents, new System.Text.UTF8Encoding(false));
+                AtomicFile.WriteAllText(fullPath, contents);
                 AssetDatabase.ImportAsset(relativePath);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 return Response.Success($"Shader '{name}.shader' updated.", new { path = relativePath });

@@ -162,8 +162,7 @@ namespace KitWright.Editor.MCP.Server
                 updated = updated.Replace(literal, Newtonsoft.Json.JsonConvert.ToString(serverUrl));
             }
 
-            AtomicFile.WriteAllText(configPath, updated);
-            return true;
+            return WriteIfUnchanged(configPath, json, updated);
         }
 
         internal static bool RewriteToml(
@@ -188,7 +187,21 @@ namespace KitWright.Editor.MCP.Server
             if (updated == section)
                 return false;
 
-            AtomicFile.WriteAllText(path, content.Substring(0, start) + updated + content.Substring(end));
+            return WriteIfUnchanged(path, content, content.Substring(0, start) + updated + content.Substring(end));
+        }
+
+        // ~/.claude.json is rewritten by its own client all the time and parsing it takes a while, so
+        // the file can change between the read and this write; a blind write would drop that change.
+        // A skipped file is repaired by the next sweep.
+        internal static bool WriteIfUnchanged(string path, string original, string updated)
+        {
+            if (ClientConfigPanel.ReadExistingConfig(path) != original)
+            {
+                Debug.LogWarning($"[KitWright MCP Server] Config auto-rewrite left {path} alone: it changed while it was being edited. The next server start tries again.");
+                return false;
+            }
+
+            AtomicFile.WriteAllText(path, updated);
             return true;
         }
 

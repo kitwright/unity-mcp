@@ -83,7 +83,9 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Set a single shader property on a Material and save the asset. type='auto' (default) detects the " +
                      "property kind from the shader; or force one of float|color|vector|texture|int. " +
                      "Float/Range parse a number; Color parses 'r,g,b[,a]' or '#RRGGBB[AA]'; Vector parses 'x,y,z,w'; " +
-                     "Texture loads a Texture at the given asset path (empty value clears the texture). Returns the read-back value.")]
+                     "Texture loads a Texture at the given asset path (empty value clears the texture). Returns the read-back value. " +
+                     "The edit lands on the shared material asset, so every renderer using it changes (the reply names it as " +
+                     "assetPath); built-in defaults, materials in immutable packages and read-only ones (a model's embedded material) are refused with MATERIAL_READ_ONLY.")]
         public static object SetMaterialProperty(
             [ToolParam("Material asset path (preferred), or a scene GameObject id/name/path whose Renderer.sharedMaterial is edited.")] string path,
             [ToolParam("Shader property name (case-sensitive, e.g. '_BaseColor', '_Metallic', '_MainTex').")] string name,
@@ -94,6 +96,14 @@ namespace KitWright.Editor.Tools.Builtins
             if (mat == null)
                 return Response.Error("MATERIAL_NOT_FOUND",
                     new { path, hint = "Provide a valid .mat asset path, or a scene GameObject with a Renderer that has a sharedMaterial." });
+
+            var assetPath = AssetDatabase.GetAssetPath(mat);
+            if (!IsEditableMaterial(assetPath, EditorUtility.IsPersistent(mat), (mat.hideFlags & HideFlags.NotEditable) != 0, IsWritablePackageAsset(assetPath)))
+                return Response.Error("MATERIAL_READ_ONLY",
+                    new { material = mat.name, assetPath, source },
+                    "This material is a built-in default, lives in an immutable package, or is read-only (such as one " +
+                    "embedded in a model): it cannot be saved, and an edit would change every renderer using it. " +
+                    "Create a project material with create_material, assign it with assign_material, then edit that one.");
 
             if (string.IsNullOrEmpty(name))
                 return Response.Error("INVALID_PARAM", new { param = "name", provided = name, expected = "a shader property name" });
@@ -121,6 +131,10 @@ namespace KitWright.Editor.Tools.Builtins
                 if (category == null)
                     return Response.Error("INVALID_PARAM",
                         new { param = "type", provided = type, expected = "auto|float|color|vector|texture|int" });
+                if (category != CategoryOf(detected))
+                    return Response.Error("INVALID_PARAM",
+                        new { param = "type", provided = type, propertyType = detected.ToString(), expected = CategoryOf(detected) },
+                        $"'{name}' is a {detected} property: pass type=auto or type={CategoryOf(detected)}.");
             }
 
             object readback;
@@ -128,11 +142,10 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 case "float":
                 {
-                    if (!double.TryParse((value ?? string.Empty).Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ||
-                        double.IsNaN(d) || double.IsInfinity(d))
-                        return Response.Error("INVALID_PARAM", new { param = "value", provided = value, expected = "a finite number (float)" });
+                    if (!ValueConverter.TryFiniteFloat(value ?? string.Empty, out var f))
+                        return Response.Error("INVALID_PARAM", new { param = "value", provided = value, expected = "a finite number within float range" });
                     Undo.RecordObject(mat, $"Set material property {name}");
-                    mat.SetFloat(name, (float)d);
+                    mat.SetFloat(name, f);
                     readback = mat.GetFloat(name);
                     break;
                 }
@@ -211,7 +224,10 @@ namespace KitWright.Editor.Tools.Builtins
                 type = category,
                 value = readback,
                 persistedToAsset = persisted,
-                note = persisted ? null : "Material is scene-embedded (not an asset); the owning scene was marked dirty. Save the scene to persist."
+                assetPath = persisted ? assetPath : null,
+                note = persisted
+                    ? $"Edited the material asset '{assetPath}'; every renderer using it changed too."
+                    : "Material is scene-embedded (not an asset); the owning scene was marked dirty. Save the scene to persist."
             });
         }
 
@@ -265,6 +281,28 @@ namespace KitWright.Editor.Tools.Builtins
             for (int i = 0; i < count; i++)
                 names.Add(shader.GetPropertyName(i));
             return names;
+        }
+
+        internal static bool IsEditableMaterial(string assetPath, bool persistent, bool notEditable = false, bool writablePackage = false)
+        {
+            if (!persistent)
+                return true;
+            if (notEditable || assetPath == null)
+                return false;
+
+            return assetPath.StartsWith("Assets/", StringComparison.Ordinal) ||
+                   (writablePackage && assetPath.StartsWith("Packages/", StringComparison.Ordinal));
+        }
+
+        private static bool IsWritablePackageAsset(string assetPath)
+        {
+            if (assetPath == null || !assetPath.StartsWith("Packages/", StringComparison.Ordinal))
+                return false;
+
+            var info = UnityEditor.PackageManager.PackageInfo.FindForAssetPath(assetPath);
+            return info != null &&
+                   (info.source == UnityEditor.PackageManager.PackageSource.Embedded ||
+                    info.source == UnityEditor.PackageManager.PackageSource.Local);
         }
 
         private static string CategoryOf(ShaderPropertyType t)

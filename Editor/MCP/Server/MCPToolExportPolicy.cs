@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using KitWright.Editor.DI;
 using KitWright.Editor.Settings;
 using KitWright.Editor.Tools;
 
@@ -137,6 +138,9 @@ namespace KitWright.Editor.MCP.Server
 
         /// Same question asked from the settings object, for call sites that reach the invoker
         /// without going through MCPExecutionBridge. No settings means no policy to enforce.
+        internal static bool IsToolExposed(string toolName) =>
+            IsToolAllowed(toolName, RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController, out _);
+
         public static bool IsToolAllowed(string toolName, SettingsController settings, out string profileKey)
         {
             if (settings == null)

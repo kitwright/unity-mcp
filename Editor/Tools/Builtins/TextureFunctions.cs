@@ -155,7 +155,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                     Directory.CreateDirectory(dir);
 
-                File.WriteAllBytes(absolutePath, bytes);
+                AtomicFile.WriteAllBytes(absolutePath, bytes);
                 AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceSynchronousImport);
 
                 if (asSprite && AssetImporter.GetAtPath(path) is TextureImporter importer)

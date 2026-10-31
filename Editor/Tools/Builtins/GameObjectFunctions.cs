@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System.Collections.Generic;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
@@ -194,9 +195,21 @@ namespace KitWright.Editor.Tools.Builtins
             if (childGo == null)
                 return Response.Error("CHILD_NOT_FOUND", new { target = child, find_method });
 
+            if (IsLockedPrefabInstanceChild(childGo))
+                return Response.Error("PREFAB_INSTANCE_CHILD",
+                    new { target = child, prefabInstanceRoot = PrefabUtility.GetOutermostPrefabInstanceRoot(childGo).name },
+                    "Unity does not let a non-root object of a prefab instance change parent. Unpack the instance first" +
+                    (MCPToolExportPolicy.IsToolExposed("unpack_prefab") ? " (unpack_prefab)" : string.Empty) +
+                    ", or edit the prefab asset instead.");
+
             if (string.IsNullOrEmpty(parent))
             {
+                if (childGo.transform.parent == null)
+                    return Response.Success($"'{childGo.name}' is already a root object; nothing changed.");
+
                 Undo.SetTransformParent(childGo.transform, null, $"Unparent {childGo.name}");
+                if (childGo.transform.parent != null)
+                    return ReparentFailed(childGo, null);
                 return Response.Success($"Unparented '{childGo.name}'.");
             }
 
@@ -215,9 +228,21 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             Undo.SetTransformParent(childGo.transform, parentGo.transform, $"Parent {childGo.name} to {parentGo.name}");
+            if (childGo.transform.parent != parentGo.transform)
+                return ReparentFailed(childGo, parentGo);
             return Response.Success($"Parented '{childGo.name}' to '{parentGo.name}'.",
                 new { childInstanceId = ObjectIdCodec.GetSerializableId(childGo), parentInstanceId = ObjectIdCodec.GetSerializableId(parentGo) });
         }
+
+        private static bool IsLockedPrefabInstanceChild(GameObject go) =>
+            PrefabUtility.IsPartOfPrefabInstance(go)
+            && !PrefabUtility.IsOutermostPrefabInstanceRoot(go)
+            && !PrefabUtility.IsAddedGameObjectOverride(go);
+
+        private static object ReparentFailed(GameObject child, GameObject parent) =>
+            Response.Error("REPARENT_FAILED",
+                new { child = child.name, requestedParent = parent != null ? parent.name : null, currentParent = child.transform.parent != null ? child.transform.parent.name : null },
+                "Unity refused the change and left the hierarchy as it was; see the console for the reason.");
 
         [Description("Add a component to a GameObject. Returns the new component's instanceId.")]
         public static object AddComponent(

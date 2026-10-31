@@ -23,6 +23,10 @@ namespace KitWright.Editor.Tools.Builtins
         private static object NoPackage() => Response.Error("ADDRESSABLES_REQUIRED", new { hint = NoPackageHint });
 #endif
 
+        internal static object NotAddressable(string path) =>
+            Response.Error("ASSET_NOT_ADDRESSABLE", new { path },
+                "Addressables returned no entry for this asset, so nothing was marked. Pick an asset that ships in the player.");
+
         [Description("Mark an asset as Addressable and set its address key. Optionally place it in a named group (created if missing). Requires the Addressables package.")]
         public static object MarkAddressable(
             [ToolParam("Project-relative asset path (e.g. 'Assets/Prefabs/Enemy.prefab')")] string path,
@@ -35,8 +39,16 @@ namespace KitWright.Editor.Tools.Builtins
             var guid = AssetDatabase.AssetPathToGUID(path);
             if (string.IsNullOrEmpty(guid)) return Response.Error("ASSET_NOT_FOUND", new { path });
 
+            var createdGroup = !string.IsNullOrEmpty(group) && settings.FindGroup(group) == null;
             var targetGroup = string.IsNullOrEmpty(group) ? settings.DefaultGroup : GetOrCreateGroup(settings, group);
             var entry = settings.CreateOrMoveEntry(guid, targetGroup);
+            if (entry == null)
+            {
+                if (createdGroup)
+                    settings.RemoveGroup(targetGroup);
+                return NotAddressable(path);
+            }
+
             entry.address = string.IsNullOrEmpty(address) ? path : address;
             settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryModified, entry, true);
             AssetDatabase.SaveAssets();

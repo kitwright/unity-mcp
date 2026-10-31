@@ -552,7 +552,7 @@ namespace KitWright.Editor.Tools.Builtins
                 };
 
                 var json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
-                System.IO.File.WriteAllText(path, json);
+                AtomicFile.WriteAllText(path, json);
 
                 return $"Snapshot saved: {path}\nTotal Allocated: {ValueConverter.FormatBytes(data.totalAllocated)}, Mono Used: {ValueConverter.FormatBytes(data.monoUsed)}";
             }
