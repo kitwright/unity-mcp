@@ -21,10 +21,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Save path ending in .inputactions (e.g. 'Assets/Input/GameControls.inputactions')")] string path,
             [ToolParam("Optional first action map name to create", Required = false)] string first_map = null)
         {
-            if (!IsInputActionsPath(path))
-                return Response.Error("INVALID_PATH", new { path, hint = "Path must end with .inputactions" });
+            if (!TryResolve(path, out var absolutePath, out var pathError))
+                return pathError;
 
-            if (File.Exists(path))
+            if (File.Exists(absolutePath))
                 return Response.Error("ALREADY_EXISTS", new { path });
 
             var asset = ScriptableObject.CreateInstance<InputActionAsset>();
@@ -33,7 +33,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (!string.IsNullOrEmpty(first_map))
                     asset.AddActionMap(new InputActionMap(first_map));
 
-                WriteAsset(asset, path);
+                WriteAsset(asset, path, absolutePath);
             }
             finally
             {
@@ -200,14 +200,38 @@ namespace KitWright.Editor.Tools.Builtins
             return result;
         }
 
+        // Assets-relative only: the path reaches File.ReadAllText and a write, and "Assets/../../x" or a
+        // drive path would otherwise be read or created anywhere on disk.
+        private static bool TryResolve(string path, out string absolutePath, out object error)
+        {
+            absolutePath = null;
+            error = null;
+
+            if (!IsInputActionsPath(path))
+            {
+                error = Response.Error("INVALID_PATH", new { path, hint = "Path must end with .inputactions" });
+                return false;
+            }
+
+            try { absolutePath = PathSafety.ResolveAssetPath(path); }
+            catch (PathOutsideProjectException ex)
+            {
+                error = Response.Error("INVALID_PATH", new { path, message = ex.Message },
+                    "path must be under Assets/, and must stay there once '..' segments are resolved");
+                return false;
+            }
+
+            return true;
+        }
+
         private static object WithAsset(string path, Func<InputActionAsset, object> action, bool readOnly = false)
         {
-            if (!IsInputActionsPath(path))
-                return Response.Error("INVALID_PATH", new { path, hint = "Path must end with .inputactions" });
-            if (!File.Exists(path))
+            if (!TryResolve(path, out var absolutePath, out var pathError))
+                return pathError;
+            if (!File.Exists(absolutePath))
                 return Response.Error("ASSET_NOT_FOUND", new { path });
 
-            var json = File.ReadAllText(path);
+            var json = File.ReadAllText(absolutePath);
             var asset = ScriptableObject.CreateInstance<InputActionAsset>();
             try
             {
@@ -215,7 +239,7 @@ namespace KitWright.Editor.Tools.Builtins
                 var result = action(asset);
 
                 if (!readOnly && IsSuccess(result))
-                    WriteAsset(asset, path);
+                    WriteAsset(asset, path, absolutePath);
 
                 return result;
             }
@@ -229,14 +253,14 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static void WriteAsset(InputActionAsset asset, string path)
+        private static void WriteAsset(InputActionAsset asset, string path, string absolutePath)
         {
-            var dir = Path.GetDirectoryName(path);
+            var dir = Path.GetDirectoryName(absolutePath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
 
-            File.WriteAllText(path, ToJson(asset, path));
-            AssetDatabase.ImportAsset(path);
+            AtomicFile.WriteAllText(absolutePath, ToJson(asset, path));
+            AssetDatabase.ImportAsset(path.Replace('\\', '/'));
         }
 
         // InputActionAsset.ToJson() runs LINQ's Count() straight over its map array, which stays null

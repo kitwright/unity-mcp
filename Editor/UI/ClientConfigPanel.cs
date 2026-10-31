@@ -403,11 +403,13 @@ namespace KitWright.Editor.MCP.Server
                   "tool calls can land in a sibling project.";
         }
 
+        // Display only: an unreadable file reads as absent here, which is fine for a status label and
+        // never for a write. Anything that writes goes through ReadExistingConfig.
         private static string ReadConfigText(string path)
         {
             try
             {
-                return !string.IsNullOrEmpty(path) && File.Exists(path) ? File.ReadAllText(path) : null;
+                return ReadExistingConfig(path);
             }
             catch
             {
@@ -415,14 +417,91 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
+        // Null means the file is not there. A file that is there but cannot be read (locked by the
+        // client, no access) throws, because treating it as missing would make the caller write a
+        // fresh config over everything in it. Bytes that are not UTF-8 throw too: decoding them
+        // lossily and writing the text back would corrupt what the user wrote.
+        internal static string ReadExistingConfig(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                return null;
+
+            byte[] bytes;
+            try
+            {
+                bytes = File.ReadAllBytes(path);
+            }
+            catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+            {
+                return null;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"{path} could not be read ({ex.Message}). Nothing was written, so the existing config is " +
+                    "intact. Close whatever has it open, then configure again.", ex);
+            }
+
+            var utf16 = bytes.Length >= 2 &&
+                        ((bytes[0] == 0xFF && bytes[1] == 0xFE) || (bytes[0] == 0xFE && bytes[1] == 0xFF));
+            var bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF ? 3 : 0;
+
+            try
+            {
+                if (!utf16)
+                    return new UTF8Encoding(false, true).GetString(bytes, bom, bytes.Length - bom);
+            }
+            catch (DecoderFallbackException)
+            {
+            }
+
+            throw new IOException(
+                $"{path} is not UTF-8 text. Refusing to rewrite it so its content is not corrupted. " +
+                "Nothing was written. Convert the file to UTF-8, then configure again.");
+        }
+
+        // Writes nothing when the text is unchanged. Otherwise the first overwrite keeps the original
+        // as <file>.bak and later ones leave that copy alone: a copy made on every write would, from
+        // the second Configure on, hold our own previous output instead of what the user had. A merge
+        // cannot carry everything the file held (comments do not survive a JObject round trip), so the
+        // original has to stay somewhere.
+        internal static void WriteConfig(string path, string existing, string content)
+        {
+            if (content == existing)
+                return;
+
+            if (!string.IsNullOrWhiteSpace(existing))
+                BackUpConfig(path);
+
+            AtomicFile.WriteAllText(path, content);
+        }
+
+        private static void BackUpConfig(string path)
+        {
+            var backup = path + ".bak";
+            if (File.Exists(backup))
+                return;
+
+            try
+            {
+                File.Copy(path, backup);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                throw new IOException(
+                    $"{path} could not be backed up to {backup} ({ex.Message}). Nothing was written, so the " +
+                    "existing config is intact. Make that location writable, then configure again.", ex);
+            }
+        }
+
         // The file existing said nothing: one holding other MCP servers and no entry of ours read as
-        // configured. Searching for the quoted key rather than parsing covers the JSON and TOML targets
-        // alike, and the quotes keep a mention inside some other value from counting.
+        // configured. The quoted key covers JSON, and the TOML finder the table spellings Codex accepts;
+        // the quotes keep a mention inside some other value from counting.
         internal static bool ConfigHasOurEntry(string configText)
         {
             return !string.IsNullOrEmpty(configText) &&
                    (configText.Contains($"\"{ServerEntryName}\"") ||
-                    configText.Contains($".{ServerEntryName}]"));
+                    TryFindMcpServerTable(configText, ServerEntryName, out _, out _));
         }
 
         // Returns the problem without a marker; callers prefix "⚠ " and name the file.
@@ -694,7 +773,7 @@ namespace KitWright.Editor.MCP.Server
                 .ExecuteLater(Mathf.Clamp(message.Length * 40, 3000, 9000));
         }
 
-        /// <summary>Writes the config and returns a note for the result line, or null when there is nothing to add.</summary>
+        /// <summary>Writes the config and returns a note for the result line, empty when there is nothing to add.</summary>
         private string WriteMCPConfigurationForTarget(MCPConfigTarget target)
         {
             var dir = Path.GetDirectoryName(target.ConfigPath);
@@ -702,16 +781,33 @@ namespace KitWright.Editor.MCP.Server
                 Directory.CreateDirectory(dir);
 
             if (target.IsToml)
-                ConfigureTomlTarget(target);
+                ConfigureTomlFile(target.ConfigPath, GetServerUrl());
             else
                 ConfigureJsonTarget(target);
 
             var written = target.ConfigPath;
-            System.Threading.Tasks.Task.Run(() => ServerToken.WarnIfGitWouldCommit(written));
+            var backup = written + ".bak";
+            var token = ServerToken.ExtractToken(GetServerUrl());
+            System.Threading.Tasks.Task.Run(() =>
+            {
+                ServerToken.WarnIfGitWouldCommit(written);
+                if (token.Length > 0 && MCPClientConfigAutoRewrite.Carries(backup, token))
+                    ServerToken.WarnIfGitWouldCommit(backup);
+            });
+
+            var backupNote = File.Exists(backup) ? $" The original file is kept at {backup}." : string.Empty;
 
             // Only after the project file is on disk: if this threw, the user still has whatever
             // the global file gave them.
-            return ClearShadowingGlobalEntry(target);
+            try
+            {
+                return backupNote + ClearShadowingGlobalEntry(target);
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                return backupNote + $" Warning: the global config still holds a \"{ServerEntryName}\" entry " +
+                       $"that shadows this one: {ex.Message}";
+            }
         }
 
         // Antigravity merges the global file over the project one, so a global entry of ours wins
@@ -745,7 +841,7 @@ namespace KitWright.Editor.MCP.Server
                 return false;
 
             if (root[target.EffectiveRootKey] is JObject servers && RemoveOurNames(servers))
-                AtomicFile.WriteAllText(path, root.ToString(Formatting.Indented));
+                WriteConfig(path, text, root.ToString(Formatting.Indented));
 
             return true;
         }
@@ -755,11 +851,18 @@ namespace KitWright.Editor.MCP.Server
         private static bool RemoveOurNames(JObject servers)
         {
             var removed = servers.Remove(ServerEntryName);
-            removed |= servers.Remove(PinnedServerEntryName());
-            removed |= servers.Remove(ProductServerEntryName());
-            foreach (var legacy in LegacyServerEntryNames())
-                removed |= servers.Remove(legacy);
+            foreach (var name in StaleServerEntryNames())
+                removed |= servers.Remove(name);
             return removed;
+        }
+
+        // Every name but the current one: a product name with no usable characters collapses to the
+        // plain entry name, and removing that would delete the entry being kept.
+        internal static IEnumerable<string> StaleServerEntryNames()
+        {
+            var names = new List<string> { PinnedServerEntryName(), ProductServerEntryName() };
+            names.AddRange(LegacyServerEntryNames());
+            return names.Where(name => name != ServerEntryName);
         }
 
         private bool ConfigureProjectSkillsForPlatform(string platformId)
@@ -780,13 +883,19 @@ namespace KitWright.Editor.MCP.Server
 
         private void ConfigureJsonTarget(MCPConfigTarget target)
         {
-            var existingJson = ReadConfigText(target.ConfigPath);
-            var json = MergeJsonConfig(
-                existingJson, target.EffectiveRootKey, ServerEntryName, CreateHttpEntry(target),
-                target.SchemaUrl, target.ConfigPath);
-
-            AtomicFile.WriteAllText(target.ConfigPath, json);
+            ConfigureJsonFile(
+                target.ConfigPath, target.EffectiveRootKey, ServerEntryName, CreateHttpEntry(target), target.SchemaUrl);
         }
+
+        internal static void ConfigureJsonFile(
+            string path, string rootKey, string serverName, object entry, string schemaUrl)
+        {
+            var existing = ReadExistingConfig(path);
+            var json = MergeJsonConfig(existing, rootKey, serverName, entry, schemaUrl, path);
+            WriteConfig(path, existing, json);
+        }
+
+        internal static readonly string[] UrlProperties = { "url", "serverUrl", "httpUrl" };
 
         internal static string MergeJsonConfig(
             string existingJson,
@@ -798,19 +907,90 @@ namespace KitWright.Editor.MCP.Server
         {
             var root = ParseConfigRoot(existingJson, configPath);
 
-            if (!(root[rootKey] is JObject servers))
+            var current = root[rootKey];
+            if (current != null && current.Type != JTokenType.Object && current.Type != JTokenType.Null)
+                throw new IOException(
+                    $"\"{rootKey}\" in {configPath} is not an object. Refusing to replace it so what it " +
+                    "holds is not lost. Fix or delete it, then configure again.");
+
+            var servers = current as JObject;
+            if (servers == null)
             {
                 servers = new JObject();
                 root[rootKey] = servers;
             }
 
+            // A pinned or legacy entry is ours too: carry its user keys over instead of dropping them
+            // with the entry.
+            var existing = servers[serverName] as JObject ?? FirstStaleEntryWithUrl(servers);
             RemoveOurNames(servers);
-            servers[serverName] = JToken.FromObject(entry);
+            servers[serverName] = MergeEntry(existing, JObject.FromObject(entry));
 
             if (!string.IsNullOrEmpty(schemaUrl) && root["$schema"] == null)
                 root["$schema"] = schemaUrl;
 
-            return root.ToString(Formatting.Indented);
+            var merged = root.ToString(Formatting.Indented);
+            if (!IsStrictJson(merged))
+                throw new IOException(
+                    $"Merging into {configPath} would not produce valid JSON: comments in it do not survive " +
+                    "a merge. Nothing was written. Remove the comments from the file, then configure again.");
+
+            return merged;
+        }
+
+        private static JObject FirstStaleEntryWithUrl(JObject servers)
+        {
+            return StaleServerEntryNames()
+                .Select(name => servers[name] as JObject)
+                .FirstOrDefault(entry => entry != null && UrlProperties.Any(name => entry.Property(name) != null));
+        }
+
+        // Comments loaded into the tree are written back only in part, and an array hole is written
+        // as the literal "undefined" -- neither is JSON any client reads.
+        private static bool IsStrictJson(string json)
+        {
+            try
+            {
+                using (var reader = new JsonTextReader(new StringReader(json)) { DateParseHandling = DateParseHandling.None })
+                {
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType == JsonToken.Undefined)
+                            return false;
+                    }
+                }
+
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        // Keys the user added to our entry (alwaysAllow, autoApprove, timeout, headers, a "disabled"
+        // they flipped) survive; only what makes the connection work is rewritten. An entry with no
+        // URL is not one of ours (a stdio launcher), and merging into it would make a hybrid.
+        private static JObject MergeEntry(JObject existing, JObject fresh)
+        {
+            if (existing == null || !UrlProperties.Any(name => existing.Property(name) != null))
+                return fresh;
+
+            foreach (var name in UrlProperties)
+            {
+                if (fresh.Property(name) == null)
+                    existing.Remove(name);
+            }
+
+            foreach (var property in fresh.Properties())
+            {
+                if (property.Name == "type" ||
+                    UrlProperties.Contains(property.Name) ||
+                    existing.Property(property.Name) == null)
+                    existing[property.Name] = property.Value.DeepClone();
+            }
+
+            return existing;
         }
 
         // A file we cannot parse that still has content holds servers we cannot see. Rewriting it
@@ -823,18 +1003,43 @@ namespace KitWright.Editor.MCP.Server
 
             if (!TryParseConfig(existingJson, out var root))
                 throw new IOException(
-                    $"{configPath} is not valid JSON. Refusing to overwrite it so other MCP servers " +
-                    "in the file are not lost. Fix or delete the file, then configure again.");
+                    $"{configPath} is not {(IsJson(existingJson) ? "a JSON object" : "valid JSON")}. Refusing to " +
+                    "overwrite it so other MCP servers in the file are not lost. Fix or delete the file, " +
+                    "then configure again.");
 
             return root;
         }
 
+        private static bool IsJson(string json)
+        {
+            try
+            {
+                JToken.Parse(json, new JsonLoadSettings { CommentHandling = CommentHandling.Ignore });
+                return true;
+            }
+            catch (JsonException)
+            {
+                return false;
+            }
+        }
+
+        // Comments are loaded so a commented file (VS Code, opencode) parses the way its client reads it;
+        // dates stay text so an ISO timestamp in some other server's entry is not rewritten.
         private static bool TryParseConfig(string json, out JObject root)
         {
             try
             {
-                root = JObject.Parse(json);
-                return true;
+                using (var reader = new JsonTextReader(new StringReader(json)) { DateParseHandling = DateParseHandling.None })
+                {
+                    root = JObject.Load(reader, new JsonLoadSettings { CommentHandling = CommentHandling.Load });
+                    while (reader.Read())
+                    {
+                        if (reader.TokenType != JsonToken.Comment)
+                            throw new JsonReaderException("Unexpected content after the JSON value");
+                    }
+
+                    return true;
+                }
             }
             catch (JsonException)
             {
@@ -843,43 +1048,262 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
-        private void ConfigureTomlTarget(MCPConfigTarget target)
+        internal static void ConfigureTomlFile(string path, string url)
         {
-            var content = File.Exists(target.ConfigPath) ? File.ReadAllText(target.ConfigPath) : string.Empty;
-            content = RemoveTomlSection(content, "[mcp_servers." + PinnedServerEntryName() + "]");
-            content = RemoveTomlSection(content, "[mcp_servers." + ServerEntryName + "]");
-            foreach (var legacy in LegacyServerEntryNames())
-                content = RemoveTomlSection(content, "[mcp_servers." + legacy + "]");
-
-            if (content.Length > 0 && !content.EndsWith("\n"))
-                content += "\n";
-
-            content = EnsureCodexRmcpFeature(content + "\n" + CreateTomlSection(target));
-
-            AtomicFile.WriteAllText(target.ConfigPath, content);
+            var existing = ReadExistingConfig(path);
+            WriteConfig(path, existing, MergeTomlConfig(existing, url, path));
         }
 
-        private static string RemoveTomlSection(string content, string sectionHeader)
+        // A table of ours that already exists keeps every key the user put in it (timeouts, headers,
+        // enabled_tools...) and only has its url replaced, as the JSON merge does; a table with no url
+        // is not ours to keep and is replaced.
+        internal static string MergeTomlConfig(string existing, string url, string configPath)
         {
-            var startIdx = content.IndexOf(sectionHeader, StringComparison.Ordinal);
-            if (startIdx < 0)
-                return content;
+            var content = existing ?? string.Empty;
+            foreach (var name in StaleServerEntryNames())
+                content = RemoveTomlSection(content, name);
 
-            var nextSection = content.IndexOf("\n[", startIdx + sectionHeader.Length, StringComparison.Ordinal);
-            var endIdx = nextSection >= 0 ? nextSection + 1 : content.Length;
-            return content.Substring(0, startIdx) + content.Substring(endIdx);
+            if (HasUnparsedTomlEntry(content, ServerEntryName))
+                throw new IOException(
+                    $"{configPath} holds mcp_servers.{ServerEntryName} as a dotted key or inside an inline table, " +
+                    "which cannot be updated in place, and appending a table would make the file invalid. " +
+                    $"Nothing was written. Rewrite it as a [mcp_servers.{ServerEntryName}] table, or delete it, " +
+                    "then configure again.");
+
+            var found = TryFindMcpServerTable(content, ServerEntryName, out var start, out var end);
+            var section = found ? content.Substring(start, end - start) : null;
+
+            if (found && TomlUrlLine.IsMatch(section))
+            {
+                content = content.Substring(0, start) + SetTomlUrl(section, url) + content.Substring(end);
+            }
+            else
+            {
+                content = RemoveTomlSection(content, ServerEntryName);
+                if (content.Length > 0 && !content.EndsWith("\n"))
+                    content += "\n";
+
+                content += "\n" + TomlSection(url);
+            }
+
+            return EnsureCodexRmcpFeature(content);
         }
 
-        private static string EnsureCodexRmcpFeature(string content)
+        private static readonly Regex TomlUrlLine =
+            new Regex(@"(?m)^([ \t]*url[ \t]*=[ \t]*)(?:""[^""\r\n]*""|'[^'\r\n]*')", RegexOptions.Compiled);
+
+        internal static string SetTomlUrl(string section, string url)
+        {
+            return TomlUrlLine.Replace(section, match => match.Groups[1].Value + "\"" + url + "\"", 1);
+        }
+
+        // Header lines are told apart from array rows (`[1,2],`) and from text inside a multi-line
+        // string by tracking both across lines; a comment line directly above the next table belongs
+        // to that table, so the section ends above it.
+        internal static bool TryFindMcpServerTable(string content, string serverName, out int start, out int end)
+        {
+            var headers = ScanToml(content).Headers;
+            var index = headers.FindIndex(header => !header.IsArray && header.Parts.Length == 2 &&
+                                                    IsMcpServer(header.Parts, serverName));
+
+            start = 0;
+            end = content.Length;
+            if (index < 0)
+                return false;
+
+            start = headers[index].Start;
+            if (index + 1 < headers.Count)
+                end = ExcludeTrailingComments(content, headers[index].End, headers[index + 1].Start);
+
+            return true;
+        }
+
+        private static bool IsMcpServer(string[] parts, string serverName)
+        {
+            return parts.Length >= 2 && parts[0] == "mcp_servers" && parts[1] == serverName;
+        }
+
+        // The entry as a dotted key (`mcp_servers.kitwright.url = ...`) or inside an inline table
+        // (under a plain [mcp_servers], or `mcp_servers = { ... }`): there is no header to edit, and
+        // appending one is a duplicate table.
+        private static bool HasUnparsedTomlEntry(string content, string serverName)
+        {
+            return ScanToml(content).Keys.Any(key =>
+            {
+                var path = key.Table.Concat(key.Key).ToArray();
+                return (IsMcpServer(path, serverName) && !IsMcpServer(key.Table, serverName)) ||
+                       (path.Length == 1 && path[0] == "mcp_servers");
+            });
+        }
+
+        private static int ExcludeTrailingComments(string content, int floor, int end)
+        {
+            while (end > floor)
+            {
+                var lineStart = end >= 2 ? content.LastIndexOf('\n', end - 2) + 1 : 0;
+                if (lineStart < floor ||
+                    !content.Substring(lineStart, end - lineStart).TrimStart().StartsWith("#", StringComparison.Ordinal))
+                    break;
+
+                end = lineStart;
+            }
+
+            return end;
+        }
+
+        private sealed class TomlHeader
+        {
+            public int Start;
+            public int End;
+            public bool IsArray;
+            public string[] Parts;
+        }
+
+        private sealed class TomlKey
+        {
+            public string[] Table;
+            public string[] Key;
+        }
+
+        private sealed class TomlLayout
+        {
+            public readonly List<TomlHeader> Headers = new List<TomlHeader>();
+            public readonly List<TomlKey> Keys = new List<TomlKey>();
+        }
+
+        private const string TomlKeyPart = @"(?:[A-Za-z0-9_-]+|""[^""\r\n]*""|'[^'\r\n]*')";
+        private const string TomlDottedKey = TomlKeyPart + @"(?:[ \t]*\.[ \t]*" + TomlKeyPart + ")*";
+
+        private static readonly Regex TomlKeyPartPattern = new Regex(TomlKeyPart, RegexOptions.Compiled);
+
+        private static readonly Regex TomlHeaderLine = new Regex(
+            @"^[ \t]*(\[\[?)[ \t]*(" + TomlDottedKey + @")[ \t]*\]\]?[ \t]*(?:#.*)?$", RegexOptions.Compiled);
+
+        private static readonly Regex TomlKeyLine = new Regex(
+            @"^[ \t]*(" + TomlDottedKey + @")[ \t]*=", RegexOptions.Compiled);
+
+        private static string[] TomlKeyParts(string dottedKey)
+        {
+            return TomlKeyPartPattern.Matches(dottedKey)
+                .Cast<Match>()
+                .Select(part => part.Value[0] == '"' || part.Value[0] == '\''
+                    ? part.Value.Substring(1, part.Value.Length - 2)
+                    : part.Value)
+                .ToArray();
+        }
+
+        private static TomlLayout ScanToml(string text)
+        {
+            var layout = new TomlLayout();
+            var table = Array.Empty<string>();
+            string multiline = null;
+            var depth = 0;
+
+            var position = 0;
+            while (position < text.Length)
+            {
+                var newline = text.IndexOf('\n', position);
+                var next = newline < 0 ? text.Length : newline + 1;
+                var line = text.Substring(position, next - position);
+
+                if (multiline == null && depth == 0)
+                {
+                    var content = line.TrimEnd('\r', '\n');
+                    var header = TomlHeaderLine.Match(content);
+                    if (header.Success)
+                    {
+                        table = TomlKeyParts(header.Groups[2].Value);
+                        layout.Headers.Add(new TomlHeader
+                        {
+                            Start = position,
+                            End = next,
+                            IsArray = header.Groups[1].Value == "[[",
+                            Parts = table
+                        });
+                        position = next;
+                        continue;
+                    }
+
+                    var key = TomlKeyLine.Match(content);
+                    if (key.Success)
+                        layout.Keys.Add(new TomlKey { Table = table, Key = TomlKeyParts(key.Groups[1].Value) });
+                }
+
+                SkipTomlValue(line, ref multiline, ref depth);
+                position = next;
+            }
+
+            return layout;
+        }
+
+        // Carries string and bracket state to the next line: only a line that starts outside both can
+        // be a header.
+        private static void SkipTomlValue(string line, ref string multiline, ref int depth)
+        {
+            var i = 0;
+            while (i < line.Length)
+            {
+                var c = line[i];
+                if (multiline != null)
+                {
+                    var close = line.IndexOf(multiline, i, StringComparison.Ordinal);
+                    if (close < 0)
+                        return;
+
+                    i = close + 3;
+                    multiline = null;
+                }
+                else if (c == '#')
+                {
+                    return;
+                }
+                else if (c == '"' || c == '\'')
+                {
+                    var triple = new string(c, 3);
+                    if (string.CompareOrdinal(line, i, triple, 0, 3) == 0)
+                    {
+                        multiline = triple;
+                        i += 3;
+                    }
+                    else
+                    {
+                        i++;
+                        while (i < line.Length && line[i] != c)
+                            i += c == '"' && line[i] == '\\' ? 2 : 1;
+                        i++;
+                    }
+                }
+                else
+                {
+                    if (c == '[' || c == '{')
+                        depth++;
+                    else if ((c == ']' || c == '}') && depth > 0)
+                        depth--;
+                    i++;
+                }
+            }
+        }
+
+        private static readonly Regex FeaturesHeader =
+            new Regex(@"(?m)^[ \t]*\[features\][ \t]*(?:#.*)?\r?$", RegexOptions.Compiled);
+
+        internal static string RemoveTomlSection(string content, string serverName)
+        {
+            while (TryFindMcpServerTable(content, serverName, out var start, out var end))
+                content = content.Substring(0, start) + content.Substring(end);
+
+            return content;
+        }
+
+        internal static string EnsureCodexRmcpFeature(string content)
         {
             if (content.Contains("rmcp_client"))
                 return content;
 
-            var featuresIdx = content.IndexOf("[features]", StringComparison.Ordinal);
-            if (featuresIdx >= 0)
+            var features = FeaturesHeader.Match(content);
+            if (features.Success)
             {
-                var afterHeader = featuresIdx + "[features]".Length;
-                var insertAt = content.IndexOf('\n', afterHeader);
+                var insertAt = content.IndexOf('\n', features.Index + features.Length);
                 insertAt = insertAt >= 0 ? insertAt + 1 : content.Length;
                 return content.Substring(0, insertAt) + "rmcp_client = true\n" + content.Substring(insertAt);
             }
@@ -915,7 +1339,12 @@ namespace KitWright.Editor.MCP.Server
             if (!target.IsToml)
                 return string.Empty;
 
-            return $"[mcp_servers.{ServerEntryName}]\nurl = \"{GetServerUrl()}\"\n";
+            return TomlSection(GetServerUrl());
+        }
+
+        private static string TomlSection(string url)
+        {
+            return $"[mcp_servers.{ServerEntryName}]\nurl = \"{url}\"\n";
         }
 
         // Per-project entry name so configuring from two Unity editors does not overwrite each

@@ -439,7 +439,7 @@ namespace KitWright.Editor.MCP.Server
 
             try
             {
-                var parsed = Newtonsoft.Json.Linq.JObject.Parse(result);
+                var parsed = KitWright.Editor.Tools.Helpers.JsonParse.Object(result);
                 if (parsed["success"]?.Type != Newtonsoft.Json.Linq.JTokenType.Boolean)
                     return false;
 

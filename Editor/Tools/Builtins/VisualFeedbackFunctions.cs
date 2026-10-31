@@ -66,16 +66,28 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Message to log")] string message,
             [ToolParam("Log type: info, warning, error", Required = false)] string log_type = "info")
         {
+            var kind = string.IsNullOrWhiteSpace(log_type) ? "info" : log_type.Trim().ToLowerInvariant();
+            kind = kind switch
+            {
+                "log" or "debug" or "information" => "info",
+                "warn" => "warning",
+                "err" or "fatal" or "exception" => "error",
+                _ => kind
+            };
+            if (kind != "info" && kind != "warning" && kind != "error")
+                return ToolResultFormatter.Error("INVALID_PARAM",
+                    new { param = "log_type", provided = log_type, expected = "info, warning or error" });
+
             // Not the "[KitWright]" prefix the plugin uses for its own chatter: both read paths of
             // get_console_logs drop that prefix on purpose, so a message logged through this tool
             // could never be read back through the tool that exists to read it.
-            switch (log_type.ToLowerInvariant())
+            switch (kind)
             {
                 case "warning": Debug.LogWarning($"[MCP] {message}"); break;
                 case "error": Debug.LogError($"[MCP] {message}"); break;
                 default: Debug.Log($"[MCP] {message}"); break;
             }
-            return $"Logged {log_type}: {message}";
+            return $"Logged {kind}: {message}";
         }
 
         // A modal dialog blocks the editor main loop, which stalls the MCP request pump until a

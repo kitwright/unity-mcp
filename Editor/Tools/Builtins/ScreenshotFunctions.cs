@@ -248,9 +248,11 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 readableRenderTexture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
                 readableRenderTexture.Create();
-                Graphics.Blit(sourceTexture, readableRenderTexture);
 
+                // Before the Blit, which leaves the target active: read after it, this "restored" the
+                // texture about to be released and Unity warned about releasing the active one.
                 previousActive = RenderTexture.active;
+                Graphics.Blit(sourceTexture, readableRenderTexture);
                 RenderTexture.active = readableRenderTexture;
 
                 screenshot = ReadActiveRenderTextureToTexture2D(width, height, flipVertically);

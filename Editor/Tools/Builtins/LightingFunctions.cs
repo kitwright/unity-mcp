@@ -1,7 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -45,10 +44,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (!string.IsNullOrEmpty(ambient_mode))
             {
-                // Enum.TryParse accepts unmapped NUMERIC strings (e.g. "7") without failing, so
-                // validate the result is a defined AmbientMode member.
-                if (!Enum.TryParse<UnityEngine.Rendering.AmbientMode>(ambient_mode.Trim(), true, out var mode) ||
-                    !Enum.IsDefined(typeof(UnityEngine.Rendering.AmbientMode), mode))
+                if (!ValueConverter.TryParseEnum<UnityEngine.Rendering.AmbientMode>(ambient_mode, out var mode))
                     return Response.Error("INVALID_PARAM",
                         new { param = "ambient_mode", provided = ambient_mode, expected = "Skybox|Trilight|Flat|Custom" });
                 parsedAmbientMode = mode;
@@ -70,9 +66,9 @@ namespace KitWright.Editor.Tools.Builtins
                 parsedFogColor = col;
             }
 
-            if (float.IsNaN(fog_density) || float.IsInfinity(fog_density))
+            if (float.IsNaN(fog_density) || float.IsInfinity(fog_density) || (fog_density < 0f && fog_density != -1f))
                 return Response.Error("INVALID_PARAM",
-                    new { param = "fog_density", provided = fog_density, expected = "a finite number >= 0, or -1 to leave unchanged" });
+                    new { param = "fog_density", provided = fog_density.ToString(), expected = "a finite number >= 0, or -1 to leave unchanged" });
 
             if (!parsedAmbientMode.HasValue && !parsedAmbientLight.HasValue && !fog.HasValue &&
                 !parsedFogColor.HasValue && fog_density < 0f)
@@ -212,19 +208,18 @@ namespace KitWright.Editor.Tools.Builtins
                 return false;
             }
 
-            if (!float.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ||
-                !float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var g) ||
-                !float.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var b))
+            if (!ValueConverter.TryFiniteFloat(parts[0], out var r) ||
+                !ValueConverter.TryFiniteFloat(parts[1], out var g) ||
+                !ValueConverter.TryFiniteFloat(parts[2], out var b))
             {
-                error = "non-numeric r/g/b component";
+                error = "non-numeric or non-finite r/g/b component";
                 return false;
             }
 
             float a = 1f;
-            if (parts.Length >= 4 &&
-                !float.TryParse(parts[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out a))
+            if (parts.Length >= 4 && !ValueConverter.TryFiniteFloat(parts[3], out a))
             {
-                error = "non-numeric alpha component";
+                error = "non-numeric or non-finite alpha component";
                 return false;
             }
 

@@ -50,6 +50,38 @@ public class Reflected
     }
 }";
 
+        private const string AliasedTrash = @"
+using AD = UnityEditor.AssetDatabase;
+
+public class AliasedTrashCan
+{
+    public static string Run()
+    {
+        AD.MoveAssetToTrash(""Assets/missing.txt"");
+        return ""done"";
+    }
+}";
+
+        private const string PluralTrash = @"
+public class PluralTrashCan
+{
+    public static string Run()
+    {
+        UnityEditor.AssetDatabase.MoveAssetsToTrash(new[] { ""Assets/missing.txt"" }, new System.Collections.Generic.List<string>());
+        return ""done"";
+    }
+}";
+
+        private const string ReplacedDirectory = @"
+public class DirectoryReplacer
+{
+    public static string Run()
+    {
+        UnityEditor.FileUtil.ReplaceDirectory(""Assets/missing_a"", ""Assets/missing_b"");
+        return ""done"";
+    }
+}";
+
         private const string ModalDialog = @"
 using UnityEditor;
 
@@ -263,6 +295,27 @@ public class EarlyBird
 
             Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
             Assert.AreEqual(expected, reference);
+        }
+
+        [TestCase(AliasedTrash, "UnityEditor.AssetDatabase.MoveAssetToTrash")]
+        [TestCase(PluralTrash, "UnityEditor.AssetDatabase.MoveAssetsToTrash")]
+        public void Guard_BlocksMovingAnAssetToTheTrashEvenThroughAnAlias(string snippet, string expected)
+        {
+            var compilation = ScriptCompilerPipeline.Compile(snippet);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
+            Assert.AreEqual(expected, reference);
+        }
+
+        [Test]
+        public void Guard_BlocksReplacingADirectoryThroughFileUtil()
+        {
+            var compilation = ScriptCompilerPipeline.Compile(ReplacedDirectory);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
+            Assert.AreEqual("UnityEditor.FileUtil.ReplaceDirectory", reference);
         }
 
         [Test]

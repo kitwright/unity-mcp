@@ -453,7 +453,8 @@ namespace KitWright.Editor.MCP.Server
                         sendResponse(new MCPResponse
                         {
                             Id = request?.Id,
-                            Error = new MCPError { Code = -32001, Message = ToolTimeoutMessage(GetToolName(request), ceilingMs) }
+                            Error = new MCPError { Code = -32001, Message = ToolTimeoutMessage(GetToolName(request), ceilingMs,
+                                MCPToolExportPolicy.IsToolAllowed("get_execute_code_history", _settings, out _)) }
                         });
                         return;
                     }
@@ -500,14 +501,17 @@ namespace KitWright.Editor.MCP.Server
 
         // A bare "timed out" read as "nothing happened", so agents ran the same work a second time
         // behind the first.
-        internal static string ToolTimeoutMessage(string toolName, int ceilingMs)
+        internal static string ToolTimeoutMessage(string toolName, int ceilingMs, bool historyExposed = true)
         {
             var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled " +
                           "and may still finish, so check what it did before running it again.";
 
             return string.Equals(toolName, "execute_code", StringComparison.Ordinal)
                 ? message + " For work that legitimately takes longer, pass timeout_seconds (up to " +
-                  $"{ToolRegistry.MaxExecuteCodeTimeoutSeconds}); get_execute_code_history shows whether it finished."
+                  $"{ToolRegistry.MaxExecuteCodeTimeoutSeconds}); " +
+                  (historyExposed
+                      ? "get_execute_code_history shows whether it finished."
+                      : "set_tool_profile 'full' exposes get_execute_code_history, which shows whether it finished.")
                 : message;
         }
 

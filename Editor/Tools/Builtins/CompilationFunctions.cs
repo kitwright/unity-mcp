@@ -27,11 +27,10 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Force Unity to refresh and wait until script compilation is complete without blocking the editor thread. " +
                      "Use this after editing scripts to ensure the latest code is active before entering Play Mode. " +
                      "Returns compilation errors if any, or a success message.")]
-        [ReadOnlyTool]
         [ReplaySafeTool]
         public static async Task<string> WaitForCompilation(
             [ToolParam("Force a reimport/refresh before waiting", Required = false)] bool force_refresh = true,
-            [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30)
+            [ToolParam("Maximum seconds to wait for compilation (5-120; a value outside that range is clamped)", Required = false)] int timeout_seconds = 30)
         {
             try
             {
@@ -81,7 +80,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "wait=true holds the call until compilation finishes and answers with its result (in broker mode it survives the domain reload). " +
                      "exit_play_mode=true ends Play Mode first, keeping its latest console errors in the response, instead of answering PLAY_MODE_ACTIVE.")]
         public static async Task<string> RequestRecompile(
-            [ToolParam("Maximum seconds to wait for compilation", Required = false)] int timeout_seconds = 30,
+            [ToolParam("Maximum seconds to wait for compilation (5-120; a value outside that range is clamped)", Required = false)] int timeout_seconds = 30,
             [ToolParam("Hold the call until compilation finishes and answer with the compile result. In broker mode the call is held across the domain reload; without a broker, leave false and call wait_for_compilation.", Required = false)] bool wait = false,
             [ToolParam("When Unity is in Play Mode: keep its latest error/exception console entries in the response, exit Play Mode, then recompile. false (default) answers PLAY_MODE_ACTIVE and leaves Play Mode running.", Required = false)] bool exit_play_mode = false)
         {
@@ -193,7 +192,9 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error("COMPILATION_FAILED", new { issues });
             }
 
-            return ScriptsNewerThanCompilationError() ?? "External changes imported. No compilation errors or warnings detected.";
+            return ScriptsNewerThanCompilationError() ?? (refreshResult.CompilationOrImportStarted
+                ? "External changes imported. No compilation errors or warnings detected."
+                : "No external changes to import. No compilation errors or warnings detected.");
         }
 
         // A compile that never ran leaves an empty error list, which would read as success.

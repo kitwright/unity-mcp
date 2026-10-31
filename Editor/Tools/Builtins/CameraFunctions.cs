@@ -88,6 +88,12 @@ namespace KitWright.Editor.Tools.Builtins
             if (camera == null)
                 return ToolResultFormatter.Error("CAMERA_NOT_FOUND", new { game_object_name });
 
+            var backgroundColor = Color.black;
+            if (!string.IsNullOrEmpty(background_color) &&
+                !ValueConverter.TryParseColor(background_color, Color.black, out backgroundColor, out var colorError))
+                return ToolResultFormatter.Error("INVALID_PARAM",
+                    new { param = "background_color", provided = background_color, detail = colorError });
+
             Undo.RecordObject(camera, "Set Camera Settings");
             var changes = new StringBuilder();
 
@@ -103,7 +109,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
             if (!string.IsNullOrEmpty(background_color))
             {
-                camera.backgroundColor = ValueConverter.ParseColor(background_color, Color.black);
+                camera.backgroundColor = backgroundColor;
                 changes.Append($"bg={background_color} ");
             }
             if (!string.IsNullOrEmpty(clear_flags))

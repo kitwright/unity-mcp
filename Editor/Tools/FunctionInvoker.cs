@@ -83,6 +83,9 @@ namespace KitWright.Editor.Tools
                                        || ex is AmbiguousTargetException || ex is AmbiguousTypeException)
             {
                 var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+                if (inner is ToolArgumentException argument)
+                    return ToolResultFormatter.Error(argument.Code,
+                        new { param = argument.ParamName, provided = argument.Provided, expected = argument.Expected });
                 if (inner is PathOutsideProjectException)
                     return ToolResultFormatter.Error("PATH_OUTSIDE_PROJECT",
                         new { function = functionCall.FunctionName, message = inner.Message });
@@ -105,7 +108,7 @@ namespace KitWright.Editor.Tools
                             candidates = ambiguous.Candidates,
                             message = inner.Message
                         },
-                        "Re-call with find_method=by_id and one of the candidate ids, or find_method=by_path.");
+                        "Pass one of the candidate ids as the target (find_method=by_id where the tool has that parameter).");
 
                 Debug.LogError($"[KitWright] Function '{functionCall.FunctionName}' failed: {inner.Message}\n{inner.StackTrace}");
                 return ToolResultFormatter.Error("FUNCTION_FAILED",
@@ -206,7 +209,7 @@ namespace KitWright.Editor.Tools
 
             try
             {
-                payload = JToken.Parse(s);
+                payload = JsonParse.Token(s);
                 return true;
             }
             catch
@@ -464,10 +467,21 @@ namespace KitWright.Editor.Tools
                 return int.Parse(value, CultureInfo.InvariantCulture);
             if (targetType == typeof(long))
                 return long.Parse(value, CultureInfo.InvariantCulture);
+            // NumberStyles.Float, not the default: that one also allows group separators, so "0,5" read as 5.
             if (targetType == typeof(float))
-                return float.Parse(value, CultureInfo.InvariantCulture);
+            {
+                var f = float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+                if (float.IsNaN(f) || float.IsInfinity(f))
+                    throw new FormatException($"'{value}' is not a finite number");
+                return f;
+            }
             if (targetType == typeof(double))
-                return double.Parse(value, CultureInfo.InvariantCulture);
+            {
+                var d = double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+                if (double.IsNaN(d) || double.IsInfinity(d))
+                    throw new FormatException($"'{value}' is not a finite number");
+                return d;
+            }
             if (targetType == typeof(bool))
             {
                 if (value == "true" || value == "1" || value.Equals("yes", StringComparison.OrdinalIgnoreCase))
@@ -499,28 +513,11 @@ namespace KitWright.Editor.Tools
             return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
         }
 
-        private Vector3 ParseVector3(string value)
-        {
-            value = value.Trim('(', ')', ' ');
-            var parts = value.Split(',');
-            if (parts.Length != 3)
-                throw new FormatException($"expected 3 comma-separated numbers 'x,y,z', got {parts.Length}");
-            return new Vector3(
-                float.Parse(parts[0].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[2].Trim(), CultureInfo.InvariantCulture));
-        }
+        private Vector3 ParseVector3(string value) =>
+            ValueConverter.TryParseVector3(value, out var v, out var error) ? v : throw new FormatException(error);
 
-        private Vector2 ParseVector2(string value)
-        {
-            value = value.Trim('(', ')', ' ');
-            var parts = value.Split(',');
-            if (parts.Length != 2)
-                throw new FormatException($"expected 2 comma-separated numbers 'x,y', got {parts.Length}");
-            return new Vector2(
-                float.Parse(parts[0].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), CultureInfo.InvariantCulture));
-        }
+        private Vector2 ParseVector2(string value) =>
+            ValueConverter.TryParseVector2(value, out var v, out var error) ? v : throw new FormatException(error);
 
         private Color ParseColor(string value)
         {

@@ -310,27 +310,18 @@ namespace KitWright.Editor.Tools.Builtins
             // scene stacked on top of a bootstrap scene). SceneManager.GetActiveScene() only reflects
             // one of those scenes, so counting just its roots silently misses everything else that's
             // actually loaded and rendering. Walk every loaded scene instead.
+            // Through the helper so Play Mode's DontDestroyOnLoad scene is counted, which sceneCount is not.
             var roots = new List<GameObject>();
-            var sceneCount = SceneManager.sceneCount;
-            for (int i = 0; i < sceneCount; i++)
-            {
-                var scene = SceneManager.GetSceneAt(i);
-                if (scene.isLoaded)
-                    roots.AddRange(scene.GetRootGameObjects());
-            }
+            foreach (var scene in ObjectsHelper.EnumerateLoadedScenes())
+                roots.AddRange(scene.GetRootGameObjects());
             return roots;
         }
 
         private static string GetLoadedScenesSummary()
         {
             var names = new List<string>();
-            var sceneCount = SceneManager.sceneCount;
-            for (int i = 0; i < sceneCount; i++)
-            {
-                var scene = SceneManager.GetSceneAt(i);
-                if (scene.isLoaded)
-                    names.Add(scene.name);
-            }
+            foreach (var scene in ObjectsHelper.EnumerateLoadedScenes())
+                names.Add(scene.name);
             return names.Count > 0 ? string.Join(", ", names) : "<none>";
         }
 

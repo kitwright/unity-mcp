@@ -164,6 +164,16 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(result.Contains("  - "), "A past-the-end cursor must list nothing.");
         }
 
+        [Test]
+        public void FindAssets_SaysWhenATypeFilterMayBeMisspelled_AndWhenMaxWasClamped()
+        {
+            StringAssert.Contains("misspelled", AssetFunctions.FindAssets("t:KwNoSuchTypeAnywhere"));
+            Assert.IsFalse(AssetFunctions.FindAssets("KwNoSuchNameAnywhere").Contains("misspelled"),
+                "only a t: filter has a type name to get wrong");
+
+            StringAssert.Contains("outside 1-500", AssetFunctions.FindAssets("t:Script", max: 9999));
+        }
+
         private static List<string> PathsIn(string response) =>
             response.Split('\n')
                 .Where(line => line.TrimStart().StartsWith("- "))

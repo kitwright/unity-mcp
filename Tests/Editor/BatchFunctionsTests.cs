@@ -34,6 +34,15 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(BatchFunctions.IsSuccess("not json", "not json"));
         }
 
+        [Test]
+        public void ExtractParams_LeavesAJsonNullOutInsteadOfPassingTheWordNull()
+        {
+            var extracted = BatchFunctions.ExtractParams(JToken.Parse("{\"a\":null,\"b\":\"text\",\"c\":2,\"d\":true}"));
+
+            CollectionAssert.AreEquivalent(new[] { "b", "c", "d" }, extracted.Keys);
+            Assert.AreEqual("text", extracted["b"]);
+        }
+
         // BatchExecute collapses every undo step it sees down to the group that was current when it
         // started. Run without this, it swallows the test runner's own group, and the runner's
         // Undo.RevertAllDownToGroup after the run then reverts into a group that no longer exists -

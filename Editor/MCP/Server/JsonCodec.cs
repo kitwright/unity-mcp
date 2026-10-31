@@ -134,6 +134,47 @@ namespace KitWright.Editor.MCP.Server
             return Deserialize(json, 0);
         }
 
+        // Config files are JSONC for several clients; the parser above stops at the first token that is
+        // not a key, so a comment ahead of or inside a section hides everything after it.
+        public static string StripComments(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return json;
+
+            var sb = new StringBuilder(json.Length);
+            var i = 0;
+            while (i < json.Length)
+            {
+                var c = json[i];
+                var next = i + 1 < json.Length ? json[i + 1] : '\0';
+
+                if (c == '"')
+                {
+                    var end = FindStringEnd(json, i);
+                    sb.Append(json, i, end - i + 1);
+                    i = end + 1;
+                }
+                else if (c == '/' && next == '/')
+                {
+                    while (i < json.Length && json[i] != '\n')
+                        i++;
+                }
+                else if (c == '/' && next == '*')
+                {
+                    var close = json.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? json.Length : close + 2;
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                    i++;
+                }
+            }
+
+            return sb.ToString();
+        }
+
         private static object Deserialize(string json, int depth)
         {
             if (string.IsNullOrEmpty(json)) return null;

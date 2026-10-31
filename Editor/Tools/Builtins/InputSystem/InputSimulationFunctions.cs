@@ -3,6 +3,7 @@
 #if KITWRIGHT_INPUTSYSTEM
 using System;
 using System.ComponentModel;
+using System.Linq;
 using System.Threading.Tasks;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -16,15 +17,22 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("InputSimulation")]
     internal static class InputSimulationFunctions
     {
-        [Description("Simulate keyboard input in Play Mode. Queues key events that the Unity Input System will process. Supports key names like W, A, S, D, Space, LeftShift, E, Q, and number keys.")]
+        private const string AddedDevicesKey = "KitWright_InputSimulation_AddedDevices";
+
+        [Description("Simulate keyboard input in Play Mode. Queues key events that the Unity Input System will process. Supports key names like W, A, S, D, Space, LeftShift, E, Q, and number keys. " +
+                     "action=press with a duration holds the key that long and then releases it; without one it stays down until action=release.")]
         [ReadOnlyTool]
         public static string SimulateKeyPress(
             [ToolParam("Key name, for example W, Space, LeftShift, E, or 1")] string key,
-            [ToolParam("Duration in seconds to hold the key. Use 0 for a tap.", Required = false)] float duration = 0f,
+            [ToolParam("Duration in seconds to hold the key (up to 5). Use 0 for a tap, or, with action=press, to keep it down until released.", Required = false)] float duration = 0f,
             [ToolParam("Action type: press, release, or tap", Required = false)] string action = "tap")
         {
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateKeyPress only works in Play Mode.");
+
+            var actionError = InputInteractionFunctions.ChoiceError("action", action, "press", "release", "tap");
+            if (actionError != null)
+                return actionError;
 
             try
             {
@@ -40,12 +48,24 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     case "press":
                         QueueKeyState(keyboard, keyControl, true);
-                        return $"Key '{key}' pressed (held down)";
+                        if (duration > 0f)
+                        {
+                            var hold = Mathf.Clamp(duration, 0.01f, 5f);
+                            ReleaseAfter(hold, () =>
+                            {
+                                var current = Keyboard.current;
+                                if (current != null)
+                                    QueueKeyState(current, FindKey(current, key), false);
+                            });
+                            return $"Key '{key}' pressed and held for {hold:F2}s" + InputInteractionFunctions.FocusNote();
+                        }
+
+                        return $"Key '{key}' pressed (held down until action=release)" + InputInteractionFunctions.FocusNote();
                     case "release":
                         QueueKeyState(keyboard, keyControl, false);
-                        return $"Key '{key}' released";
+                        return $"Key '{key}' released" + InputInteractionFunctions.FocusNote();
                     default:
-                        return TapKey(keyboard, keyControl, key, duration);
+                        return TapKey(keyboard, keyControl, key, duration) + InputInteractionFunctions.FocusNote();
                 }
             }
             catch (Exception ex)
@@ -70,14 +90,21 @@ namespace KitWright.Editor.Tools.Builtins
                     return ToolResultFormatter.ErrorMessage("INPUT_DEVICE_NOT_FOUND", "No keyboard device found");
 
                 duration = Mathf.Clamp(duration, 0.05f, 5f);
-                var keyNames = (keys ?? string.Empty).Split(',');
+                var keyNames = (keys ?? string.Empty).Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries);
+                for (int i = 0; i < keyNames.Length; i++)
+                    keyNames[i] = keyNames[i].Trim();
+
+                if (keyNames.Length == 0)
+                    return ToolResultFormatter.ErrorMessage("INVALID_PARAM", "keys is empty; pass comma-separated key names such as 'W,LeftShift'.");
+
+                // All of them before any is pressed: a typo used to press the rest and report the lot held.
+                var unknown = keyNames.Where(name => FindKey(keyboard, name) == null).ToArray();
+                if (unknown.Length > 0)
+                    return ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED",
+                        $"Key(s) not recognized: {string.Join(", ", unknown)}. Examples: W, A, S, D, Space, LeftShift, E, Escape, 1, 2");
 
                 for (int i = 0; i < keyNames.Length; i++)
-                {
-                    var keyControl = FindKey(keyboard, keyNames[i].Trim());
-                    if (keyControl != null)
-                        QueueKeyState(keyboard, keyControl, true);
-                }
+                    QueueKeyState(keyboard, FindKey(keyboard, keyNames[i]), true);
 
                 double releaseTime = EditorApplication.timeSinceStartup + duration;
                 EditorApplication.CallbackFunction releaseAll = null;
@@ -100,7 +127,7 @@ namespace KitWright.Editor.Tools.Builtins
                 };
                 EditorApplication.update += releaseAll;
 
-                return $"Keys [{keys}] held for {duration:F2}s";
+                return $"Keys [{keys}] held for {duration:F2}s" + InputInteractionFunctions.FocusNote();
             }
             catch (Exception ex)
             {
@@ -120,6 +147,10 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateMouseDrag only works in Play Mode.");
+
+            var buttonError = InputInteractionFunctions.ChoiceError("button", button, "left", "right", "middle");
+            if (buttonError != null)
+                return buttonError;
 
             try
             {
@@ -182,6 +213,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateTouch only works in Play Mode.");
 
+            var actionError = InputInteractionFunctions.ChoiceError("action", action, "tap", "press", "release");
+            if (actionError != null)
+                return actionError;
+
             try
             {
                 var touchscreen = EnsureDevice<Touchscreen>();
@@ -194,11 +229,11 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     case "press":
                         QueueTouch(touchscreen, touch_id, UnityEngine.InputSystem.TouchPhase.Began, position);
-                        return $"Touch {touch_id} began at ({x},{y}) and is still down";
+                        return $"Touch {touch_id} began at ({x},{y}) and is still down" + InputInteractionFunctions.FocusNote();
 
                     case "release":
                         QueueTouch(touchscreen, touch_id, UnityEngine.InputSystem.TouchPhase.Ended, position);
-                        return $"Touch {touch_id} ended at ({x},{y})";
+                        return $"Touch {touch_id} ended at ({x},{y})" + InputInteractionFunctions.FocusNote();
 
                     default:
                         var hold = Mathf.Clamp(duration <= 0f ? 0.05f : duration, 0.05f, 5f);
@@ -209,7 +244,7 @@ namespace KitWright.Editor.Tools.Builtins
                             if (device != null)
                                 QueueTouch(device, touch_id, UnityEngine.InputSystem.TouchPhase.Ended, position);
                         });
-                        return $"Touch {touch_id} tapped at ({x},{y}) for {hold:F2}s";
+                        return $"Touch {touch_id} tapped at ({x},{y}) for {hold:F2}s" + InputInteractionFunctions.FocusNote();
                 }
             }
             catch (Exception ex)
@@ -281,6 +316,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateGamepad only works in Play Mode.");
 
+            var actionError = InputInteractionFunctions.ChoiceError("action", action, "tap", "press", "release");
+            if (actionError != null)
+                return actionError;
+
             try
             {
                 var gamepad = EnsureDevice<Gamepad>();
@@ -303,13 +342,13 @@ namespace KitWright.Editor.Tools.Builtins
 
                 if (target == null)
                     return $"Gamepad updated (left stick {gamepad.leftStick.ReadValue()}, right stick {gamepad.rightStick.ReadValue()}, " +
-                           $"triggers {gamepad.leftTrigger.ReadValue():F2}/{gamepad.rightTrigger.ReadValue():F2})";
+                           $"triggers {gamepad.leftTrigger.ReadValue():F2}/{gamepad.rightTrigger.ReadValue():F2})" + InputInteractionFunctions.FocusNote();
 
                 if (verb == "press")
-                    return $"Gamepad button '{button}' pressed (held down)";
+                    return $"Gamepad button '{button}' pressed (held down)" + InputInteractionFunctions.FocusNote();
 
                 if (verb == "release")
-                    return $"Gamepad button '{button}' released";
+                    return $"Gamepad button '{button}' released" + InputInteractionFunctions.FocusNote();
 
                 var holdFor = Mathf.Clamp(duration <= 0f ? 0.05f : duration, 0.05f, 5f);
                 var buttonToRelease = target.Value;
@@ -320,7 +359,7 @@ namespace KitWright.Editor.Tools.Builtins
                         WriteGamepad(device, buttonToRelease, false, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN, float.NaN);
                 });
 
-                return $"Gamepad button '{button}' tapped for {holdFor:F2}s";
+                return $"Gamepad button '{button}' tapped for {holdFor:F2}s" + InputInteractionFunctions.FocusNote();
             }
             catch (Exception ex)
             {
@@ -429,6 +468,46 @@ namespace KitWright.Editor.Tools.Builtins
             EditorApplication.update += callback;
         }
 
+        // A virtual device added for a simulation outlives Play Mode, so a gamepad or touchscreen the
+        // machine never had stayed in the Input System's device list, visible to the next session.
+        private static TDevice AddTrackedDevice<TDevice>() where TDevice : InputDevice
+        {
+            var device = InputSystem.AddDevice<TDevice>();
+            SessionState.SetString(AddedDevicesKey, SessionState.GetString(AddedDevicesKey, string.Empty) + "," + device.deviceId);
+            return device;
+        }
+
+        [InitializeOnLoadMethod]
+        private static void RemoveAddedDevicesWhenPlayModeEnds()
+        {
+            EditorApplication.playModeStateChanged += state =>
+            {
+                if (state == PlayModeStateChange.EnteredEditMode)
+                    RemoveAddedDevices();
+            };
+
+            if (!EditorApplication.isPlayingOrWillChangePlaymode)
+                RemoveAddedDevices();
+        }
+
+        private static void RemoveAddedDevices()
+        {
+            var ids = SessionState.GetString(AddedDevicesKey, string.Empty);
+            if (string.IsNullOrEmpty(ids))
+                return;
+
+            SessionState.EraseString(AddedDevicesKey);
+            foreach (var id in ids.Split(new[] { ',' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (!int.TryParse(id, out var deviceId))
+                    continue;
+
+                var device = InputSystem.GetDeviceById(deviceId);
+                if (device != null)
+                    InputSystem.RemoveDevice(device);
+            }
+        }
+
         private static TDevice EnsureDevice<TDevice>() where TDevice : InputDevice
         {
             try
@@ -437,7 +516,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (existing != null)
                     return existing;
 
-                return InputSystem.AddDevice<TDevice>();
+                return AddTrackedDevice<TDevice>();
             }
             catch
             {
@@ -522,7 +601,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (keyboard != null)
                     return keyboard;
 
-                return InputSystem.AddDevice<Keyboard>();
+                return AddTrackedDevice<Keyboard>();
             }
             catch
             {
@@ -542,7 +621,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (mouse != null)
                     return mouse;
 
-                return InputSystem.AddDevice<Mouse>();
+                return AddTrackedDevice<Mouse>();
             }
             catch
             {

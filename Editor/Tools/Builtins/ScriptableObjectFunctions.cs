@@ -92,7 +92,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (resolved.Error != null) return resolved.Error;
 
             JObject jobj;
-            try { jobj = JObject.Parse(properties); }
+            try { jobj = JsonParse.Object(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
 
             var results = ComponentSerializer.WriteProperties(resolved.Asset, jobj,

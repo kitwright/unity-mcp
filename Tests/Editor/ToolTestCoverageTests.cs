@@ -28,8 +28,6 @@ namespace KitWright.Editor.Tests
             // a recursive test run
             "cancel_test_run",
             "run_tests",
-            // a package resolve, which reloads the domain the run is living in
-            "remove_package",
             // The .asmdef writers left this list when their path refusals got tests; a write that
             // lands still recompiles and reloads the domain, so only the refusals run.
             // arbitrary code or a script edit, same reason

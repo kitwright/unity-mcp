@@ -12,15 +12,18 @@ namespace KitWright.Editor.Tools.Builtins
     internal static partial class ScreenshotFunctions
     {
         [Description("Capture a screenshot of the Game View (what the main camera sees). Returns a base64-encoded PNG image, " +
-                     "or a saved file path when save_to_file=true.")]
+                     "or a saved file path when save_to_file=true. The image keeps the game's aspect ratio. With no width or height its " +
+                     "longest side is the 'Screenshot default size' setting (512 unless changed); with either, it is the size asked for, " +
+                     "within 64-4096 (width and height together are a box the image fits inside).")]
         [ReadOnlyTool]
         public static string CaptureGameView(
-            [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
-            [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
+            [ToolParam("Width of the screenshot in pixels (64-4096). Without width and height the longest side is the default size setting.", Required = false)] int width = 0,
+            [ToolParam("Height of the screenshot in pixels (64-4096). Without width and height the longest side is the default size setting.", Required = false)] int height = 0,
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
             [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
         {
             var autoCap = ResolveDefaultScreenshotSize();
+            var sizeAsked = width > 0 || height > 0;
             if (!TryResolveGameViewSize(ref width, ref height, autoCap))
             {
                 width = Mathf.Clamp(width > 0 ? width : autoCap, 64, 4096);
@@ -28,7 +31,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             var maxSide = Mathf.Max(width, height);
-            if (maxSide > autoCap)
+            if (!sizeAsked && maxSide > autoCap)
             {
                 var scale = autoCap / (float)maxSide;
                 width = Mathf.Max(64, Mathf.RoundToInt(width * scale));

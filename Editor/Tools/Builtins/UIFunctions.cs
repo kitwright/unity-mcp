@@ -55,6 +55,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (parent == null)
                 return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
 
+            var invalidLayout = CheckLayout(size, position, pivot, anchor);
+            if (invalidLayout != null)
+                return invalidLayout;
+
             var buttonGo = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(buttonGo, $"Create Button {name}");
             buttonGo.transform.SetParent(parent, false);
@@ -106,6 +110,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (!ValueConverter.TryParseInt(font_size, out var fontSize))
                 return ToolResultFormatter.Error("INVALID_FONT_SIZE", new { font_size });
 
+            var invalidLayout = CheckLayout(size, position, pivot, anchor);
+            if (invalidLayout != null)
+                return invalidLayout;
+
             var textGo = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(textGo, $"Create Text {name}");
             textGo.transform.SetParent(parent, false);
@@ -140,9 +148,16 @@ namespace KitWright.Editor.Tools.Builtins
             if (parent == null)
                 return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
 
+            if (!ValueConverter.TryParseColor(color, Color.white, out var imageColor, out var colorError))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "color", provided = color, detail = colorError });
+
+            var invalidLayout = CheckLayout(size, position, pivot, anchor);
+            if (invalidLayout != null)
+                return invalidLayout;
+
             var imageGo = CreateImageObject(parent, name, ValueConverter.ParseVector2(size, Vector2.zero), ValueConverter.ParseVector2(position, Vector2.zero), anchor, pivot);
             var image = imageGo.GetComponent<Image>();
-            image.color = ValueConverter.ParseColor(color, Color.white);
+            image.color = imageColor;
 
             Selection.activeGameObject = imageGo;
             return $"Created UI Image '{name}'";
@@ -168,6 +183,10 @@ namespace KitWright.Editor.Tools.Builtins
             var parent = FindParent(parent_name);
             if (parent == null)
                 return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
+
+            var invalidLayout = CheckLayout(size, position, pivot, anchor);
+            if (invalidLayout != null)
+                return invalidLayout;
 
             var normalized = (kind ?? string.Empty).ToLowerInvariant().Replace("_", "").Replace("-", "").Replace(" ", "");
             var resources = BuiltinControlResources();
@@ -270,6 +289,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (rect == null)
                 return ToolResultFormatter.Error("NO_RECT_TRANSFORM", new { target, hint = "Target is not a UI element (no RectTransform)." });
 
+            var invalidLayout = CheckLayout(size, anchored_position, pivot, anchor, "anchored_position");
+            if (invalidLayout != null)
+                return invalidLayout;
+
             Undo.RecordObject(rect, $"Set RectTransform of {go.name}");
 
             if (!string.IsNullOrEmpty(anchor) || !string.IsNullOrEmpty(pivot))
@@ -282,6 +305,31 @@ namespace KitWright.Editor.Tools.Builtins
             return $"RectTransform on '{go.name}': anchoredPos={rect.anchoredPosition}, sizeDelta={rect.sizeDelta}, pivot={rect.pivot}";
         }
 
+        private static readonly string[] AnchorPresets =
+        {
+            "top-left", "top-center", "top-right", "middle-left", "center", "middle-right",
+            "bottom-left", "bottom-center", "bottom-right", "stretch-horizontal", "stretch-vertical", "stretch-full"
+        };
+
+        private static string NormalizeAnchor(string anchor) =>
+            anchor.ToLowerInvariant().Replace(" ", "").Replace("_", "-");
+
+        private static string CheckLayout(string size, string position, string pivot, string anchor, string positionParam = "position") =>
+            CheckVector2("size", size) ?? CheckVector2(positionParam, position) ?? CheckVector2("pivot", pivot) ?? CheckAnchor(anchor);
+
+        private static string CheckAnchor(string anchor) =>
+            string.IsNullOrEmpty(anchor) || Array.IndexOf(AnchorPresets, NormalizeAnchor(anchor)) >= 0
+                ? null
+                : ToolResultFormatter.Error("INVALID_PARAM", new { param = "anchor", provided = anchor, valid = AnchorPresets });
+
+        private static string CheckVector2(string param, string value)
+        {
+            string detail = null;
+            if (string.IsNullOrEmpty(value) || ValueConverter.TryParseVector2(value, out _, out detail))
+                return null;
+            return ToolResultFormatter.Error("INVALID_PARAM", new { param, provided = value, expected = "Vector2 'x,y'", detail });
+        }
+
         internal static void ApplyAnchorPreset(RectTransform rect, string anchor, string pivot)
         {
             if (!string.IsNullOrEmpty(pivot))
@@ -292,7 +340,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (string.IsNullOrEmpty(anchor)) return;
 
-            switch (anchor.ToLowerInvariant().Replace(" ", "").Replace("_", "-"))
+            switch (NormalizeAnchor(anchor))
             {
                 case "top-left":
                     rect.anchorMin = new Vector2(0, 1);
@@ -388,12 +436,21 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Coordinate origin: 'bottom_left' (Unity screen space, default) or 'top_left' (screenshot/image space).", Required = false)] string origin = "bottom_left",
             [ToolParam("Maximum number of hits to include in the result. Default 20.", Required = false)] int max_results = 20)
         {
+            if (float.IsNaN(x) || float.IsInfinity(x) || float.IsNaN(y) || float.IsInfinity(y))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "x/y", x = x.ToString(), y = y.ToString() },
+                    "x and y must be finite numbers.");
+
+            var originName = string.IsNullOrWhiteSpace(origin) ? "bottom_left" : origin.Trim().ToLowerInvariant();
+            if (originName != "bottom_left" && originName != "top_left")
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "origin", provided = origin },
+                    "Expected 'bottom_left' or 'top_left'.");
+
             var eventSystem = EventSystem.current;
             if (eventSystem == null)
             {
                 return ToolResultFormatter.Error("NO_EVENT_SYSTEM", new
                 {
-                    hint = "No live EventSystem found. Enter Play Mode (or ensure the scene has an enabled EventSystem) first."
+                    hint = "No live EventSystem. One is only current while the game runs, even when the scene contains one: enter Play Mode first."
                 });
             }
 
@@ -405,8 +462,10 @@ namespace KitWright.Editor.Tools.Builtins
 
             var px = normalized ? x * screenWidth : x;
             var py = normalized ? y * screenHeight : y;
-            if (string.Equals(origin?.Trim(), "top_left", StringComparison.OrdinalIgnoreCase))
+            if (originName == "top_left")
                 py = screenHeight - py;
+
+            var outsideScreen = px < 0f || py < 0f || px > screenWidth || py > screenHeight;
 
             var pointerData = new PointerEventData(eventSystem) { position = new Vector2(px, py) };
             var results = new List<RaycastResult>();
@@ -447,20 +506,26 @@ namespace KitWright.Editor.Tools.Builtins
                     swallowedBy = new
                     {
                         path = ObjectsHelper.GetGameObjectPath(results[0].gameObject),
-                        hint = "The topmost hit has no IPointerClickHandler anywhere up its parent chain, so a click " +
-                               "here is consumed without reaching anything -- check for a stray raycastTarget Graphic " +
-                               "or a leftover full-screen shield."
+                        hint = results[0].gameObject.GetComponent<Graphic>() != null
+                            ? "The topmost hit has no IPointerClickHandler anywhere up its parent chain, so a click " +
+                              "here is consumed without reaching anything -- check for a stray raycastTarget Graphic " +
+                              "or a leftover full-screen shield."
+                            : "The topmost hit is a physics object with no IPointerClickHandler anywhere up its parent " +
+                              "chain, so a click here reaches nothing."
                     };
             }
 
             return JsonConvert.SerializeObject(Response.Success(
                 results.Count == 0
-                    ? "No raycast hits at this point."
+                    ? outsideScreen
+                        ? $"The point ({px:0.##}, {py:0.##}) is outside the {screenWidth}x{screenHeight} screen, so nothing can be hit there."
+                        : "No raycast hits at this point."
                     : $"Raycast hit {results.Count} element(s); showing {hits.Count}.",
                 new
                 {
                     screen_position = new { x = px, y = py },
                     screen_size = new { width = screenWidth, height = screenHeight },
+                    outside_screen = outsideScreen,
                     hit_count = results.Count,
                     click_receiver = clickReceiver,
                     swallowed_by = swallowedBy,

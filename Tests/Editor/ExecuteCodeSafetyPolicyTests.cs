@@ -215,6 +215,10 @@ namespace KitWright.Editor.Tests
         [TestCase("Environment.Exit(0);", "Environment.Exit")]
         [TestCase("Application.Quit();", "Application.Quit")]
         [TestCase("AssetDatabase.DeleteAsset(\"Assets/test.prefab\");", "AssetDatabase.DeleteAsset")]
+        [TestCase("AssetDatabase.MoveAssetToTrash(\"Assets/test.prefab\");", "AssetDatabase.MoveAssetToTrash")]
+        [TestCase("AssetDatabase.MoveAssetsToTrash(paths, failed);", "AssetDatabase.MoveAssetsToTrash")]
+        [TestCase("FileUtil.ReplaceDirectory(a, b);", "FileUtil")]
+        [TestCase("FileUtil.DeleteFileOrDirectory(a);", "FileUtil")]
         [TestCase("while (true) { DoSomething(); }", "while")]
         [TestCase("while(true){}", "while")]
         [TestCase("for (;;) { DoSomething(); }", "for")]
@@ -395,6 +399,7 @@ namespace KitWright.Editor.Tests
 
         [TestCase("File.Delete(\"Assets/x.txt\");", false, "delete_asset")]
         [TestCase("AssetDatabase.DeleteAsset(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("AssetDatabase.MoveAssetToTrash(\"Assets/x.txt\");", false, "delete_asset")]
         [TestCase("while (true) { }", false, "Bound the loop")]
         [TestCase("var t = Type.GetType(\"Foo\");", false, "typeof(T)")]
         [TestCase("var m = t.GetMethod(\"Foo\");", false, "reflect_api")]

@@ -204,6 +204,11 @@ namespace KitWright.Editor.State
             if (state == KitWrightState.Initialized && pendingFunction == null)
                 return null;
 
+            // A tool that has returned clears its marker first; only the state reset waits behind Play Mode.
+            // Nothing was running at the reload, and calling it interrupted invites a rerun of finished work.
+            if (state == KitWrightState.ExecutingFunction && pendingFunction == null)
+                return null;
+
             // Discard if too old (> 120 seconds)
             if (DateTime.TryParse(timestampStr, null,
                     System.Globalization.DateTimeStyles.RoundtripKind, out var ts))

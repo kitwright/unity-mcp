@@ -40,7 +40,12 @@ namespace KitWright.Editor.Tools.Scripting
             "UnityEditor.EditorApplication.Exit",
             "UnityEditor.AssetDatabase.DeleteAsset",
             "UnityEditor.AssetDatabase.DeleteAssets",
-            "UnityEditor.FileUtil.DeleteFileOrDirectory"
+            "UnityEditor.AssetDatabase.MoveAssetToTrash",
+            "UnityEditor.AssetDatabase.MoveAssetsToTrash",
+            "UnityEditor.FileUtil.DeleteFileOrDirectory",
+            "UnityEditor.FileUtil.ReplaceDirectory",
+            "UnityEditor.FileUtil.ReplaceFile",
+            "UnityEditor.FileUtil.MoveFileOrDirectory"
         };
 
         // Reflection and expression trees launder a blocked call past every other check: the source

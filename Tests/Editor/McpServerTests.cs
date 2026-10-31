@@ -309,6 +309,35 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
         }
 
+        // enter_play_mode returns, and the domain reload it triggers then found the state reset still
+        // waiting behind Play Mode: every entry left a "domain_reload / Interrupted ... re-run the tool" record.
+        [Test]
+        public void ConsumeInterruptedState_IgnoresAToolThatHadAlreadyReturned_AndKeepsOneThatHadNot()
+        {
+            DomainReloadHandler.SaveState(KitWrightState.ExecutingFunction);
+            DomainReloadHandler.ClearPendingFunction();
+            Assert.IsNull(DomainReloadHandler.ConsumeInterruptedState());
+
+            DomainReloadHandler.SaveState(KitWrightState.ExecutingFunction);
+            DomainReloadHandler.SavePendingFunction(new FunctionCall { FunctionName = "build_player" });
+            var interrupted = DomainReloadHandler.ConsumeInterruptedState();
+
+            Assert.NotNull(interrupted);
+            Assert.AreEqual("build_player", interrupted.PendingFunction.FunctionName);
+        }
+
+        [Test]
+        public void ToParameters_LeavesAJsonNullOut()
+        {
+            var parameters = MCPExecutionBridge.ToParameters(new Dictionary<string, object>
+            {
+                { "save_path", null }, { "name", "Probe" }, { "count", 3L }
+            });
+
+            CollectionAssert.AreEquivalent(new[] { "name", "count" }, parameters.Keys);
+            Assert.AreEqual("3", parameters["count"]);
+        }
+
         [Test]
         public void ScriptsNewerThanCompilationError_RefusesAnEmptyErrorListThatPredatesTheEdits()
         {

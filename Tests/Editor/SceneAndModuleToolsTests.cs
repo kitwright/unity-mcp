@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
+using KitWright.Editor.Tools.Helpers;
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.TestTools;
@@ -193,6 +194,50 @@ namespace KitWright.Editor.Tests
             }
         }
 #endif
+
+        [TestCase("red", 1f, 0f, 0f, 1f)]
+        [TestCase("#FF0000", 1f, 0f, 0f, 1f)]
+        [TestCase("1,0,0", 1f, 0f, 0f, 1f)]
+        [TestCase("(0, 1, 0, 0.5)", 0f, 1f, 0f, 0.5f)]
+        public void TryParseColor_ReadsEachDocumentedSpelling(string text, float r, float g, float b, float a)
+        {
+            Assert.IsTrue(ValueConverter.TryParseColor(text, Color.white, out var color, out var error), error);
+            Assert.AreEqual(new Color(r, g, b, a), color);
+        }
+
+        // These used to come back as the fallback (white), under a reply that said the color was applied.
+        [TestCase("#12")]
+        [TestCase("a,b,c")]
+        [TestCase("1,2")]
+        [TestCase("notacolor")]
+        [TestCase("1,NaN,0")]
+        public void TryParseColor_RefusesWhatItCannotRead(string text)
+        {
+            Assert.IsFalse(ValueConverter.TryParseColor(text, Color.white, out var color, out var error));
+            Assert.IsNotEmpty(error);
+            Assert.AreEqual(Color.white, color);
+        }
+
+        [Test]
+        public void ArgumentsThatAreNotWhatTheyLookLikeAreRefusedInsteadOfGuessed()
+        {
+            // "0,5" read as 5 through the group separator; NaN passed every range check.
+            Assert.AreEqual("INVALID_PARAM", Code("set_time_scale", "scale", "0,5"));
+            Assert.AreEqual("INVALID_PARAM", Code("set_time_scale", "scale", "NaN"));
+            Assert.AreEqual(1f, Time.timeScale, 0.001f);
+
+            Assert.AreEqual("INVALID_PARAM", Code("log_message", "message", "hello", "log_type", "bogus"));
+            foreach (var alias in new[] { "log", "debug", "information", "warn" })
+                Assert.AreNotEqual("INVALID_PARAM", Code("log_message", "message", "alias " + alias, "log_type", alias), alias);
+            foreach (var alias in new[] { "err", "fatal", "exception" })
+            {
+                LogAssert.Expect(LogType.Error, "[MCP] alias " + alias);
+                Assert.AreNotEqual("INVALID_PARAM", Code("log_message", "message", "alias " + alias, "log_type", alias), alias);
+            }
+            Assert.AreEqual("INVALID_PARAM", Code("create_material", "name", "KwNeverMade", "color", "a,b,c"));
+            Assert.AreEqual("INVALID_PARAM", Code("raycast_at_point", "x", "NaN", "y", "0"));
+            Assert.AreEqual("INVALID_PARAM", Code("raycast_at_point", "x", "1", "y", "1", "origin", "foo"));
+        }
 
         [Test]
         public void TimeScaleIsWrittenAndTheFrameStepperNeedsPlayMode()

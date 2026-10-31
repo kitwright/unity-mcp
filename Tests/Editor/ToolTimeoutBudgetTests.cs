@@ -121,6 +121,15 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void ToolTimeoutMessage_OnlyNamesTheHistoryToolWhenTheProfileExposesIt()
+        {
+            var hidden = MCPServerService.ToolTimeoutMessage("execute_code", 170_000, historyExposed: false);
+
+            StringAssert.Contains("tool_profile", hidden);
+            StringAssert.Contains("timeout_seconds", hidden);
+        }
+
+        [Test]
         public void ExecuteCode_TakesTimeoutSecondsAsAnOptInParameter()
         {
             var parameter = typeof(Tools.Builtins.ScriptExecutionFunctions).GetMethod("ExecuteCode")

@@ -142,7 +142,7 @@ namespace KitWright.Editor.Tools.Builtins
                 JObject obj;
                 try
                 {
-                    obj = JObject.Parse(settings_json ?? string.Empty);
+                    obj = JsonParse.Object(settings_json ?? string.Empty);
                 }
                 catch (Exception ex)
                 {
@@ -434,7 +434,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         // -------- JToken coercion helpers --------
 
-        private static bool TryGetInt(JToken t, out int v)
+        internal static bool TryGetInt(JToken t, out int v)
         {
             v = 0;
             try
@@ -459,30 +459,29 @@ namespace KitWright.Editor.Tools.Builtins
             return false;
         }
 
-        private static bool TryGetFloat(JToken t, out float v)
+        internal static bool TryGetFloat(JToken t, out float v)
         {
             v = 0f;
             try
             {
-                if (t.Type == JTokenType.Float || t.Type == JTokenType.Integer) { v = t.Value<float>(); return true; }
+                if (t.Type == JTokenType.Float || t.Type == JTokenType.Integer) { v = t.Value<float>(); return IsFinite(v); }
                 if (t.Type == JTokenType.String &&
                     float.TryParse(t.Value<string>(), System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var pv)) { v = pv; return true; }
+                        System.Globalization.CultureInfo.InvariantCulture, out var pv)) { v = pv; return IsFinite(v); }
             }
             catch { }
             return false;
         }
 
-        private static bool TryParseEnum<TEnum>(JToken t, out TEnum v) where TEnum : struct
+        private static bool IsFinite(float v) => !float.IsNaN(v) && !float.IsInfinity(v);
+
+        private static bool TryParseEnum<TEnum>(JToken t, out TEnum v) where TEnum : struct, Enum
         {
             v = default;
             try
             {
                 if (t.Type == JTokenType.String)
-                {
-                    // Reject numeric strings that don't correspond to a defined member.
-                    return Enum.TryParse(t.Value<string>(), true, out v) && Enum.IsDefined(typeof(TEnum), v);
-                }
+                    return ValueConverter.TryParseEnum(t.Value<string>(), out v);
                 if (t.Type == JTokenType.Integer)
                 {
                     int iv = t.Value<int>();

@@ -72,7 +72,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "Use find_method to control how each token is resolved (by_id, by_name, by_path).")]
         public static object SetSelection(
             [ToolParam("Comma-separated instance ids, names, or paths")] string targets,
-            [ToolParam("How to resolve each token (by_id, by_name, by_path, by_id_or_name_or_path)", Required = false)] string find_method = null)
+            [ToolParam("How to resolve each token: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrWhiteSpace(targets))
             {
@@ -146,9 +146,13 @@ namespace KitWright.Editor.Tools.Builtins
         public static object SetActiveTool(
             [ToolParam("Tool name: View, Move, Rotate, Scale, Rect, Transform, None")] string tool)
         {
-            if (!Enum.TryParse<UnityEditor.Tool>(tool, ignoreCase: true, out var parsed))
+            if (!ValueConverter.TryParseEnum<UnityEditor.Tool>(tool, out var parsed) || parsed == UnityEditor.Tool.Custom)
                 return Response.Error("INVALID_TOOL",
-                    new { tool, accepted = Enum.GetNames(typeof(UnityEditor.Tool)) });
+                    new
+                    {
+                        tool,
+                        accepted = Enum.GetNames(typeof(UnityEditor.Tool)).Where(n => n != nameof(UnityEditor.Tool.Custom)).ToArray()
+                    });
 
             UnityEditor.Tools.current = parsed;
             return Response.Success($"Active tool set to {parsed}.");

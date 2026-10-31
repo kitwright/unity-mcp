@@ -27,7 +27,12 @@ namespace KitWright.Editor.MCP.Server
         private readonly SettingsController _settings;
         private readonly StateController _stateController;
         private readonly FunctionInvoker _invoker;
-        private readonly MCPInteractionLog _interactionLog;
+        private readonly MCPInteractionLog _interactionLog;
+
+        private string NotExposedHint() =>
+            MCPToolExportPolicy.IsToolAllowed("set_tool_profile", _settings, out _)
+                ? "set_tool_profile 'full' exposes it. A profile only shortens the tool list; it does not restrict access."
+                : null;
 
         public MCPExecutionBridge(
             EditorThreadHelper threadHelper,
@@ -58,7 +63,7 @@ namespace KitWright.Editor.MCP.Server
                 // No interaction log: it writes SessionState, which is main-thread only.
                 return isAllowed
                     ? await InvokeOffEditorThreadAsync(toolName, arguments)
-                    : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey });
+                    : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey }, NotExposedHint());
             }
 
             var method = ToolRegistry.GetMethod(toolName);
@@ -101,11 +106,9 @@ namespace KitWright.Editor.MCP.Server
                     ct.ThrowIfCancellationRequested();
                     var functionCall = new FunctionCall
                     {
-                        FunctionName = toolName
+                        FunctionName = toolName,
+                        Parameters = ToParameters(arguments)
                     };
-
-                    foreach (var kvp in arguments)
-                        functionCall.Parameters[kvp.Key] = ConvertArgumentToString(kvp.Value);
 
                     ToolRegistry.ManualTools.TryGetValue(toolName, out var manualTool);
                     var method = ToolRegistry.GetMethod(toolName);
@@ -122,7 +125,7 @@ namespace KitWright.Editor.MCP.Server
                         {
                             tool = toolName,
                             profile = profileKey
-                        });
+                        }, NotExposedHint());
                         _interactionLog?.Add(toolName, MCPToolCallStatus.Error, error);
                         return error;
                     }
@@ -162,7 +165,7 @@ namespace KitWright.Editor.MCP.Server
             var functionCall = new FunctionCall
             {
                 FunctionName = toolName,
-                Parameters = System.Linq.Enumerable.ToDictionary(arguments, kvp => kvp.Key, kvp => ConvertArgumentToString(kvp.Value))
+                Parameters = ToParameters(arguments)
             };
 
             try
@@ -173,6 +176,20 @@ namespace KitWright.Editor.MCP.Server
             {
                 return ToolResultFormatter.Error("TOOL_EXCEPTION", new { tool = toolName, message = ex.Message });
             }
+        }
+
+        // A JSON null is an argument left out, so the parameter's default applies; as "" it reached a
+        // string parameter as an empty string and a path parameter as the project root.
+        internal static Dictionary<string, string> ToParameters(Dictionary<string, object> arguments)
+        {
+            var parameters = new Dictionary<string, string>();
+            foreach (var kvp in arguments)
+            {
+                if (kvp.Value != null)
+                    parameters[kvp.Key] = ConvertArgumentToString(kvp.Value);
+            }
+
+            return parameters;
         }
 
         internal static string ConvertArgumentToString(object value)

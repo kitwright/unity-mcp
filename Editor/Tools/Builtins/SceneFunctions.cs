@@ -226,13 +226,13 @@ namespace KitWright.Editor.Tools.Builtins
             var activeScene = EditorSceneManager.GetActiveScene();
             var sb = new System.Text.StringBuilder();
 
-            for (int i = 0; i < SceneManager.sceneCount; i++)
+            var dontDestroyOnLoad = ObjectsHelper.DontDestroyOnLoadScene();
+            foreach (var scene in ObjectsHelper.EnumerateLoadedScenes())
             {
-                var scene = SceneManager.GetSceneAt(i);
-                if (!scene.isLoaded) continue;
-
                 var rootObjects = scene.GetRootGameObjects();
-                sb.AppendLine(scene == activeScene ? $"Scene: {scene.name} (active)" : $"Scene: {scene.name} (additive)");
+                sb.AppendLine(scene == activeScene ? $"Scene: {scene.name} (active)"
+                    : scene == dontDestroyOnLoad ? $"Scene: {scene.name} (Play Mode only)"
+                    : $"Scene: {scene.name} (additive)");
                 sb.AppendLine($"Path: {scene.path}");
                 sb.AppendLine($"Is Dirty: {scene.isDirty}");
                 sb.AppendLine($"Root Objects ({rootObjects.Length}):");
@@ -310,8 +310,8 @@ namespace KitWright.Editor.Tools.Builtins
         public static string SetTimeScale(
             [ToolParam("Time scale value (0=paused, 1=normal, 2=double speed, etc.)")] float scale)
         {
-            if (scale < 0f)
-                return ToolResultFormatter.Error("INVALID_TIME_SCALE", new { scale, min = 0f });
+            if (float.IsNaN(scale) || scale < 0f)
+                return ToolResultFormatter.Error("INVALID_TIME_SCALE", new { scale = float.IsNaN(scale) ? "NaN" : (object)scale, min = 0f });
             if (scale > 100f)
                 return ToolResultFormatter.Error("INVALID_TIME_SCALE", new { scale, max = 100f });
 

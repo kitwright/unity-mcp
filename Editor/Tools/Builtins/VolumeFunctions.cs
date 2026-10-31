@@ -230,15 +230,14 @@ namespace KitWright.Editor.Tools.Builtins
             var ci = CultureInfo.InvariantCulture;
             try
             {
-                if (t == typeof(float)) { result = float.Parse(raw, ci); return true; }
+                if (t == typeof(float)) { result = float.Parse(raw, NumberStyles.Float, ci); return !float.IsNaN((float)result) && !float.IsInfinity((float)result); }
                 if (t == typeof(int)) { result = int.Parse(raw, ci); return true; }
                 if (t == typeof(bool)) { result = bool.Parse(raw); return true; }
                 if (t == typeof(Color))
                 {
-                    var p = raw.Split(',');
-                    if (p.Length < 3) return false;
-                    float a = p.Length >= 4 ? float.Parse(p[3], ci) : 1f;
-                    result = new Color(float.Parse(p[0], ci), float.Parse(p[1], ci), float.Parse(p[2], ci), a);
+                    if (string.IsNullOrWhiteSpace(raw) || !ValueConverter.TryParseColor(raw, Color.white, out var color, out _))
+                        return false;
+                    result = color;
                     return true;
                 }
                 if (t.IsEnum) { result = Enum.Parse(t, raw, true); return true; }

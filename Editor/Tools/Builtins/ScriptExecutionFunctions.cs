@@ -72,7 +72,7 @@ namespace KitWright.Editor.Tools.Builtins
                             pattern,
                             reason,
                             alternative,
-                            hint = "Rewrite the snippet to avoid the pattern. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
+                            hint = "Rewrite the snippet to avoid the pattern. If the alternative names a tool that answers TOOL_NOT_EXPOSED, set_tool_profile 'full' exposes it. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}");
                     return blocked;

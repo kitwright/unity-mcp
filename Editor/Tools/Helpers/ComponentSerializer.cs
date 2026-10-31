@@ -203,7 +203,11 @@ namespace KitWright.Editor.Tools.Helpers
                     if (serializedProperty == null)
                     {
                         // Reflection fallback for non-serialized public properties (e.g. Renderer.material, Time.timeScale-style)
-                        if (TryWriteViaReflection(component, prop.Name, prop.Value, out var reflectionError))
+                        var reflected = TryWriteViaReflection(component, prop.Name, prop.Value, out var reflectionError);
+                        // The write bypassed the SerializedObject, whose stale copy the next
+                        // ApplyModifiedProperties would otherwise write back over it.
+                        so.Update();
+                        if (reflected)
                         {
                             fr.Success = true;
                         }
@@ -297,9 +301,9 @@ namespace KitWright.Editor.Tools.Helpers
                         // A double field is also SerializedPropertyType.Float, and floatValue rounds
                         // it on the way in: 16777217 was stored as 16777216 and reported as written.
                         if (p.numericType == SerializedPropertyNumericType.Double)
-                            p.doubleValue = value.ToObject<double>();
+                            p.doubleValue = ToFiniteDouble(value);
                         else
-                            p.floatValue = value.ToObject<float>();
+                            p.floatValue = ToFiniteFloat(value);
                         return true;
                     case SerializedPropertyType.String:
                         p.stringValue = value.ToObject<string>() ?? string.Empty; return true;
@@ -323,14 +327,14 @@ namespace KitWright.Editor.Tools.Helpers
                             if (qo.ContainsKey("w"))
                             {
                                 p.quaternionValue = new Quaternion(
-                                    qo.Value<float>("x"), qo.Value<float>("y"),
-                                    qo.Value<float>("z"), qo.Value<float>("w"));
+                                    FiniteMember(qo, "x"), FiniteMember(qo, "y"),
+                                    FiniteMember(qo, "z"), FiniteMember(qo, "w"));
                             }
                             else
                             {
                                 // Treat as Euler
                                 p.quaternionValue = Quaternion.Euler(
-                                    qo.Value<float>("x"), qo.Value<float>("y"), qo.Value<float>("z"));
+                                    FiniteMember(qo, "x"), FiniteMember(qo, "y"), FiniteMember(qo, "z"));
                             }
                             return true;
                         }
@@ -338,17 +342,17 @@ namespace KitWright.Editor.Tools.Helpers
                     case SerializedPropertyType.Color:
                         if (value is JObject co)
                         {
-                            float a = co.ContainsKey("a") ? co.Value<float>("a") : 1f;
-                            p.colorValue = new Color(co.Value<float>("r"), co.Value<float>("g"),
-                                                     co.Value<float>("b"), a);
+                            float a = co.ContainsKey("a") ? FiniteMember(co, "a") : 1f;
+                            p.colorValue = new Color(FiniteMember(co, "r"), FiniteMember(co, "g"),
+                                                     FiniteMember(co, "b"), a);
                             return true;
                         }
                         break;
                     case SerializedPropertyType.Rect:
                         if (value is JObject ro)
                         {
-                            p.rectValue = new Rect(ro.Value<float>("x"), ro.Value<float>("y"),
-                                                   ro.Value<float>("width"), ro.Value<float>("height"));
+                            p.rectValue = new Rect(FiniteMember(ro, "x"), FiniteMember(ro, "y"),
+                                                   FiniteMember(ro, "width"), FiniteMember(ro, "height"));
                             return true;
                         }
                         break;
@@ -524,7 +528,7 @@ namespace KitWright.Editor.Tools.Helpers
             {
                 components = new float[dims];
                 for (int i = 0; i < dims; i++)
-                    components[i] = arr[i].ToObject<float>();
+                    components[i] = ToFiniteFloat(arr[i]);
                 return true;
             }
             if (value is JObject obj)
@@ -535,12 +539,40 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     if (!obj.ContainsKey(keys[i]))
                         return false;
-                    components[i] = obj.Value<float>(keys[i]);
+                    components[i] = ToFiniteFloat(obj[keys[i]]);
                 }
                 return true;
             }
             return false;
         }
+
+        // NaN and Infinity arrive as JSON literals or as the strings "NaN"/"Infinity", and ToObject<float>
+        // takes all of them. Unity stores them without complaint and a transform or light is then
+        // poisoned, so every float/double read in the write paths goes through here.
+        private static float ToFiniteFloat(JToken token)
+        {
+            var value = token.ToObject<float>();
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                throw NonFinite(token);
+            return value;
+        }
+
+        private static double ToFiniteDouble(JToken token)
+        {
+            var value = token.ToObject<double>();
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                throw NonFinite(token);
+            return value;
+        }
+
+        private static float FiniteMember(JObject obj, string key) =>
+            obj.TryGetValue(key, out var member) ? ToFiniteFloat(member) : 0f;
+
+        private static bool IsFinite(params float[] values) =>
+            values.All(v => !float.IsNaN(v) && !float.IsInfinity(v));
+
+        private static ArgumentException NonFinite(JToken token) =>
+            new ArgumentException($"'{token}' is not a finite number: NaN, Infinity and values beyond the field's range are refused.");
 
         // ---------- Reflection fallback ----------
 
@@ -579,8 +611,8 @@ namespace KitWright.Editor.Tools.Helpers
             if (targetType == typeof(string)) return token.ToObject<string>();
             if (targetType == typeof(int)) return token.ToObject<int>();
             if (targetType == typeof(long)) return token.ToObject<long>();
-            if (targetType == typeof(float)) return token.ToObject<float>();
-            if (targetType == typeof(double)) return token.ToObject<double>();
+            if (targetType == typeof(float)) return ToFiniteFloat(token);
+            if (targetType == typeof(double)) return ToFiniteDouble(token);
             if (targetType == typeof(bool)) return token.ToObject<bool>();
             if (targetType.IsEnum) return Enum.Parse(targetType, token.ToObject<string>(), ignoreCase: true);
             if (targetType == typeof(Vector2) && TryParseVector(token, 2, out var v2)) return new Vector2(v2[0], v2[1]);
@@ -602,7 +634,12 @@ namespace KitWright.Editor.Tools.Helpers
                     return loaded ?? throw new ArgumentException($"No {targetType.Name} at '{path}'.");
                 }
             }
-            return token.ToObject(targetType);
+            var converted = token.ToObject(targetType);
+            if ((converted is Color c && !IsFinite(c.r, c.g, c.b, c.a)) ||
+                (converted is Quaternion q && !IsFinite(q.x, q.y, q.z, q.w)) ||
+                (converted is Rect r && !IsFinite(r.x, r.y, r.width, r.height)))
+                throw NonFinite(token);
+            return converted;
         }
     }
 }

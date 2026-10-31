@@ -18,6 +18,20 @@ namespace KitWright.Editor.Tests
 
         private static void CountClick() => s_clicks++;
 
+        [Test]
+        public void ChoiceError_NamesAValueItDoesNotKnow_AndLetsAKnownOrOmittedOneThrough()
+        {
+            Assert.IsNull(InputInteractionFunctions.ChoiceError("button", "Right", "left", "right", "middle"));
+            Assert.IsNull(InputInteractionFunctions.ChoiceError("button", null, "left", "right", "middle"));
+            Assert.IsNull(InputInteractionFunctions.ChoiceError("button", " ", "left", "right", "middle"));
+
+            var refused = InputInteractionFunctions.ChoiceError("button", "banana", "left", "right", "middle");
+
+            StringAssert.Contains("INVALID_PARAM", refused);
+            StringAssert.Contains("banana", refused);
+            StringAssert.Contains("left, right, middle", refused);
+        }
+
         // One Play Mode session for every case: simulate_mouse_click refuses outside it, and each
         // entry costs seconds. The canvas sorts above anything the open scene brings along.
         [UnityTest]

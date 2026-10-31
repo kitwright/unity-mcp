@@ -100,7 +100,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (target == null) return resolveError;
 
             JObject parsed;
-            try { parsed = JObject.Parse(properties); }
+            try { parsed = JsonParse.Object(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
 
             var results = ComponentSerializer.WriteProperties(target, parsed, $"Set {singleton}");

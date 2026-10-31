@@ -36,7 +36,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object CopyComponent(
             [ToolParam("Source GameObject identifier (instance id, name, path, tag…)")] string source_target,
             [ToolParam("Component type name to copy (e.g. 'Rigidbody', 'BoxCollider', 'UnityEngine.UI.Image')")] string component_type,
-            [ToolParam("How to resolve the source target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve the source target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrEmpty(component_type))
                 return Response.Error("COMPONENT_TYPE_REQUIRED");
@@ -86,7 +86,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Comma-separated identifiers, or a single find spec resolving to many")] string targets,
             [ToolParam("Component type to paste onto each target (required unless as_new). e.g. 'Rigidbody'", Required = false)] string component_type = null,
             [ToolParam("true to paste as a NEW component on each target instead of onto an existing one", Required = false)] bool as_new = false,
-            [ToolParam("How to resolve targets", Required = false)] string find_method = null)
+            [ToolParam("How to resolve each target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (!s_hasCopied)
                 return Response.Error("NO_COMPONENT_COPIED",
@@ -96,9 +96,9 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("COMPONENT_TYPE_REQUIRED",
                     new { hint = "Provide component_type to locate the existing component, or set as_new=true." });
 
-            var gos = ResolveManyTargets(targets, find_method);
+            var gos = ResolveManyTargets(targets, find_method, out var unresolved);
             if (gos.Count == 0)
-                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method });
+                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method, unresolved });
 
             var results = new List<object>();
             int success = 0;
@@ -146,9 +146,11 @@ namespace KitWright.Editor.Tools.Builtins
                 }
             }
 
-            return Response.Success(
-                $"Pasted the component clipboard onto {success} of {gos.Count} target(s).",
-                new { lastCopiedViaMcp = s_copiedTypeName, asNew = as_new, successCount = success, failCount = gos.Count - success, results });
+            var data = new { lastCopiedViaMcp = s_copiedTypeName, asNew = as_new, successCount = success, failCount = gos.Count - success, unresolved, results };
+            if (success == 0)
+                return Response.Error("PASTE_FAILED", data);
+
+            return Response.Success($"Pasted the component clipboard onto {success} of {gos.Count} target(s).{UnresolvedNote(unresolved)}", data);
         }
 
         [Description("Add a component of component_type to many GameObjects in one Undo-tracked call. " +
@@ -157,7 +159,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object AddComponentToMany(
             [ToolParam("Comma-separated identifiers, or a single find spec resolving to many")] string targets,
             [ToolParam("Component type name to add (e.g. 'BoxCollider', 'UnityEngine.UI.Image')")] string component_type,
-            [ToolParam("How to resolve targets", Required = false)] string find_method = null)
+            [ToolParam("How to resolve each target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrEmpty(component_type))
                 return Response.Error("COMPONENT_TYPE_REQUIRED");
@@ -166,9 +168,9 @@ namespace KitWright.Editor.Tools.Builtins
             if (type == null)
                 return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
 
-            var gos = ResolveManyTargets(targets, find_method);
+            var gos = ResolveManyTargets(targets, find_method, out var unresolved);
             if (gos.Count == 0)
-                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method });
+                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method, unresolved });
 
             var results = new List<object>();
             int success = 0;
@@ -193,9 +195,11 @@ namespace KitWright.Editor.Tools.Builtins
                 }
             }
 
-            return Response.Success(
-                $"Added {type.Name} to {success} of {gos.Count} target(s).",
-                new { type = type.Name, successCount = success, failCount = gos.Count - success, results });
+            var data = new { type = type.Name, successCount = success, failCount = gos.Count - success, unresolved, results };
+            if (success == 0)
+                return Response.Error("ADD_COMPONENT_FAILED", data);
+
+            return Response.Success($"Added {type.Name} to {success} of {gos.Count} target(s).{UnresolvedNote(unresolved)}", data);
         }
 
         // -------- Helpers --------
@@ -231,10 +235,12 @@ namespace KitWright.Editor.Tools.Builtins
         /// Resolve MANY GameObjects from a comma-separated list OR a single find spec. Each token is
         /// resolved via <see cref="ObjectsHelper.FindObjects"/> with findAll, so one token can expand to
         /// many (e.g. a tag/name shared by several objects). Results are de-duplicated, order preserved.
+        /// Tokens that were empty or matched nothing come back in <paramref name="unresolved"/>.
         /// </summary>
-        private static List<GameObject> ResolveManyTargets(string targets, string findMethod)
+        private static List<GameObject> ResolveManyTargets(string targets, string findMethod, out List<string> unresolved)
         {
             var results = new List<GameObject>();
+            unresolved = new List<string>();
             if (string.IsNullOrWhiteSpace(targets))
                 return results;
 
@@ -242,16 +248,28 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 var token = raw.Trim();
                 if (token.Length == 0)
+                {
+                    unresolved.Add("<empty>");
                     continue;
+                }
 
                 var found = ObjectsHelper.FindObjects(token, findMethod, findAll: true, searchInactive: true);
+                var matched = false;
                 foreach (var go in found)
                 {
-                    if (go != null && !results.Contains(go))
+                    if (go == null)
+                        continue;
+                    matched = true;
+                    if (!results.Contains(go))
                         results.Add(go);
                 }
+                if (!matched)
+                    unresolved.Add(token);
             }
             return results;
         }
+
+        private static string UnresolvedNote(List<string> unresolved) =>
+            unresolved.Count == 0 ? string.Empty : $" {unresolved.Count} target token(s) matched nothing: {string.Join(", ", unresolved)}.";
     }
 }

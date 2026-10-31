@@ -15,8 +15,10 @@ namespace KitWright.Editor.Tools.Builtins
         public static object CreateGameObject(
             [ToolParam("Name of the new GameObject")] string name,
             [ToolParam("Parent GameObject identifier (instance id, name, or path)", Required = false)] string parent = null,
-            [ToolParam("How to resolve parent (by_id, by_name, by_path, by_id_or_name_or_path)", Required = false)] string find_method = null)
+            [ToolParam("How to resolve parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
+            ObjectsHelper.ValidateFindMethod(find_method);
+
             // Resolved before the object exists, so a bad parent cannot leave one behind - the order
             // CreatePrimitive below already uses. Creating first meant PARENT_NOT_FOUND came back
             // with an orphan sitting at the scene root.
@@ -46,8 +48,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Scale as 'x,y,z'", Required = false)] string scale = "1,1,1",
             [ToolParam("Euler rotation as 'x,y,z'", Required = false)] string rotation = "0,0,0",
             [ToolParam("Parent GameObject identifier (instance id, name, or path)", Required = false)] string parent = null,
-            [ToolParam("How to resolve parent (by_id, by_name, by_path, by_id_or_name_or_path)", Required = false)] string find_method = null)
+            [ToolParam("How to resolve parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
+            ObjectsHelper.ValidateFindMethod(find_method);
+
             PrimitiveType type;
             switch (primitive_type.ToLowerInvariant())
             {
@@ -92,7 +96,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Delete a GameObject. Targets resolved through ObjectsHelper (instance id, name, path, tag, layer, component).")]
         public static object DeleteGameObject(
             [ToolParam("Identifier of the GameObject to delete")] string target,
-            [ToolParam("How to resolve the target (by_id/by_name/by_path/by_tag/by_layer/by_component)", Required = false)] string find_method = null)
+            [ToolParam("How to resolve the target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -107,14 +111,15 @@ namespace KitWright.Editor.Tools.Builtins
         public static object DuplicateGameObject(
             [ToolParam("Identifier of the GameObject to duplicate")] string target,
             [ToolParam("Name for the duplicate", Required = false)] string new_name = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
                 return ObjectsHelper.NotFound("target", target, find_method);
 
-            var dup = Object.Instantiate(go);
+            var dup = Object.Instantiate(go, go.transform.parent, false);
             Undo.RegisterCreatedObjectUndo(dup, $"Duplicate {go.name}");
+            dup.transform.SetSiblingIndex(go.transform.GetSiblingIndex() + 1);
             dup.name = string.IsNullOrEmpty(new_name) ? go.name + " (Copy)" : new_name;
             Selection.activeGameObject = dup;
 
@@ -126,7 +131,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object RenameGameObject(
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("New name")] string new_name,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -145,7 +150,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Position as 'x,y,z'", Required = false)] string position = null,
             [ToolParam("Euler rotation as 'x,y,z'", Required = false)] string rotation = null,
             [ToolParam("Scale as 'x,y,z'", Required = false)] string scale = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -183,7 +188,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object SetParent(
             [ToolParam("Child GameObject identifier")] string child,
             [ToolParam("Parent GameObject identifier (empty to unparent)", Required = false)] string parent = null,
-            [ToolParam("How to resolve targets", Required = false)] string find_method = null)
+            [ToolParam("How to resolve child and parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var childGo = ObjectsHelper.FindObject(child, find_method);
             if (childGo == null)
@@ -218,7 +223,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object AddComponent(
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("Component type name (e.g. 'Rigidbody', 'BoxCollider', 'AudioSource')")] string component_type,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -243,7 +248,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("Component type name (e.g. 'Rigidbody', 'BoxCollider')")] string component_type,
             [ToolParam("Which match to remove when several of the same type exist (0-based)", Required = false)] int index = 0,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -275,7 +280,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Component type name (e.g. 'BoxCollider', 'MyScript')")] string component_type,
             [ToolParam("true to enable, false to disable")] bool enabled,
             [ToolParam("Which match when several of the same type exist (0-based)", Required = false)] int index = 0,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -308,7 +313,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("Tag to set", Required = false)] string tag = null,
             [ToolParam("Layer name to set", Required = false)] string layer = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -357,7 +362,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object SetActive(
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("true to activate, false to deactivate")] bool active,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
@@ -374,7 +379,7 @@ namespace KitWright.Editor.Tools.Builtins
         [ReadOnlyTool]
         public static object FindGameObjects(
             [ToolParam("Search query (id, name, path, tag name, layer name/index, or component type)")] string query,
-            [ToolParam("Search method (by_id/by_name/by_path/by_tag/by_layer/by_component)", Required = false)] string find_method = null,
+            [ToolParam("Search method: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null,
             [ToolParam("Include inactive objects", Required = false)] string include_inactive = null,
             [ToolParam("Limit results to children of this GameObject identifier (used with find_method=by_*)", Required = false)] string in_parent = null,
             [ToolParam("Maximum results to return (default 50)", Required = false)] string max = "50",
@@ -408,7 +413,7 @@ namespace KitWright.Editor.Tools.Builtins
         [ReadOnlyTool]
         public static object GetGameObjectInfo(
             [ToolParam("Identifier of the GameObject")] string target,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null,
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null,
             [ToolParam("Include immediate children list", Required = false)] string include_children = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method, searchInactive: true);

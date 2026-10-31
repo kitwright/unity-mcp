@@ -567,6 +567,96 @@ namespace KitWright.Editor.Tests
                     AssetDatabase.DeleteAsset(folder);
             }
         }
+
+        // NaN/Infinity as a JSON literal, as a string, through the serialized path (m_*) and the
+        // reflection fallback (the public property name), and nested in a Color: each is refused on
+        // its own, and the finite field after them still lands.
+        [Test]
+        public void WriteProperties_NonFiniteNumbersAreRefusedPerFieldAndALaterFiniteFieldStillApplies()
+        {
+            var go = new GameObject("ComponentSerializerNonFiniteProbe");
+            try
+            {
+                var light = go.AddComponent<Light>();
+                light.intensity = 1f;
+                light.range = 10f;
+                light.color = Color.white;
+
+                var results = ComponentSerializer.WriteProperties(light, new JObject
+                {
+                    ["m_Intensity"] = double.NaN,
+                    ["m_Range"] = "Infinity",
+                    ["intensity"] = "NaN",
+                    ["m_Color"] = new JObject { ["r"] = "NaN", ["g"] = 0, ["b"] = 0 },
+                    ["range"] = 25f
+                });
+
+                for (var i = 0; i < 4; i++)
+                {
+                    Assert.IsFalse(results[i].Success, results[i].Field);
+                    StringAssert.Contains("finite", results[i].Error, results[i].Field);
+                }
+                Assert.IsTrue(results[4].Success, results[4].Error);
+                Assert.AreEqual(1f, light.intensity);
+                Assert.AreEqual(Color.white, light.color);
+                Assert.AreEqual(25f, light.range);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void WriteProperties_NonFiniteVectorAndQuaternionAreRefusedWithoutTouchingTheTransform()
+        {
+            var go = new GameObject("ComponentSerializerNonFiniteVectorProbe");
+            try
+            {
+                var results = ComponentSerializer.WriteProperties(go.transform, new JObject
+                {
+                    ["m_LocalPosition"] = new JArray(1, "NaN", 3),
+                    ["m_LocalRotation"] = new JObject { ["x"] = 0, ["y"] = 0, ["z"] = 0, ["w"] = double.PositiveInfinity },
+                    ["m_LocalScale"] = new JArray(2, 2, 2)
+                });
+
+                Assert.IsFalse(results[0].Success);
+                Assert.IsFalse(results[1].Success);
+                Assert.IsTrue(results[2].Success, results[2].Error);
+                Assert.AreEqual(Vector3.zero, go.transform.localPosition);
+                Assert.AreEqual(Quaternion.identity, go.transform.localRotation);
+                Assert.AreEqual(new Vector3(2f, 2f, 2f), go.transform.localScale);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void WriteProperties_DoubleFieldRefusesNonFiniteButTakesALargeFiniteValue()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                foreach (var bad in new[] { @"{""Precise"": NaN}", @"{""Precise"": Infinity}", @"{""Precise"": ""-Infinity""}" })
+                {
+                    var results = ComponentSerializer.WriteProperties(asset, JObject.Parse(bad));
+
+                    Assert.IsFalse(results[0].Success, bad);
+                    Assert.AreEqual(0.0, asset.Precise, bad);
+                }
+
+                var large = ComponentSerializer.WriteProperties(asset, new JObject { ["Precise"] = 1e300 });
+
+                Assert.IsTrue(large[0].Success, large[0].Error);
+                Assert.AreEqual(1e300, asset.Precise);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
     }
 
     internal sealed class ScriptableObjectReadProbe : ScriptableObject

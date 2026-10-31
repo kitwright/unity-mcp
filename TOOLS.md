@@ -91,8 +91,8 @@
 | `add_animator_state` | Add a state to an Animator Controller layer, optionally binding an Animation Clip to it. |
 | `add_animator_transition` | Add a transition between two Animator states. |
 | `assign_animator` | Assign an Animator Controller to a GameObject |
-| `create_animation_clip` | Create an Animation Clip asset |
-| `create_animator_controller` | Create an Animator Controller asset |
+| `create_animation_clip` | Create an Animation Clip asset. |
+| `create_animator_controller` | Create an Animator Controller asset. |
 | `get_animator_state` | Get an Animator's current runtime state: active state name (resolved from the controller when possible), normalized time, transition status, and all parameters with their current values. |
 | `play_animator_state` | Play a specific Animator state by name, e.g. |
 | `set_animator_parameter` | Set an Animator parameter by name. |
@@ -104,7 +104,7 @@
 |------|-------------|
 | `apply_prefab_overrides` | Apply a prefab instance's overrides back to its source prefab asset, so the changes become part of the prefab itself. |
 | `close_prefab_stage` | Close the currently open prefab stage and return to the main stage. |
-| `create_prefab` *(core)* | Create a prefab from a GameObject in the scene |
+| `create_prefab` *(core)* | Create a prefab from a GameObject in the scene. |
 | `create_prefab_variant` | Create a prefab variant from an existing prefab asset. |
 | `get_prefab_variant_info` | Get prefab info for a scene instance or prefab asset: prefab type (Regular/Variant/Model), asset path, whether it is a variant, and its base prefab path. |
 | `instantiate_prefab` | Instantiate a prefab in the scene |
@@ -118,7 +118,7 @@
 | Tool | Description |
 |------|-------------|
 | `assign_material` | Assign a material to a GameObject's renderer |
-| `copy_asset` | Copy an asset to a new location |
+| `copy_asset` | Copy an asset to a new location. |
 | `create_folder` | Create a project folder (and any missing parent folders) under Assets. |
 | `create_material` | Create a new material with a specified color |
 | `delete_asset` | Delete an asset by moving it to the OS trash (Recycle Bin). |

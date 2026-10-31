@@ -2,6 +2,7 @@
 
 using System;
 using System.IO;
+using System.Text;
 
 namespace KitWright.Editor.Tools.Helpers
 {
@@ -21,7 +22,7 @@ namespace KitWright.Editor.Tools.Helpers
                 // Outside the IOException catch below: a write that fails half way must not reach
                 // File.Copy, which would put those partial bytes over the file on disk.
                 using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-                using (var writer = new StreamWriter(stream))
+                using (var writer = new StreamWriter(stream, new UTF8Encoding(HasUtf8Bom(fullPath))))
                     writer.Write(content);
 
                 try
@@ -41,6 +42,26 @@ namespace KitWright.Editor.Tools.Helpers
                 // Only ever this call's own temp, and only if it outlived the swap.
                 if (File.Exists(tempPath))
                     File.Delete(tempPath);
+            }
+        }
+
+        // ReadAllText drops the BOM, so a rewrite would otherwise strip it from every file that has one.
+        private static bool HasUtf8Bom(string path)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    return false;
+
+                using (var stream = File.OpenRead(path))
+                {
+                    var head = new byte[3];
+                    return stream.Read(head, 0, 3) == 3 && head[0] == 0xEF && head[1] == 0xBB && head[2] == 0xBF;
+                }
+            }
+            catch (IOException)
+            {
+                return false;
             }
         }
     }

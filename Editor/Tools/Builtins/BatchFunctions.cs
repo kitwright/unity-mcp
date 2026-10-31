@@ -33,7 +33,7 @@ namespace KitWright.Editor.Tools.Builtins
             JArray parsed;
             try
             {
-                parsed = JArray.Parse(commands);
+                parsed = JsonParse.Array(commands);
             }
             catch (System.Exception ex)
             {
@@ -161,13 +161,17 @@ namespace KitWright.Editor.Tools.Builtins
                    && obj["success"].Value<bool>();
         }
 
-        private static Dictionary<string, string> ExtractParams(JToken paramsToken)
+        internal static Dictionary<string, string> ExtractParams(JToken paramsToken)
         {
             var dict = new Dictionary<string, string>();
             if (!(paramsToken is JObject obj)) return dict;
 
             foreach (var prop in obj.Properties())
             {
+                // Same as a direct call: a JSON null is an argument left out, not the text "null".
+                if (prop.Value.Type == JTokenType.Null)
+                    continue;
+
                 dict[prop.Name] = prop.Value.Type == JTokenType.String
                     ? prop.Value.ToString()
                     : prop.Value.ToString(Formatting.None);
@@ -178,7 +182,7 @@ namespace KitWright.Editor.Tools.Builtins
         private static object TryParse(string raw)
         {
             if (string.IsNullOrEmpty(raw)) return raw;
-            try { return JToken.Parse(raw); }
+            try { return JsonParse.Token(raw); }
             catch { return raw; }
         }
     }

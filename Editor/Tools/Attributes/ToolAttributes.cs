@@ -46,7 +46,10 @@ namespace KitWright.Editor.Tools
         }
     }
 
-    /// Functions with this attribute do not modify the scene or project.
+    /// Functions with this attribute change no project data (scene, assets, settings). Editor-only state such as the
+    /// selection, the console or the plugin's own caches may change. The label is exported as readOnlyHint, which
+    /// clients use to skip an approval prompt, so a tool that can block the editor, reload the domain or delete data
+    /// must not carry it.
     [AttributeUsage(AttributeTargets.Method)]
     public class ReadOnlyToolAttribute : Attribute { }
 

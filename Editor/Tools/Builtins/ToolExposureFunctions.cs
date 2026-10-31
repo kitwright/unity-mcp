@@ -17,7 +17,9 @@ namespace KitWright.Editor.Tools.Builtins
                      "Use this to reach a tool the current profile hides (terrain, profiler, addressables, build, …) " +
                      "instead of asking the user to change it in the Unity window. Connected clients are told to refresh " +
                      "through notifications/tools/list_changed, so neither the editor nor the MCP server restarts. " +
-                     "The choice persists in UserSettings for later sessions.")]
+                     "The choice persists in UserSettings for later sessions. A profile keeps the tool list short; it is not " +
+                     "an access control (any client can switch it and execute_code is in every profile), so restrict a tool " +
+                     "through the client's tool-approval prompt.")]
         public static object SetToolProfile(
             [ToolParam("Profile to expose: minimal, core, extended or full")] string profile)
         {
