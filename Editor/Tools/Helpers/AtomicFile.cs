@@ -211,7 +211,17 @@ namespace KitWright.Editor.Tools.Helpers
         {
             try
             {
-                if ((File.GetAttributes(path) & FileAttributes.ReparsePoint) == 0)
+                FileAttributes attributes;
+                try
+                {
+                    attributes = File.GetAttributes(path);
+                }
+                catch (Exception ex) when (ex is FileNotFoundException || ex is DirectoryNotFoundException)
+                {
+                    return path;
+                }
+
+                if ((attributes & FileAttributes.ReparsePoint) == 0)
                     return path;
 
                 return Path.DirectorySeparatorChar == '\\' ? FinalPathOnWindows(path) : RealPathOnUnix(path);

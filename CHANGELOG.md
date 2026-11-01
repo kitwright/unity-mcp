@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- Writing a file that does not exist yet no longer logs "is a link that could not be followed". `AtomicFile` asked for the attributes of a path it was about to create, took the resulting `FileNotFoundException` for a link it could not follow, and warned. It showed in the Console the first time the settings file was written in a new project, and for any tool that creates a file. A link that cannot be followed still warns.
+
 ## [1.0.2] - 2026-11-01
 
 ### Changed
