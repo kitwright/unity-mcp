@@ -161,11 +161,15 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Asset path of the .asmdef file")] string path,
             [ToolParam("Comma-separated assembly names or 'GUID:xxx' to remove")] string references)
         {
+            var tokens = SplitCsv(references);
+            if (tokens.Length == 0)
+                return Response.Error("NO_PARAMS", new { hint = "references is empty: list at least one assembly name or 'GUID:xxx' to remove." });
+
             var obj = LoadAsmdef(path, out var error);
             if (obj == null) return error;
 
             var current = (obj["references"] as JArray) ?? new JArray();
-            var kept = WithoutReferences(current, SplitCsv(references), Canonical, out var notFound);
+            var kept = WithoutReferences(current, tokens, Canonical, out var notFound);
             int removed = current.Count - kept.Count;
             if (removed > 0)
             {

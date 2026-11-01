@@ -243,6 +243,15 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void RemoveAssemblyReferences_WithNoReferenceInTheListAnswersNoParamsAndLeavesTheFileAlone()
+        {
+            var file = AsmdefInTemp(UnityStyleAsmdef, out var projectPath);
+
+            Assert.AreEqual("NO_PARAMS", Code("remove_assembly_references", "path", projectPath, "references", ", ,"));
+            Assert.AreEqual(UnityStyleAsmdef, File.ReadAllText(file));
+        }
+
+        [Test]
         public void AddAndRemoveAssemblyReferences_WithNothingToDoLeaveTheFileAsItWas()
         {
             var file = AsmdefInTemp(UnityStyleAsmdef, out var projectPath);

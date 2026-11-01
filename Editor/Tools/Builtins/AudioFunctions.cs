@@ -3,6 +3,7 @@
 // com.unity.modules.audio is optional; without it these tools disappear instead of breaking the build.
 #if KITWRIGHT_AUDIO
 using System;
+using System.Collections.Generic;
 using System.Reflection;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
@@ -100,17 +101,22 @@ namespace KitWright.Editor.Tools.Builtins
             if (go.GetComponent<AudioListener>() != null)
                 return Response.Success($"'{go.name}' already has an AudioListener.");
 
-            if (!allow_multiple)
+            string inAnotherScene = null;
+            foreach (var existing in ObjectsHelper.FindObjectsByTypeUnsorted<AudioListener>(FindObjectsInactive.Exclude))
             {
-                foreach (var existing in ObjectsHelper.FindObjectsByTypeUnsorted<AudioListener>(FindObjectsInactive.Exclude))
+                if (existing.gameObject.scene != go.scene)
                 {
-                    if (existing.gameObject.scene == go.scene)
-                        return Response.Error("LISTENER_EXISTS", new { existingOn = existing.gameObject.name, hint = "pass allow_multiple=true to add anyway" });
+                    if (inAnotherScene == null) inAnotherScene = existing.gameObject.name;
+                }
+                else if (!allow_multiple)
+                {
+                    return Response.Error("LISTENER_EXISTS", new { existingOn = existing.gameObject.name, hint = "pass allow_multiple=true to add anyway" });
                 }
             }
 
             Undo.AddComponent<AudioListener>(go);
-            return Response.Success($"AudioListener added to '{go.name}'.");
+            return Response.Success($"AudioListener added to '{go.name}'." + (inAnotherScene == null ? string.Empty :
+                $" Another loaded scene already has one (on '{inAnotherScene}'): Unity warns about two audio listeners and only one is heard."));
         }
 
         [Description("Get the AudioSource settings on a GameObject.")]
@@ -171,12 +177,85 @@ namespace KitWright.Editor.Tools.Builtins
             var mixer = AssetDatabase.LoadAssetAtPath<AudioMixer>(assetPath);
             if (mixer == null) return null;
 
+            var all = mixer.FindMatchingGroups(string.Empty);
+            if (all == null || all.Length == 0) return null;
+
+            var byPath = PickMixerGroupByPath(GroupPaths(all), groupName);
+            if (byPath >= 0) return all[byPath];
+            if (byPath == AmbiguousGroup)
+            {
+                error = "MIXER_GROUP_AMBIGUOUS";
+                return null;
+            }
+
             var groups = mixer.FindMatchingGroups(groupName ?? string.Empty);
             if (groups == null) return null;
 
             var pick = PickMixerGroup(Array.ConvertAll(groups, g => g.name), groupName);
             if (pick == AmbiguousGroup) error = "MIXER_GROUP_AMBIGUOUS";
             return pick >= 0 ? groups[pick] : null;
+        }
+
+        // 'Master/Music/Music' for every group, read from the groups' own child lists: AudioMixerGroup has no
+        // parent, and FindMatchingGroups matches substrings of the path, so 'Master/Music' also returns the
+        // nested 'Master/Music/Music' and a name alone cannot tell them apart.
+        internal static string[] GroupPaths(AudioMixerGroup[] groups)
+        {
+            var parents = new Dictionary<AudioMixerGroup, AudioMixerGroup>();
+            foreach (var group in groups)
+            {
+                using (var serialized = new SerializedObject(group))
+                {
+                    var children = serialized.FindProperty("m_Children");
+                    if (children == null) continue;
+                    for (var i = 0; i < children.arraySize; i++)
+                    {
+                        if (children.GetArrayElementAtIndex(i).objectReferenceValue is AudioMixerGroup child)
+                            parents[child] = group;
+                    }
+                }
+            }
+
+            var paths = new string[groups.Length];
+            for (var i = 0; i < groups.Length; i++)
+            {
+                var path = groups[i].name;
+                var current = groups[i];
+                for (var depth = 0; depth < 64 && parents.TryGetValue(current, out var parent); depth++)
+                {
+                    path = parent.name + "/" + path;
+                    current = parent;
+                }
+                paths[i] = path;
+            }
+            return paths;
+        }
+
+        // An exact full path wins, then a path that ends with the given one ('Music' or 'Music/Music'). Index into
+        // paths, -1 for none, AmbiguousGroup when several fit.
+        internal static int PickMixerGroupByPath(string[] paths, string groupName)
+        {
+            if (paths.Length == 0) return -1;
+            if (string.IsNullOrEmpty(groupName)) return 0;
+
+            int exact = -1, exactCount = 0, tail = -1, tailCount = 0;
+            for (var i = 0; i < paths.Length; i++)
+            {
+                if (paths[i] == groupName)
+                {
+                    exact = i;
+                    exactCount++;
+                }
+                else if (paths[i].EndsWith("/" + groupName, StringComparison.Ordinal))
+                {
+                    tail = i;
+                    tailCount++;
+                }
+            }
+
+            if (exactCount > 0) return exactCount == 1 ? exact : AmbiguousGroup;
+            if (tailCount > 0) return tailCount == 1 ? tail : AmbiguousGroup;
+            return -1;
         }
 
         // The asset path itself contains slashes ('Assets/Audio/Main.mixer'), so the group part can only

@@ -179,11 +179,15 @@ namespace KitWright.Editor.Tools.Builtins
                 if (wrapping != null)
                     return Response.Error("LAYER_ALREADY_ADDED", new { target = terrain.name, layer = wrapping.name });
 
-                layer = new TerrainLayer { diffuseTexture = tex, tileSize = ts };
+                layer = new TerrainLayer { diffuseTexture = tex, tileSize = ts, name = tex.name };
 
-                var layerPath = AssetDatabase.GenerateUniqueAssetPath($"Assets/{tex.name}.terrainlayer");
-                AssetDatabase.CreateAsset(layer, layerPath);
-                AssetDatabase.SaveAssetIfDirty(layer);
+                // In Play Mode only a terrain created at runtime gets here; its layer stays in memory like its data.
+                if (!EditorApplication.isPlaying)
+                {
+                    var layerPath = AssetDatabase.GenerateUniqueAssetPath($"Assets/{tex.name}.terrainlayer");
+                    AssetDatabase.CreateAsset(layer, layerPath);
+                    AssetDatabase.SaveAssetIfDirty(layer);
+                }
             }
 
             if (layers.Contains(layer))

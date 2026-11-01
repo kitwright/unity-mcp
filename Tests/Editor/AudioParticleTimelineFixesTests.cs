@@ -90,6 +90,46 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void PickMixerGroupByPath_PrefersTheFullPathAndRefusesWhatStaysAmbiguous()
+        {
+            var paths = new[] { "Master", "Master/Music", "Master/Music/Music", "Master/SFX" };
+
+            Assert.AreEqual(0, AudioFunctions.PickMixerGroupByPath(paths, null));
+            Assert.AreEqual(0, AudioFunctions.PickMixerGroupByPath(paths, "Master"));
+            Assert.AreEqual(1, AudioFunctions.PickMixerGroupByPath(paths, "Master/Music"));
+            Assert.AreEqual(2, AudioFunctions.PickMixerGroupByPath(paths, "Master/Music/Music"));
+            Assert.AreEqual(2, AudioFunctions.PickMixerGroupByPath(paths, "Music/Music"));
+            Assert.AreEqual(3, AudioFunctions.PickMixerGroupByPath(paths, "SFX"));
+            Assert.AreEqual(AudioFunctions.AmbiguousGroup, AudioFunctions.PickMixerGroupByPath(paths, "Music"));
+            Assert.AreEqual(-1, AudioFunctions.PickMixerGroupByPath(paths, "Mus"));
+            Assert.AreEqual(-1, AudioFunctions.PickMixerGroupByPath(new string[0], "Music"));
+        }
+
+        [Test]
+        public void AddAudioSource_ResolvesNestedGroupsThatShareAName_ByTheirFullPath()
+        {
+            var mixerPath = CreateMixerAsset(nestedMusicGroups: true);
+            var mixer = AssetDatabase.LoadAssetAtPath<UnityEngine.Audio.AudioMixer>(mixerPath);
+            var groups = mixer.FindMatchingGroups(string.Empty);
+            var paths = AudioFunctions.GroupPaths(groups);
+            CollectionAssert.AreEquivalent(new[] { "Master", "Master/Music", "Master/Music/Music" }, paths);
+
+            var subject = Make(Unique("KwNestedMixerSubject"));
+
+            Ok("add_audio_source", "target", subject.name, "mixer_group", mixerPath + "/Master/Music");
+            Assert.AreSame(groups[Array.IndexOf(paths, "Master/Music")], subject.GetComponent<AudioSource>().outputAudioMixerGroup);
+
+            UnityEngine.Object.DestroyImmediate(subject.GetComponent<AudioSource>());
+            Ok("add_audio_source", "target", subject.name, "mixer_group", mixerPath + "/Master/Music/Music");
+            Assert.AreSame(groups[Array.IndexOf(paths, "Master/Music/Music")], subject.GetComponent<AudioSource>().outputAudioMixerGroup);
+
+            UnityEngine.Object.DestroyImmediate(subject.GetComponent<AudioSource>());
+            Assert.AreEqual("MIXER_GROUP_AMBIGUOUS",
+                Code("add_audio_source", "target", subject.name, "mixer_group", mixerPath + "/Music"));
+            Assert.IsNull(subject.GetComponent<AudioSource>(), "A refused mixer group must not leave the component behind.");
+        }
+
+        [Test]
         public void AddAudioSource_ResolvesAMixerGroupFromARealMixerAssetPath()
         {
             var mixerPath = CreateMixerAsset();
@@ -110,7 +150,7 @@ namespace KitWright.Editor.Tests
             Assert.IsNull(subject.GetComponent<AudioSource>(), "A refused mixer group must not leave the component behind.");
         }
 
-        private string CreateMixerAsset()
+        private string CreateMixerAsset(bool nestedMusicGroups = false)
         {
             _folder = "Assets/" + Unique("__KitWrightAudioParticleTimelineTests");
             AssetDatabase.CreateFolder("Assets", _folder.Substring("Assets/".Length));
@@ -126,7 +166,9 @@ namespace KitWright.Editor.Tests
             var path = _folder + "/Test.mixer";
             try
             {
-                create.Invoke(null, new object[] { path });
+                var controllerInstance = create.Invoke(null, new object[] { path });
+                if (nestedMusicGroups)
+                    AddNestedMusicGroups(controller, controllerInstance);
             }
             catch (TargetInvocationException ex)
             {
@@ -135,6 +177,24 @@ namespace KitWright.Editor.Tests
 
             AssetDatabase.ImportAsset(path);
             return path;
+        }
+
+        // Master/Music and Master/Music/Music: FindMatchingGroups("Master/Music") returns both.
+        private static void AddNestedMusicGroups(Type controllerType, object controller)
+        {
+            const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            var master = controllerType.GetProperty("masterGroup", flags)?.GetValue(controller);
+            var createGroup = controllerType.GetMethod("CreateNewGroup", flags);
+            var addChild = controllerType.GetMethod("AddChildToParent", flags);
+            if (master == null || createGroup == null || addChild == null)
+                Assert.Ignore("The AudioMixerController group API is not available in this Unity version.");
+
+            var music = createGroup.Invoke(controller, new object[] { "Music", false });
+            addChild.Invoke(controller, new[] { music, master });
+            var inner = createGroup.Invoke(controller, new object[] { "Music", false });
+            addChild.Invoke(controller, new[] { inner, music });
+            EditorUtility.SetDirty((UnityEngine.Object)controller);
+            AssetDatabase.SaveAssets();
         }
 
         [Test]
@@ -203,9 +263,10 @@ namespace KitWright.Editor.Tests
                 var second = Make(Unique("KwListenerSecond"));
                 SceneManager.MoveGameObjectToScene(second, extra);
 
-                Ok("add_audio_listener", "target", ObjectIdCodec.GetSerializableId(first));
+                var added = Ok("add_audio_listener", "target", ObjectIdCodec.GetSerializableId(first));
                 Assert.IsNotNull(first.GetComponent<AudioListener>(),
                     "A listener in another scene must not block this scene's first one.");
+                StringAssert.Contains("Another loaded scene already has one", (string)added["message"]);
 
                 Assert.AreEqual("LISTENER_EXISTS", Code("add_audio_listener", "target", ObjectIdCodec.GetSerializableId(second)));
                 Assert.IsNull(second.GetComponent<AudioListener>());
