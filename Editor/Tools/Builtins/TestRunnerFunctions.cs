@@ -115,6 +115,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "current test (when known), and a diagnostic hint. Runner start/transition uses a 30-second threshold; " +
                      "a known in-progress test uses 120 seconds to avoid flagging ordinary long-running tests too early.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static async Task<object> GetTestJob(
             [ToolParam("Job id returned by run_tests. Omit to query the most recent run.", Required = false)] string job_id = null,
             [ToolParam("Seconds to wait for a running job to finish before answering (0-25, default 20). 0 answers at once.", Required = false)] int wait_seconds = 20)

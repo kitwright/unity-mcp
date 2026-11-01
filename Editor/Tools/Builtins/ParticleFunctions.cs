@@ -2,6 +2,8 @@
 
 // com.unity.modules.particlesystem is optional; without it these tools disappear instead of breaking the build.
 #if KITWRIGHT_PARTICLES
+using System.Collections.Generic;
+using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEngine;
@@ -11,31 +13,39 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Particle")]
     internal static class ParticleFunctions
     {
+        private const float MaxSimulateSeconds = 60f;
+
         [Description("Control a ParticleSystem's playback for deterministic VFX inspection/screenshots. " +
                      "action='simulate' fast-forwards the system to a fixed time (useful in Edit Mode to freeze a VFX " +
                      "at a repeatable frame for capture); 'play'/'pause'/'stop'/'restart' drive the matching playback state. " +
-                     "Resolves the ParticleSystem on the target GameObject (or its first child that has one). " +
-                     "Returns the resulting playback state (isPlaying/isEmitting/isStopped/particleCount) plus the main " +
-                     "module's loop/duration.")]
+                     "Uses the ParticleSystem on the target GameObject; when the target has none (a VFX container), acts on " +
+                     "every top-level ParticleSystem under it that is active in the hierarchy (inactive ones are named in 'inactiveSkipped'). " +
+                     "Returns the resulting playback state (isPlaying/isEmitting/isStopped/particleCount, combined over those " +
+                     "systems), the first system's main-module loop/duration, and 'systems' naming the objects acted on.")]
         public static object ParticleControl(
-            [ToolParam("Identifier of the GameObject holding the ParticleSystem (instance id, name, or hierarchy path). Inactive objects are found.")] string target,
+            [ToolParam("Identifier of the GameObject holding the ParticleSystem, or a container of them (instance id, name, or hierarchy path). Inactive objects are found.")] string target,
             [ToolParam("Action: 'simulate' | 'play' | 'pause' | 'stop' | 'restart'", Required = false)] string action = "simulate",
-            [ToolParam("Time in seconds to fast-forward to (only used by action='simulate')", Required = false)] float time = 0.5f,
-            [ToolParam("Apply the action to child ParticleSystems as well", Required = false)] bool with_children = true)
+            [ToolParam("Time in seconds to fast-forward to, 0 to 60; anything else is refused (only used by action='simulate')", Required = false)] float time = 0.5f,
+            [ToolParam("Apply the action to the child ParticleSystems of each system as well", Required = false)] bool with_children = true)
         {
             var go = ObjectsHelper.FindTarget(target);
             if (go == null)
                 return ObjectsHelper.NotFound("target", target);
 
-            // Prefer a ParticleSystem directly on the target, else the first one in its children
-            // (searchInactive=true so a disabled VFX node still resolves, matching FindTarget's behavior).
-            var ps = go.GetComponent<ParticleSystem>();
-            if (ps == null)
-                ps = go.GetComponentInChildren<ParticleSystem>(true);
-            if (ps == null)
+            var systems = ResolveSystems(go, out var inactiveSkipped);
+            if (systems.Count == 0)
                 return Response.Error("PARTICLE_SYSTEM_NOT_FOUND",
-                    new { target, gameObject = go.name, hint = "No ParticleSystem on the target or its children." });
+                    new
+                    {
+                        target,
+                        gameObject = go.name,
+                        inactiveSkipped,
+                        hint = inactiveSkipped.Count > 0
+                            ? "Every ParticleSystem under the target is inactive in the hierarchy, so none was acted on. Activate the objects first."
+                            : "No ParticleSystem on the target or its children."
+                    });
 
+            var first = systems[0];
             var normalized = string.IsNullOrEmpty(action) ? "simulate" : action.Trim().ToLowerInvariant();
 
             // These are transient playback-state controls, not serialized-field mutations, so there is no
@@ -43,53 +53,96 @@ namespace KitWright.Editor.Tools.Builtins
             switch (normalized)
             {
                 case "simulate":
-                    if (float.IsNaN(time) || float.IsInfinity(time))
+                    if (!(time >= 0f && time <= MaxSimulateSeconds))
                         return Response.Error("INVALID_PARAM",
                             new { param = "time", provided = time, expected = "a finite number from 0 to 60 seconds" });
-                    // Clamp the fast-forward time and use fixedTimeStep=false (one variable step)
-                    // so a large value can't step the system through tens of thousands of fixed
-                    // sub-steps on the main thread and freeze the editor.
-                    time = Mathf.Clamp(time, 0f, 60f);
-                    // Simulate(t, withChildren, restart, fixedTimeStep): fixedTimeStep=false does one
-                    // variable step so a large time can't churn tens of thousands of fixed sub-steps.
-                    ps.Simulate(time, with_children, true, false);
+                    // fixedTimeStep=false does one variable step, so a large time can't churn tens of
+                    // thousands of fixed sub-steps on the main thread and freeze the editor.
+                    foreach (var ps in systems)
+                        ps.Simulate(time, with_children, true, false);
                     break;
                 case "play":
-                    ps.Play(with_children);
+                    foreach (var ps in systems)
+                        ps.Play(with_children);
                     break;
                 case "pause":
-                    ps.Pause(with_children);
+                    foreach (var ps in systems)
+                        ps.Pause(with_children);
                     break;
                 case "stop":
-                    ps.Stop(with_children);
+                    foreach (var ps in systems)
+                        ps.Stop(with_children);
                     break;
                 case "restart":
-                    // No native Restart(): clear existing particles then play from the start.
-                    ps.Clear(with_children);
-                    ps.Play(with_children);
+                    // Play() on a paused system (e.g. after Simulate) resumes at its old time and on a
+                    // playing one does nothing; stopping first resets time so t=0 bursts fire again.
+                    foreach (var ps in systems)
+                    {
+                        ps.Stop(with_children, ParticleSystemStopBehavior.StopEmittingAndClear);
+                        ps.Play(with_children);
+                    }
                     break;
                 default:
                     return Response.Error("UNKNOWN_ACTION",
                         new { action, expected = "simulate|play|pause|stop|restart" });
             }
 
-            var main = ps.main;
+            var main = first.main;
+            var subject = systems.Count == 1
+                ? $"ParticleSystem '{first.name}'"
+                : $"{systems.Count} ParticleSystems under '{go.name}'";
+            var particleCount = systems.Sum(s => s.particleCount);
             var message = normalized == "simulate"
-                ? $"Simulated ParticleSystem '{ps.name}' to {time}s (particleCount={ps.particleCount})."
-                : $"ParticleSystem '{ps.name}' action '{normalized}' applied.";
+                ? $"Simulated {subject} to {time}s (particleCount={particleCount})."
+                : $"{subject} action '{normalized}' applied.";
+            if (inactiveSkipped.Count > 0)
+                message += $" Skipped {inactiveSkipped.Count} inactive system(s).";
 
             return Response.Success(message, new
             {
                 action = normalized,
                 gameObject = go.name,
-                instanceId = ObjectIdCodec.GetSerializableId(ps.gameObject),
-                isPlaying = ps.isPlaying,
-                isEmitting = ps.isEmitting,
-                isStopped = ps.isStopped,
-                particleCount = ps.particleCount,
+                instanceId = ObjectIdCodec.GetSerializableId(go),
+                systems = systems.Select(s => new { name = s.gameObject.name, instanceId = ObjectIdCodec.GetSerializableId(s.gameObject) }).ToArray(),
+                inactiveSkipped,
+                isPlaying = systems.Any(s => s.isPlaying),
+                isEmitting = systems.Any(s => s.isEmitting),
+                isStopped = systems.All(s => s.isStopped),
+                particleCount,
                 loop = main.loop,
                 duration = main.duration
             });
+        }
+
+        // The system on the target itself, else every system under it that has no other system between it
+        // and the target (a VFX container holds Fire/Smoke/Sparks side by side). Inactive ones do nothing and
+        // would pollute the combined state, so they are named in inactiveSkipped instead.
+        internal static List<ParticleSystem> ResolveSystems(GameObject go, out List<string> inactiveSkipped)
+        {
+            inactiveSkipped = new List<string>();
+            var own = go.GetComponent<ParticleSystem>();
+            if (own != null)
+                return new List<ParticleSystem> { own };
+
+            var roots = new List<ParticleSystem>();
+            foreach (var candidate in go.GetComponentsInChildren<ParticleSystem>(true))
+            {
+                var nested = false;
+                for (var parent = candidate.transform.parent; parent != null && parent != go.transform; parent = parent.parent)
+                {
+                    if (parent.GetComponent<ParticleSystem>() == null) continue;
+                    nested = true;
+                    break;
+                }
+
+                if (nested) continue;
+                if (candidate.gameObject.activeInHierarchy)
+                    roots.Add(candidate);
+                else
+                    inactiveSkipped.Add(candidate.gameObject.name);
+            }
+
+            return roots;
         }
     }
 }

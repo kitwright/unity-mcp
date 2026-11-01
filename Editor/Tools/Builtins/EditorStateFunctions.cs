@@ -204,6 +204,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(tag))
                 return Response.Error("INVALID_TAG", new { message = "Tag name cannot be empty." });
+            tag = tag.Trim();
 
             if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
                 return Response.Success($"Tag '{tag}' already exists.");
@@ -213,6 +214,7 @@ namespace KitWright.Editor.Tools.Builtins
             tagsProp.InsertArrayElementAtIndex(tagsProp.arraySize);
             tagsProp.GetArrayElementAtIndex(tagsProp.arraySize - 1).stringValue = tag;
             tagManager.ApplyModifiedProperties();
+            FlushTagManager();
             return Response.Success($"Added tag '{tag}'.");
         }
 
@@ -222,6 +224,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(tag))
                 return Response.Error("INVALID_TAG", new { message = "Tag name cannot be empty." });
+            tag = tag.Trim();
 
             var tagManager = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
             var tagsProp = tagManager.FindProperty("tags");
@@ -231,10 +234,23 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     tagsProp.DeleteArrayElementAtIndex(i);
                     tagManager.ApplyModifiedProperties();
+                    FlushTagManager();
                     return Response.Success($"Removed tag '{tag}'.");
                 }
             }
+
+            // get_tags lists the built-in tags but TagManager holds only the custom ones, so a built-in
+            // tag is not "not found": it exists and cannot be removed.
+            if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                return Response.Error("CANNOT_REMOVE_BUILTIN_TAG", new { tag }, "Built-in tags cannot be removed.");
             return Response.Error("TAG_NOT_FOUND", new { tag });
+        }
+
+        // ApplyModifiedProperties only marks TagManager dirty; without a save the change sits in
+        // memory and a batch run that never saves loses it. The same flush the sorting layers do.
+        private static void FlushTagManager()
+        {
+            AssetDatabase.SaveAssets();
         }
 
         // ----- Layers -----
@@ -252,12 +268,13 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success("Layer table.", layers);
         }
 
-        [Description("Add a new layer to the first empty user slot (8-31). Errors if no slot is free.")]
+        [Description("Add a new layer to the first empty user slot (8-31). Errors if no slot is free; a no-op success if the layer already exists.")]
         public static object AddLayer(
             [ToolParam("Layer name to add")] string layer)
         {
             if (string.IsNullOrWhiteSpace(layer))
                 return Response.Error("INVALID_LAYER", new { message = "Layer name cannot be empty." });
+            layer = layer.Trim();
 
             if (LayerMask.NameToLayer(layer) != -1)
                 return Response.Success($"Layer '{layer}' already exists at index {LayerMask.NameToLayer(layer)}.");
@@ -271,6 +288,7 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     slot.stringValue = layer;
                     tagManager.ApplyModifiedProperties();
+                    FlushTagManager();
                     return Response.Success($"Added layer '{layer}' at index {i}.");
                 }
             }
@@ -283,6 +301,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(layer))
                 return Response.Error("INVALID_LAYER", new { message = "Layer name cannot be empty." });
+            layer = layer.Trim();
 
             int idx = LayerMask.NameToLayer(layer);
             if (idx == -1)
@@ -294,7 +313,9 @@ namespace KitWright.Editor.Tools.Builtins
             var layersProp = tagManager.FindProperty("layers");
             layersProp.GetArrayElementAtIndex(idx).stringValue = string.Empty;
             tagManager.ApplyModifiedProperties();
-            return Response.Success($"Removed layer '{layer}' (was index {idx}).");
+            FlushTagManager();
+            return Response.Success($"Removed layer '{layer}' (was index {idx}).",
+                hint: "GameObjects on this layer, camera culling masks and the collision matrix keep slot " + idx + "; they are not cleaned up.");
         }
 
         // ----- Sorting Layers -----

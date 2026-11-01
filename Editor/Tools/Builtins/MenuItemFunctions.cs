@@ -2,6 +2,8 @@
 
 using System;
 using System.Linq;
+using System.Reflection;
+using System.Text.RegularExpressions;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
@@ -51,6 +53,7 @@ namespace KitWright.Editor.Tools.Builtins
             ("Assets/Export Package", null),
             ("Assets/Reimport All", null),
             ("Assets/Delete", "delete_asset"),
+            ("Window/Layouts/Revert Factory Settings", null),
             ("Help/About Unity", null),
         };
 
@@ -177,9 +180,72 @@ namespace KitWright.Editor.Tools.Builtins
                 "allow_modal=true if someone is at the editor to click it.");
         }
 
+        // Menu.MenuItemExists is internal in UnityEditor.CoreModule (6000.3); when it cannot be read the
+        // caller keeps the combined "missing or disabled" answer.
+        private static readonly MethodInfo MenuItemExistsMethod = typeof(Menu).GetMethod(
+            "MenuItemExists", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic, null, new[] { typeof(string) }, null);
+
+        internal static bool? MenuItemExists(string menuPath)
+        {
+            try { return MenuItemExistsMethod?.Invoke(null, new object[] { menuPath }) as bool?; }
+            catch (Exception) { return null; }
+        }
+
+        internal enum MenuNodeKind { Unknown, Leaf, Submenu }
+
+        // MenuItemExists is true for a submenu too, and a submenu has no action, so "exists" alone does not make
+        // an item disabled. Only a path some [MenuItem] method backs, with nothing under it, is proven a leaf;
+        // items the editor draws natively or adds at runtime stay Unknown.
+        internal static MenuNodeKind ClassifyMenuNode(string menuPath, string[] scriptMenuPaths)
+        {
+            var path = NormalizeMenuPath(menuPath);
+            var leaf = false;
+            foreach (var raw in scriptMenuPaths)
+            {
+                var item = NormalizeMenuPath(Regex.Replace(raw ?? string.Empty, @"\s[%#&_][^\s/]*$", string.Empty));
+                if (item.StartsWith(path + "/", StringComparison.OrdinalIgnoreCase))
+                    return MenuNodeKind.Submenu;
+                if (string.Equals(item, path, StringComparison.Ordinal))
+                    leaf = true;
+            }
+            return leaf ? MenuNodeKind.Leaf : MenuNodeKind.Unknown;
+        }
+
+        internal static string[] ScriptMenuPaths()
+        {
+            try
+            {
+                return TypeCache.GetMethodsWithAttribute<MenuItem>()
+                    .SelectMany(method => method.GetCustomAttributes(typeof(MenuItem), false).OfType<MenuItem>())
+                    .Select(item => item.menuItem)
+                    .ToArray();
+            }
+            catch (Exception) { return Array.Empty<string>(); }
+        }
+
+        internal static object NotRunAnswer(string menuPath, bool? exists, MenuNodeKind kind)
+        {
+            if (exists != false && kind == MenuNodeKind.Submenu)
+                return Response.Error("MENU_ITEM_IS_SUBMENU", new { menu_path = menuPath },
+                    "That path is a submenu: it only groups other items and has no action to run. " +
+                    $"Execute one of the items under it, e.g. '{menuPath.TrimEnd('/')}/<item>'.");
+
+            if (exists == true && kind == MenuNodeKind.Leaf)
+                return Response.Error("MENU_ITEM_DISABLED", new { menu_path = menuPath },
+                    "The item exists but Unity did not run it: it is disabled right now (nothing selected, wrong mode, or its validate method refused). " +
+                    "Fix that precondition and call again.");
+
+            var hint = exists == false
+                ? "No menu item has this path. Verify it matches the editor menu hierarchy ('/' separated)."
+                : "Verify the path matches the editor menu hierarchy exactly (case sensitive, '/' separated). A submenu, which has no action to run, and an item that exists but is disabled right now (nothing selected, wrong mode) get the same answer.";
+            return Response.Error("MENU_ITEM_NOT_FOUND", new { menu_path = menuPath, hint });
+        }
+
         [Description("Execute an editor menu item by its full path. " +
                      "Examples: 'GameObject/2D Object/Sprites/Square', 'Window/Layouts/Default', 'Edit/Undo'. " +
-                     "Returns success/failure based on whether the menu item exists and was triggered. " +
+                     "Returns success/failure based on whether the menu item exists and was triggered; " +
+                     "MENU_ITEM_DISABLED means an item that is disabled right now, MENU_ITEM_IS_SUBMENU means the path only groups other items, " +
+                     "and MENU_ITEM_NOT_FOUND means no such item, or a path that may be a submenu or a disabled item (the editor does not say which). " +
                      "Paths known to open a modal dialog or file picker are refused, because a modal stops the " +
                      "editor loop this call returns on and only a human clicking the dialog can unstick it; " +
                      "pass allow_modal=true to run one anyway when someone is watching the editor. " +
@@ -205,8 +271,11 @@ namespace KitWright.Editor.Tools.Builtins
                 var elapsed = DateTime.UtcNow - startedAt;
 
                 if (!ok)
-                    return Response.Error("MENU_ITEM_NOT_FOUND",
-                        new { menu_path, hint = "Verify the path matches the editor menu hierarchy exactly (case sensitive, '/' separated). An item that exists but is disabled right now (nothing selected, wrong mode) gets the same answer." });
+                {
+                    var exists = MenuItemExists(menu_path);
+                    return NotRunAnswer(menu_path, exists,
+                        exists == false ? MenuNodeKind.Unknown : ClassifyMenuNode(menu_path, ScriptMenuPaths()));
+                }
 
                 if (elapsed.TotalMilliseconds < ModalSuspicionMs)
                     return Response.Success($"Executed menu item '{menu_path}'.");

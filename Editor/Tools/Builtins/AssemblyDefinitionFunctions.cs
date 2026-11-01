@@ -3,7 +3,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -16,7 +19,9 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("AssemblyDefinition")]
     internal static class AssemblyDefinitionFunctions
     {
-        [Description("Create a new Assembly Definition (.asmdef) file. name defaults to the file name. references accept assembly names (auto-resolved to GUID) or 'GUID:xxx'.")]
+        [Description("Create a new Assembly Definition (.asmdef) file. name defaults to the file name and must not be used by another assembly definition. " +
+                     "references accept assembly names (auto-resolved to GUID) or 'GUID:xxx'; a name no assembly definition carries is kept as written and listed in unresolvedReferences. " +
+                     "Give include_platforms or exclude_platforms, not both.")]
         public static object CreateAssemblyDef(
             [ToolParam("Asset path for the .asmdef, e.g. 'Assets/Scripts/Runtime/MyGame.Runtime.asmdef'")] string path,
             [ToolParam("Assembly name (defaults to file name)", Required = false)] string name = null,
@@ -32,19 +37,31 @@ namespace KitWright.Editor.Tools.Builtins
             path = path.Replace('\\', '/');
             if (!path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase)) path += ".asmdef";
 
-            try { PathSafety.ResolveAssetPath(path); }
+            string fullPath;
+            try { fullPath = PathSafety.ResolveAssetPath(path); }
             catch (PathOutsideProjectException ex)
             { return Response.Error("INVALID_PATH", new { path, message = ex.Message }); }
 
-            if (File.Exists(path)) return Response.Error("ASMDEF_EXISTS", new { path });
+            if (File.Exists(fullPath)) return Response.Error("ASMDEF_EXISTS", new { path });
 
             var asmName = string.IsNullOrEmpty(name) ? Path.GetFileNameWithoutExtension(path) : name;
 
+            var includes = SplitCsv(include_platforms);
+            var excludes = SplitCsv(exclude_platforms);
+            var bothLists = BothPlatformListsRefusal(include_platforms, exclude_platforms);
+            if (bothLists != null) return bothLists;
+
+            var nameTaken = NameTakenRefusal(asmName, null);
+            if (nameTaken != null) return nameTaken;
+
+            var referenceTokens = SplitCsv(references);
+            var unresolved = UnresolvedReferences(referenceTokens);
+
             var obj = new JObject { ["name"] = asmName };
             if (!string.IsNullOrEmpty(root_namespace)) obj["rootNamespace"] = root_namespace;
-            obj["references"] = new JArray(ResolveReferences(SplitCsv(references)));
-            obj["includePlatforms"] = new JArray(SplitCsv(include_platforms));
-            obj["excludePlatforms"] = new JArray(SplitCsv(exclude_platforms));
+            obj["references"] = new JArray(ResolveReferences(referenceTokens));
+            obj["includePlatforms"] = new JArray(includes);
+            obj["excludePlatforms"] = new JArray(excludes);
             obj["allowUnsafeCode"] = allow_unsafe_code;
             obj["autoReferenced"] = auto_referenced;
             obj["noEngineReferences"] = no_engine_references;
@@ -53,12 +70,12 @@ namespace KitWright.Editor.Tools.Builtins
             obj["defineConstraints"] = new JArray();
             obj["versionDefines"] = new JArray();
 
-            var dir = Path.GetDirectoryName(path);
+            var dir = Path.GetDirectoryName(fullPath);
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            AtomicFile.WriteAllText(path, obj.ToString(Formatting.Indented));
-            AssetDatabase.ImportAsset(path);
+            Save(path, obj);
 
-            return Response.Success($"Assembly definition '{asmName}' created at '{path}'.", new { path, name = asmName });
+            return Response.Success($"Assembly definition '{asmName}' created at '{path}'." + UnresolvedNote(unresolved),
+                new { path, name = asmName, unresolvedReferences = unresolved });
         }
 
         [Description("Get detailed info about an .asmdef file: name, references, platforms, and flags.")]
@@ -108,25 +125,36 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Found {list.Count} assembly definition(s).", new { count = list.Count, assemblies = list });
         }
 
-        [Description("Add assembly references to an existing .asmdef. Names are auto-resolved to GUID form; existing refs are kept.")]
+        [Description("Add assembly references to an existing .asmdef. Names are auto-resolved to GUID form; existing refs are kept, and one already listed (as a name or as its GUID) is not added twice. " +
+                     "A name no assembly definition carries is added as written and listed in unresolvedReferences.")]
         public static object AddAssemblyReferences(
             [ToolParam("Asset path of the .asmdef file")] string path,
             [ToolParam("Comma-separated assembly names or 'GUID:xxx' to add")] string references)
         {
+            var tokens = SplitCsv(references);
+            if (tokens.Length == 0)
+                return Response.Error("NO_PARAMS", new { hint = "references is empty: list at least one assembly name or 'GUID:xxx' to add." });
+
             var obj = LoadAsmdef(path, out var error);
             if (obj == null) return error;
 
             var current = (obj["references"] as JArray) ?? new JArray();
-            var existing = current.Select(t => (string)t).ToHashSet();
-            var toAdd = ResolveReferences(SplitCsv(references)).Where(r => !existing.Contains(r)).ToList();
+            var toAdd = NewReferences(current, tokens, Canonical);
+            var unresolved = UnresolvedReferences(tokens);
+            if (toAdd.Count == 0)
+                return Response.Success($"'{obj["name"]}' already references all of them; nothing added." + UnresolvedNote(unresolved),
+                    new { added = toAdd, referenceCount = current.Count, unresolvedReferences = unresolved });
+
             foreach (var r in toAdd) current.Add(r);
             obj["references"] = current;
 
             Save(path, obj);
-            return Response.Success($"Added {toAdd.Count} reference(s) to '{obj["name"]}'.", new { added = toAdd, referenceCount = current.Count });
+            return Response.Success($"Added {toAdd.Count} reference(s) to '{obj["name"]}'." + UnresolvedNote(unresolved),
+                new { added = toAdd, referenceCount = current.Count, unresolvedReferences = unresolved });
         }
 
-        [Description("Remove assembly references from an existing .asmdef. Accepts names (resolved to GUID) or 'GUID:xxx'.")]
+        [Description("Remove assembly references from an existing .asmdef. Accepts names or 'GUID:xxx'; an entry written as a name matches its GUID and the other way round. " +
+                     "notFound lists what the file did not reference.")]
         public static object RemoveAssemblyReferences(
             [ToolParam("Asset path of the .asmdef file")] string path,
             [ToolParam("Comma-separated assembly names or 'GUID:xxx' to remove")] string references)
@@ -134,17 +162,22 @@ namespace KitWright.Editor.Tools.Builtins
             var obj = LoadAsmdef(path, out var error);
             if (obj == null) return error;
 
-            var remove = ResolveReferences(SplitCsv(references)).ToHashSet();
             var current = (obj["references"] as JArray) ?? new JArray();
-            var kept = new JArray(current.Where(t => !remove.Contains((string)t)));
+            var kept = WithoutReferences(current, SplitCsv(references), Canonical, out var notFound);
             int removed = current.Count - kept.Count;
-            obj["references"] = kept;
+            if (removed > 0)
+            {
+                obj["references"] = kept;
+                Save(path, obj);
+            }
 
-            Save(path, obj);
-            return Response.Success($"Removed {removed} reference(s) from '{obj["name"]}'.", new { removed, referenceCount = kept.Count });
+            return Response.Success(
+                $"Removed {removed} reference(s) from '{obj["name"]}'." +
+                (notFound.Count > 0 ? $" Not referenced: {string.Join(", ", notFound)}." : string.Empty),
+                new { removed, notFound, referenceCount = kept.Count });
         }
 
-        [Description("Set include/exclude platform lists on an .asmdef. Setting include_platforms clears exclude_platforms and vice versa.")]
+        [Description("Set include/exclude platform lists on an .asmdef. A non-empty include_platforms clears exclude_platforms and vice versa; both non-empty in one call is refused.")]
         public static object SetAssemblyPlatforms(
             [ToolParam("Asset path of the .asmdef file")] string path,
             [ToolParam("Comma-separated include platforms (e.g. 'Editor'). Empty to clear.", Required = false)] string include_platforms = null,
@@ -152,6 +185,9 @@ namespace KitWright.Editor.Tools.Builtins
         {
             var obj = LoadAsmdef(path, out var error);
             if (obj == null) return error;
+
+            var bothLists = BothPlatformListsRefusal(include_platforms, exclude_platforms);
+            if (bothLists != null) return bothLists;
 
             if (include_platforms != null)
             {
@@ -172,7 +208,7 @@ namespace KitWright.Editor.Tools.Builtins
             });
         }
 
-        [Description("Update settings on an .asmdef: name, rootNamespace, allowUnsafeCode, autoReferenced, noEngineReferences, defineConstraints. Only supplied fields change.")]
+        [Description("Update settings on an .asmdef: name, rootNamespace, allowUnsafeCode, autoReferenced, noEngineReferences, defineConstraints. Only supplied fields change; a name another assembly definition already uses is refused.")]
         public static object UpdateAssemblyDefSettings(
             [ToolParam("Asset path of the .asmdef file")] string path,
             [ToolParam("New assembly name", Required = false)] string name = null,
@@ -185,15 +221,37 @@ namespace KitWright.Editor.Tools.Builtins
             var obj = LoadAsmdef(path, out var error);
             if (obj == null) return error;
 
-            if (!string.IsNullOrEmpty(name)) obj["name"] = name;
-            if (root_namespace != null) obj["rootNamespace"] = root_namespace;
-            if (allow_unsafe_code.HasValue) obj["allowUnsafeCode"] = allow_unsafe_code.Value;
-            if (auto_referenced.HasValue) obj["autoReferenced"] = auto_referenced.Value;
-            if (no_engine_references.HasValue) obj["noEngineReferences"] = no_engine_references.Value;
-            if (define_constraints != null) obj["defineConstraints"] = new JArray(SplitCsv(define_constraints));
+            if (string.IsNullOrEmpty(name) && root_namespace == null && !allow_unsafe_code.HasValue &&
+                !auto_referenced.HasValue && !no_engine_references.HasValue && define_constraints == null)
+                return Response.Error("NO_PARAMS",
+                    new { hint = "Provide at least one of name, root_namespace, allow_unsafe_code, auto_referenced, no_engine_references, define_constraints." });
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                var nameTaken = NameTakenRefusal(name, PathSafety.ResolveProjectPath(path));
+                if (nameTaken != null) return nameTaken;
+            }
+
+            var changed = new List<string>();
+            void Apply(string key, JToken value)
+            {
+                if (JToken.DeepEquals(obj[key], value)) return;
+                obj[key] = value;
+                changed.Add(key);
+            }
+
+            if (!string.IsNullOrEmpty(name)) Apply("name", name);
+            if (root_namespace != null) Apply("rootNamespace", root_namespace);
+            if (allow_unsafe_code.HasValue) Apply("allowUnsafeCode", allow_unsafe_code.Value);
+            if (auto_referenced.HasValue) Apply("autoReferenced", auto_referenced.Value);
+            if (no_engine_references.HasValue) Apply("noEngineReferences", no_engine_references.Value);
+            if (define_constraints != null) Apply("defineConstraints", new JArray(SplitCsv(define_constraints)));
+
+            if (changed.Count == 0)
+                return Response.Success($"No change to '{obj["name"]}': those values are already set.", new { changed });
 
             Save(path, obj);
-            return Response.Success($"Settings updated for '{obj["name"]}'.");
+            return Response.Success($"Settings updated for '{obj["name"]}': {string.Join(", ", changed)}.", new { changed });
         }
 
         // Resolve each token to the asmdef reference form. 'GUID:xxx' passes through; a name is
@@ -213,6 +271,61 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
+        // One form per reference, so a name and the GUID of the same assembly definition compare equal.
+        internal static string Canonical(string reference) =>
+            string.IsNullOrEmpty(reference) ? reference : ResolveReferences(new[] { reference }).First();
+
+        internal static List<string> UnresolvedReferences(IEnumerable<string> tokens) =>
+            tokens.Where(t => !t.StartsWith("GUID:", StringComparison.OrdinalIgnoreCase) &&
+                              string.IsNullOrEmpty(CompilationPipeline.GetAssemblyDefinitionFilePathFromAssemblyName(t))).ToList();
+
+        private static string UnresolvedNote(List<string> unresolved) =>
+            unresolved.Count == 0
+                ? string.Empty
+                : $" No assembly definition named {string.Join(", ", unresolved)}: written as given, and Unity reports a missing reference until one exists.";
+
+        internal static List<string> NewReferences(JArray current, IEnumerable<string> tokens, Func<string, string> canonical)
+        {
+            var seen = new HashSet<string>(current.Select(t => canonical((string)t)), StringComparer.OrdinalIgnoreCase);
+            return tokens.Select(canonical).Where(seen.Add).ToList();
+        }
+
+        internal static JArray WithoutReferences(JArray current, IEnumerable<string> tokens, Func<string, string> canonical, out List<string> notFound)
+        {
+            var asked = tokens.ToList();
+            var drop = new HashSet<string>(asked.Select(canonical), StringComparer.OrdinalIgnoreCase);
+            var matched = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var kept = new JArray();
+            foreach (var entry in current)
+            {
+                var key = canonical((string)entry);
+                if (key != null && drop.Contains(key)) matched.Add(key);
+                else kept.Add(entry);
+            }
+
+            notFound = asked.Where(t => !matched.Contains(canonical(t))).ToList();
+            return kept;
+        }
+
+        private static object BothPlatformListsRefusal(string includePlatforms, string excludePlatforms)
+        {
+            if (SplitCsv(includePlatforms).Length == 0 || SplitCsv(excludePlatforms).Length == 0) return null;
+            return Response.Error("INVALID_PARAM", new { include_platforms = includePlatforms, exclude_platforms = excludePlatforms },
+                "An assembly definition lists the platforms it includes or the ones it excludes, never both: Unity refuses the file. Pass one of them.");
+        }
+
+        // ownFullPath is the file being edited: it already carries the name, so it is not a second definition of it.
+        internal static object NameTakenRefusal(string asmName, string ownFullPath)
+        {
+            var existing = CompilationPipeline.GetAssemblyDefinitionFilePathFromAssemblyName(asmName);
+            if (string.IsNullOrEmpty(existing)) return null;
+            if (ownFullPath != null &&
+                string.Equals(Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, existing)), ownFullPath, StringComparison.OrdinalIgnoreCase))
+                return null;
+            return Response.Error("ASMDEF_NAME_EXISTS", new { name = asmName, existingPath = existing },
+                "Assembly names are unique in a project, and Unity reports an error for a second definition with the same name. Pass another name.");
+        }
+
         internal static string[] SplitCsv(string csv)
         {
             if (string.IsNullOrWhiteSpace(csv)) return Array.Empty<string>();
@@ -222,23 +335,24 @@ namespace KitWright.Editor.Tools.Builtins
         private static JObject LoadAsmdef(string path, out object error)
         {
             error = null;
+            string full = null;
             // The project root rather than Assets/: an embedded package's asmdef under Packages/ is
             // a target these tools have always been able to edit.
             if (!string.IsNullOrEmpty(path))
             {
-                try { PathSafety.ResolveProjectPath(path); }
+                try { full = PathSafety.ResolveProjectPath(path); }
                 catch (PathOutsideProjectException ex)
                 {
                     error = Response.Error("INVALID_PATH", new { path, message = ex.Message });
                     return null;
                 }
             }
-            if (string.IsNullOrEmpty(path) || !path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) || !File.Exists(path))
+            if (full == null || !path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
             {
                 error = Response.Error("ASMDEF_NOT_FOUND", new { path });
                 return null;
             }
-            try { return JObject.Parse(File.ReadAllText(path)); }
+            try { return JsonParse.Object(File.ReadAllText(full)); }
             catch (Exception e) { error = Response.Error("ASMDEF_PARSE_FAILED", new { path, message = e.Message }); return null; }
         }
 
@@ -250,8 +364,31 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static void Save(string path, JObject obj)
         {
-            AtomicFile.WriteAllText(path, obj.ToString(Formatting.Indented));
-            AssetDatabase.ImportAsset(path);
+            var full = PathSafety.ResolveProjectPath(path);
+            AtomicFile.WriteAllText(full, Serialize(obj, File.Exists(full) ? File.ReadAllText(full) : null));
+            AssetDatabase.ImportAsset(full.Substring(Path.GetFullPath(ApplicationPaths.ProjectRoot).Length).TrimStart('\\', '/').Replace('\\', '/'));
+        }
+
+        // Unity writes asmdef files with 4-space indents; Json.NET's own default is 2 spaces and the platform's
+        // newline, which rewrote every line of a file whose content had barely changed.
+        internal static string Serialize(JObject obj, string existing)
+        {
+            var newline = existing == null || !existing.Contains("\n") ? Environment.NewLine : existing.Contains("\r\n") ? "\r\n" : "\n";
+            var indent = DetectIndent(existing);
+            var text = new StringBuilder();
+            using (var writer = new StringWriter(text) { NewLine = newline })
+            using (var json = new JsonTextWriter(writer) { Formatting = Formatting.Indented, IndentChar = indent[0], Indentation = indent.Length })
+                obj.WriteTo(json);
+
+            if (existing != null && existing.EndsWith("\n", StringComparison.Ordinal))
+                text.Append(newline);
+            return text.ToString();
+        }
+
+        internal static string DetectIndent(string existing)
+        {
+            var match = existing == null ? null : Regex.Match(existing, @"^([ \t]+)\S", RegexOptions.Multiline);
+            return match != null && match.Success ? match.Groups[1].Value : "    ";
         }
 
         private static bool IsUnderAssets(string path)

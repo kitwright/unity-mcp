@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.Settings;
@@ -117,11 +118,17 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
+        // Read-only calls run beside a mutating one, which owns the single pending marker: a read
+        // that finished would clear it, and a reload would then find nothing interrupted.
+        internal static bool MarksPendingFunction(MethodInfo method) =>
+            method == null || !ToolRegistry.IsReadOnly(method);
+
         private Task<string> InvokeOnEditorThreadAsync(string toolName, Dictionary<string, object> arguments,
             bool isAllowed, string profileKey, CancellationToken ct)
         {
             return _threadHelper.ExecuteAsyncOnEditorThreadAsync(async () =>
             {
+                var marksPending = false;
                 try
                 {
                     ct.ThrowIfCancellationRequested();
@@ -148,12 +155,17 @@ namespace KitWright.Editor.MCP.Server
                     }
 
                     DomainReloadHandler.ResetResumeCounter();
-                    _stateController.SetState(KitWrightState.ExecutingFunction);
-                    DomainReloadHandler.SavePendingFunction(functionCall);
+                    marksPending = MarksPendingFunction(method);
+                    if (marksPending)
+                    {
+                        _stateController.SetState(KitWrightState.ExecutingFunction);
+                        DomainReloadHandler.SavePendingFunction(functionCall);
+                    }
 
                     PluginDebugLogger.Log($"[KitWright MCP Server] Executing tool: {toolName}");
                     var result = await _invoker.InvokeAsync(functionCall);
-                    DomainReloadHandler.CompletePendingFunction(_stateController);
+                    if (marksPending)
+                        DomainReloadHandler.CompletePendingFunction(_stateController);
 
                     var resultText = result ?? "Completed successfully";
                     _interactionLog?.Add(toolName,
@@ -163,8 +175,11 @@ namespace KitWright.Editor.MCP.Server
                 }
                 catch (Exception ex)
                 {
-                    DomainReloadHandler.ClearPendingFunction();
-                    _stateController.ClearState();
+                    if (marksPending)
+                    {
+                        DomainReloadHandler.ClearPendingFunction();
+                        _stateController.ClearState();
+                    }
                     var exError = ToolResultFormatter.Error("TOOL_EXCEPTION",
                         new { tool = toolName, message = ex.Message });
                     Debug.LogError($"[KitWright MCP Server] Error executing tool '{toolName}': {ex.Message}\n{ex.StackTrace}");

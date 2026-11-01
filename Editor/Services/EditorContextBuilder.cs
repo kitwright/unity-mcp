@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using KitWright.Editor.Services.UnityLogs;
 using UnityEditor;
+using UnityEditor.Compilation;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 
@@ -52,6 +53,9 @@ namespace KitWright.Editor.Services
             EditorSceneManager.sceneOpened += OnSceneOpened;
             EditorSceneManager.sceneSaved += OnSceneSaved;
             EditorSceneManager.newSceneCreated += OnNewSceneCreated;
+            CompilationPipeline.compilationStarted += OnCompilationStateChanged;
+            CompilationPipeline.compilationFinished += OnCompilationStateChanged;
+            Application.logMessageReceived += OnLogMessage;
 
             _unityLogsRepository?.StartListening();
         }
@@ -114,6 +118,9 @@ namespace KitWright.Editor.Services
             EditorSceneManager.sceneOpened -= OnSceneOpened;
             EditorSceneManager.sceneSaved -= OnSceneSaved;
             EditorSceneManager.newSceneCreated -= OnNewSceneCreated;
+            CompilationPipeline.compilationStarted -= OnCompilationStateChanged;
+            CompilationPipeline.compilationFinished -= OnCompilationStateChanged;
+            Application.logMessageReceived -= OnLogMessage;
         }
 
         private void OnSelectionChanged()
@@ -134,6 +141,20 @@ namespace KitWright.Editor.Services
         private void OnPlayModeStateChanged(PlayModeStateChange _)
         {
             RequestRefresh(RefreshFlags.Scene | RefreshFlags.Console);
+        }
+
+        // A compile that fails raises no projectChanged and does not reload the domain, so without
+        // these the text cached while it ran ("Currently compiling...") would outlive it.
+        private void OnCompilationStateChanged(object _)
+        {
+            RequestRefresh(RefreshFlags.Compile);
+        }
+
+        // An exception thrown by a running game raises no editor event either.
+        private void OnLogMessage(string condition, string stackTrace, LogType type)
+        {
+            if (type != LogType.Log && type != LogType.Warning)
+                RequestRefresh(RefreshFlags.Console);
         }
 
         private void OnActiveSceneChanged(UnityEngine.SceneManagement.Scene _, UnityEngine.SceneManagement.Scene __)

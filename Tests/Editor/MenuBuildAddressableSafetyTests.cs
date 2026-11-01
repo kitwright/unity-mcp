@@ -209,5 +209,122 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("Assets/Editor/Tool.asset", (string)error["data"]["path"]);
             Assert.IsNotEmpty((string)error["hint"]);
         }
+
+        [TestCase("Assets")]
+        [TestCase("Assets/")]
+        [TestCase("Resources/unity_builtin_extra")]
+        [TestCase("Library/unity default resources")]
+        [TestCase("Library/unity editor resources")]
+        [TestCase("ProjectSettings/ProjectSettings.asset")]
+        [TestCase("Packages")]
+        [TestCase("Assets/Scripts/Player.cs")]
+        [TestCase("Assets/Scripts/Player.CS")]
+        [TestCase("Assets/Tools/Editor/Config.asset")]
+        [TestCase("Assets\\Tools\\Editor\\Config.asset")]
+        [TestCase("Assets/Editor")]
+        [TestCase("Packages/com.example.pkg/Editor/Config.asset")]
+        public void AnAssetAPlayerCannotServeHasAReasonBeforeAnyGroupIsMade(string path)
+        {
+            Assert.IsNotEmpty(AddressableFunctions.UnservableReason(path), path);
+        }
+
+        [TestCase("Assets/Prefabs/Enemy.prefab")]
+        [TestCase("Assets/Textures")]
+        [TestCase("Assets/Editorial/Cover.png")]
+        [TestCase("Assets/Editor.png")]
+        [TestCase("Packages/com.example.pkg/Runtime/Config.asset")]
+        public void AnAssetThatShipsInThePlayerHasNoReason(string path)
+        {
+            Assert.IsNull(AddressableFunctions.UnservableReason(path), path);
+        }
+
+        [Test]
+        public void TheAddressableRefusalCarriesItsReason()
+        {
+            var reason = AddressableFunctions.UnservableReason("Assets/Scripts/Player.cs");
+
+            var error = JObject.FromObject(AddressableFunctions.NotAddressable("Assets/Scripts/Player.cs", reason));
+
+            Assert.AreEqual("ASSET_NOT_ADDRESSABLE", (string)error["code"]);
+            Assert.AreEqual(reason, (string)error["data"]["reason"]);
+        }
+
+        [TestCase("Window/Layouts/Revert Factory Settings")]
+        [TestCase("Window/Layouts/Revert Factory Settings...")]
+        [TestCase("/Window//Layouts/Revert Factory Settings")]
+        public void RevertFactorySettingsIsADialogOpenerThatAllowModalLifts(string menuPath)
+        {
+            Assert.AreEqual("MENU_ITEM_OPENS_MODAL", Code(MenuItemFunctions.Refusal(menuPath, false, _ => true)), menuPath);
+            Assert.IsNull(MenuItemFunctions.Refusal(menuPath, true, _ => true), menuPath);
+        }
+
+        [Test]
+        public void ADisabledMenuItemIsToldApartFromAMissingOne()
+        {
+            var leaf = MenuItemFunctions.MenuNodeKind.Leaf;
+            var unproven = MenuItemFunctions.MenuNodeKind.Unknown;
+            Assert.AreEqual("MENU_ITEM_DISABLED", Code(MenuItemFunctions.NotRunAnswer("Edit/Delete", true, leaf)));
+
+            var missing = JObject.FromObject(MenuItemFunctions.NotRunAnswer("Nothing/Here", false, unproven));
+            Assert.AreEqual("MENU_ITEM_NOT_FOUND", (string)missing["code"]);
+            StringAssert.DoesNotContain("disabled", (string)missing["data"]["hint"]);
+
+            var unknown = JObject.FromObject(MenuItemFunctions.NotRunAnswer("Nothing/Here", null, unproven));
+            Assert.AreEqual("MENU_ITEM_NOT_FOUND", (string)unknown["code"]);
+            StringAssert.Contains("disabled", (string)unknown["data"]["hint"]);
+            StringAssert.Contains("submenu", (string)unknown["data"]["hint"]);
+        }
+
+        [Test]
+        public void AnItemThatExistsButIsNotProvenToBeALeafIsNeverCalledDisabled()
+        {
+            var unproven = JObject.FromObject(MenuItemFunctions.NotRunAnswer("Window/Layouts", true, MenuItemFunctions.MenuNodeKind.Unknown));
+
+            Assert.AreEqual("MENU_ITEM_NOT_FOUND", (string)unproven["code"]);
+            StringAssert.Contains("submenu", (string)unproven["data"]["hint"]);
+        }
+
+        [Test]
+        public void ASubmenuIsAnsweredAsASubmenuNotAsADisabledItem()
+        {
+            var answer = JObject.FromObject(MenuItemFunctions.NotRunAnswer("GameObject/2D Object", true, MenuItemFunctions.MenuNodeKind.Submenu));
+
+            Assert.AreEqual("MENU_ITEM_IS_SUBMENU", (string)answer["code"]);
+            StringAssert.Contains("GameObject/2D Object/<item>", (string)answer["hint"]);
+        }
+
+        [Test]
+        public void ClassifyMenuNodeProvesALeafOnlyFromAnItemAMethodBacksAndASubmenuFromAChildUnderIt()
+        {
+            var items = new[]
+            {
+                "GameObject/2D Object/Sprites/Square",
+                "GameObject/Create Empty %#n",
+                "Assets/Create/Folder",
+                "Tools/Do Thing _g",
+                "Tools/Numbered #1/Sub",
+            };
+
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Submenu, MenuItemFunctions.ClassifyMenuNode("GameObject/2D Object", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Submenu, MenuItemFunctions.ClassifyMenuNode("/GameObject//2D Object/", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Submenu, MenuItemFunctions.ClassifyMenuNode("Assets/Create", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Submenu, MenuItemFunctions.ClassifyMenuNode("Tools/Numbered #1", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Leaf, MenuItemFunctions.ClassifyMenuNode("GameObject/Create Empty", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Leaf, MenuItemFunctions.ClassifyMenuNode("Tools/Do Thing", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Unknown, MenuItemFunctions.ClassifyMenuNode("Window/Layouts", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Unknown, MenuItemFunctions.ClassifyMenuNode("Edit/Undo", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Unknown, MenuItemFunctions.ClassifyMenuNode("GameObject/Create", items));
+            Assert.AreEqual(MenuItemFunctions.MenuNodeKind.Unknown, MenuItemFunctions.ClassifyMenuNode("GameObject/2D Object", new string[0]));
+        }
+
+        [Test]
+        public void TheEditorCanSayWhetherAMenuItemExists()
+        {
+            var edit = MenuItemFunctions.MenuItemExists("Edit/Undo");
+            Assume.That(edit.HasValue, "UnityEditor.Menu.MenuItemExists is not reachable in this editor.");
+
+            Assert.IsTrue(edit.Value);
+            Assert.AreEqual(false, MenuItemFunctions.MenuItemExists("KwNoSuchMenu/NoSuchItem"));
+        }
     }
 }

@@ -13,15 +13,19 @@ namespace KitWright.Editor.Tools.Builtins
     internal static class TimelineFunctions
     {
         // Resolved by FullName over the target's components so this file compiles WITHOUT an
-        // asmdef reference to com.unity.timeline / UnityEngine.Playables. If the package is not
-        // installed no component will match and we return PLAYABLE_DIRECTOR_NOT_FOUND.
+        // asmdef reference to com.unity.timeline / UnityEngine.Playables.
         private const string PlayableDirectorTypeName = "UnityEngine.Playables.PlayableDirector";
+        private const double MaxEvaluateSeconds = 1000000;
 
-        [Description("Set a PlayableDirector's playback time and Evaluate() it — samples the bound Timeline at that time in the editor. Fully reflection-based, compiles without a com.unity.timeline reference. Reports the director's duration and PlayState. WARNING: Evaluate() destructively scrubs the sampled pose into the bound scene objects (Transforms/components); those writes are NOT individually undoable, so the owning scene is marked dirty and you should discard/reload the scene without saving if you only wanted a transient sample.")]
+        [Description("Set a PlayableDirector's playback time and Evaluate() it — samples the bound Timeline at that time in the editor. Fully reflection-based, compiles without a com.unity.timeline reference. Reports the director's duration and PlayState; refuses a director with no Playable asset assigned (NO_PLAYABLE_ASSET). WARNING: Evaluate() destructively scrubs the sampled pose into the bound scene objects (Transforms/components); those writes are NOT individually undoable, so the owning scene is marked dirty and you should discard/reload the scene without saving if you only wanted a transient sample.")]
         public static object DirectorEvaluate(
             [ToolParam("Identifier of the GameObject holding a PlayableDirector (instance id, name, or path). Finds inactive objects too.")] string target,
-            [ToolParam("Playback time in seconds to set before evaluating (default 0).", Required = false)] double time = 0)
+            [ToolParam("Playback time in seconds to set before evaluating, 0 to 1000000 (default 0).", Required = false)] double time = 0)
         {
+            if (!(time >= 0 && time <= MaxEvaluateSeconds))
+                return Response.Error("INVALID_PARAM",
+                    new { param = "time", provided = time, expected = "a finite number from 0 to 1000000 seconds" });
+
             var go = ObjectsHelper.FindTarget(target);
             if (go == null)
                 return ObjectsHelper.NotFound("target", target);
@@ -41,7 +45,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (director == null)
                 return Response.Error("PLAYABLE_DIRECTOR_NOT_FOUND",
-                    new { target, hint = "target has no PlayableDirector, or com.unity.timeline not installed" });
+                    new { target, hint = "target has no PlayableDirector component" });
 
             try
             {
@@ -57,16 +61,26 @@ namespace KitWright.Editor.Tools.Builtins
                     return Response.Error("PLAYABLE_DIRECTOR_API_MISMATCH",
                         new { hint = "PlayableDirector.Evaluate() method not found via reflection" });
 
+                UnityEngine.Object asset = null;
+                var assetProp = directorType.GetProperty("playableAsset");
+                if (assetProp != null)
+                {
+                    asset = assetProp.GetValue(director) as UnityEngine.Object;
+                    if (asset == null)
+                        return Response.Error("NO_PLAYABLE_ASSET",
+                            new { target, hint = "the director has no Playable asset assigned, so there is nothing to sample" });
+                }
+
                 Undo.RecordObject(director, "Director Evaluate");
-                timeProp.SetValue(director, time);
-                evaluate.Invoke(director, null);
 
                 // Evaluate() writes the sampled pose into the bound scene objects, which are not
-                // captured by the director-only Undo above. Mark the owning scene dirty so the
-                // change is visibly unsaved (and never silently lost) rather than pretending the
-                // scene is clean.
+                // captured by the director-only Undo above. Mark the owning scene dirty first so the
+                // change is visibly unsaved even when Evaluate throws after a partial write.
                 if (go.scene.IsValid())
                     UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
+
+                timeProp.SetValue(director, time);
+                evaluate.Invoke(director, null);
 
                 // Read back the applied time; fall back to the requested value if unreadable.
                 double appliedTime = time;
@@ -87,6 +101,8 @@ namespace KitWright.Editor.Tools.Builtins
                     {
                         gameObject = go.name,
                         instanceId = ObjectIdCodec.GetSerializableId(director),
+                        playableAsset = asset != null ? asset.name : null,
+                        playableAssetPath = asset != null ? AssetDatabase.GetAssetPath(asset) : null,
                         time = appliedTime,
                         duration,
                         state

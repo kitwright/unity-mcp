@@ -86,15 +86,11 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("EditorOnly", subject.tag);
             Assert.AreEqual(LayerMask.NameToLayer("Ignore Raycast"), subject.layer);
 
-            // An undefined layer is reported as a warning on an otherwise successful call rather than
-            // as a refusal, and it is not applied. Pinned because that is the shape an agent has to
-            // read: success alone does not mean the write happened.
-            // Nothing is asserted about an undefined tag here - this Unity version accepts the
-            // assignment instead of raising the UnityException the tool catches.
+            // A call that applies nothing is a refusal, with the reason in data.warnings.
             var layerBefore = subject.layer;
-            var warned = Ok("set_tag_and_layer", "target", Subject, "layer", "KwLayerNobodyDefined");
+            var refused = Refused("set_tag_and_layer", "target", Subject, "layer", "KwLayerNobodyDefined");
 
-            StringAssert.Contains("KwLayerNobodyDefined", warned["data"]["warnings"].ToString());
+            StringAssert.Contains("KwLayerNobodyDefined", refused["data"]["warnings"].ToString());
             Assert.AreEqual(layerBefore, subject.layer, "An undefined layer must not be applied.");
         }
 

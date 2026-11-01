@@ -19,10 +19,7 @@ namespace KitWright.Editor.Tools.Builtins
             var go = ObjectsHelper.FindTarget(target);
             if (go == null) return ObjectsHelper.NotFound("target", target);
 
-            var prev = Selection.activeGameObject;
-            Selection.activeGameObject = go;
-            view.FrameSelected();
-            Selection.activeGameObject = prev;
+            FrameKeepingSelection(view, go);
             view.Repaint();
 
             return Response.Success($"Framed Scene View on '{go.name}'.", DescribeView(view));
@@ -86,7 +83,26 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success("Scene View camera state.", DescribeView(view));
         }
 
-        private static bool TryGetSceneView(out SceneView view, out object error)
+        // FrameSelected frames what is selected, so the target has to be selected for the call. The whole
+        // selection goes back afterwards: a multi-selection, or an asset picked in the Project window,
+        // has no activeGameObject to restore.
+        internal static void FrameKeepingSelection(SceneView view, GameObject go)
+        {
+            var previous = Selection.objects;
+            try
+            {
+                Selection.activeGameObject = go;
+                view.FrameSelected();
+            }
+            finally
+            {
+                Selection.objects = previous;
+            }
+        }
+
+        internal const string NoSceneViewHint = "No open Scene View window. Open one via Window > General > Scene.";
+
+        internal static bool TryGetSceneView(out SceneView view, out object error)
         {
             error = null;
             view = SceneView.lastActiveSceneView;
@@ -94,7 +110,7 @@ namespace KitWright.Editor.Tools.Builtins
                 view = SceneView.sceneViews[0] as SceneView;
             if (view == null)
             {
-                error = Response.Error("NO_SCENE_VIEW", new { hint = "No open Scene View window. Open one via Window > General > Scene." });
+                error = Response.Error("NO_SCENE_VIEW", new { hint = NoSceneViewHint });
                 return false;
             }
             return true;

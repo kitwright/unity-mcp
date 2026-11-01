@@ -506,7 +506,8 @@ namespace KitWright.Editor.MCP.Server
             var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled " +
                           "and may still finish, so check what it did before running it again.";
 
-            return string.Equals(toolName, "execute_code", StringComparison.Ordinal)
+            return string.Equals(toolName, "execute_code", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(toolName, ToolRegistry.ReplayExecuteCodeToolName, StringComparison.OrdinalIgnoreCase)
                 ? message + " For work that legitimately takes longer, pass timeout_seconds (up to " +
                   $"{ToolRegistry.MaxExecuteCodeTimeoutSeconds}); " +
                   (historyExposed
@@ -693,7 +694,7 @@ namespace KitWright.Editor.MCP.Server
         internal static async Task<MCPResponse> TryCreateBrokerRedeliveryResponseAsync(MCPRequest request, TimeSpan? maxWait = null)
         {
             if (request != null && request.IsBrokerRedelivery &&
-                string.Equals(GetToolName(request), "request_recompile", StringComparison.Ordinal))
+                string.Equals(GetToolName(request), "request_recompile", StringComparison.OrdinalIgnoreCase))
             {
                 await CompilationFunctions.WaitForHotReloadOutcomeAsync(
                     () => !CompilationFunctions.HasPendingExternalSync(), maxWait ?? RecompileRecoveryMaxWait);
@@ -733,12 +734,8 @@ namespace KitWright.Editor.MCP.Server
             }
             else
             {
-                summary =
-                    "Tool '" + (string.IsNullOrEmpty(toolName) ? "unknown" : toolName) +
-                    "' was interrupted by Unity domain reload. Broker mode kept the HTTP request alive, " +
-                    "but the original Unity AppDomain was unloaded before it could send a response. " +
-                    "The tool was not re-run automatically to avoid duplicate side effects. " +
-                    "Call get_reload_recovery_status, then retry only if more work is needed.";
+                var method = string.IsNullOrEmpty(toolName) ? null : ToolRegistry.GetMethod(toolName);
+                summary = DescribeInterruptedCall(toolName, method != null && ToolRegistry.IsReadOnly(method));
                 isError = true;
             }
 
@@ -758,6 +755,22 @@ namespace KitWright.Editor.MCP.Server
                     ["isError"] = isError
                 }
             };
+        }
+
+        // A read-only call saves no pending marker, so the recovery status has nothing to say about it.
+        internal static string DescribeInterruptedCall(string toolName, bool readOnly)
+        {
+            var name = string.IsNullOrEmpty(toolName) ? "unknown" : toolName;
+            if (readOnly)
+            {
+                return "Tool '" + name + "' is read-only and was interrupted by Unity domain reload before it could send a response. " +
+                       "It changed nothing and left no recovery record, so there is no need to call get_reload_recovery_status: just call it again.";
+            }
+
+            return "Tool '" + name + "' was interrupted by Unity domain reload. Broker mode kept the HTTP request alive, " +
+                   "but the original Unity AppDomain was unloaded before it could send a response. " +
+                   "The tool was not re-run automatically to avoid duplicate side effects. " +
+                   "Call get_reload_recovery_status, then retry only if more work is needed.";
         }
 
         private static string GetToolName(MCPRequest request)
@@ -904,16 +917,9 @@ namespace KitWright.Editor.MCP.Server
 
         private (string Summary, MCPToolCallStatus Status) BuildSyncExternalChangesRecoverySummary()
         {
-            var issues = _compilationService.GetCompilationErrors(includeWarnings: true);
-            var hasIssues = !string.Equals(issues, "No compilation errors or warnings detected.", StringComparison.Ordinal) &&
-                            !string.Equals(issues, "No compilation errors detected.", StringComparison.Ordinal);
-
-            if (hasIssues)
-            {
-                return ("External changes were imported, but compilation reported issues.\n" + issues, MCPToolCallStatus.Error);
-            }
-
-            return ("External changes were imported and script compilation finished successfully after domain reload.", MCPToolCallStatus.Success);
+            return CompilationFunctions.DescribeRecoveredCompile(
+                _compilationService.GetCompilationErrors(includeWarnings: true),
+                CompilationFunctions.PendingScriptFileCount());
         }
 
         private void PublishRecoverySummary(
@@ -925,7 +931,9 @@ namespace KitWright.Editor.MCP.Server
             if (string.IsNullOrEmpty(toolName))
                 toolName = "domain_reload";
 
-            DomainReloadHandler.StoreRecoveryInfo(toolName, status.ToString(), summary);
+            if (!DomainReloadHandler.IsRecordedSince(
+                    DomainReloadHandler.GetLastRecoveryInfo(false), toolName, interrupted.ReloadedAt))
+                DomainReloadHandler.StoreRecoveryInfo(toolName, status.ToString(), summary);
             InteractionLog.Add(toolName, status, summary);
 
             if (status == MCPToolCallStatus.Success || status == MCPToolCallStatus.Interrupted)

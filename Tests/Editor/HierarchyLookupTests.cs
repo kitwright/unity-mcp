@@ -263,7 +263,7 @@ namespace KitWright.Editor.Tests
             if (ToolRegistry.GetMethod("create_button") == null)
                 Assert.Ignore("The uGUI tools are compiled out without the com.unity.ugui package.");
 
-            var parent = Make(Unique("KwUiParent"), null, typeof(RectTransform));
+            var parent = Make(Unique("KwUiParent"), null, typeof(Canvas));
             var name = Unique("KwNeverMade");
             var calls = new[]
             {

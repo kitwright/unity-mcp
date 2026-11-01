@@ -39,11 +39,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (go == null)
                 return ObjectsHelper.NotFoundText("name", name);
 
-            Selection.activeGameObject = go;
-            if (SceneView.lastActiveSceneView != null)
-            {
-                SceneView.lastActiveSceneView.FrameSelected();
-            }
+            if (!SceneViewFunctions.TryGetSceneView(out var view, out _))
+                return ToolResultFormatter.Error("NO_SCENE_VIEW", new { hint = SceneViewFunctions.NoSceneViewHint });
+
+            SceneViewFunctions.FrameKeepingSelection(view, go);
             return $"Focused scene view on '{go.name}'";
         }
 
@@ -131,6 +130,11 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Prefix each entry with the HH:mm:ss it was logged (cache/auto only; the Editor console keeps no timestamps).", Required = false)] bool include_timestamps = false,
             [ToolParam("Resume at this entry index counting back from the newest, as reported by a previous call's next_cursor. Cache source only. 0 starts at the newest.", Required = false)] int cursor = 0)
         {
+            if (!TryNormalizeLogType(log_type, out var normalizedLogType))
+                return ToolResultFormatter.Error("INVALID_PARAM",
+                    new { param = "log_type", provided = log_type, expected = "all, log, warning or error" });
+            log_type = normalizedLogType;
+
             count = Mathf.Clamp(count, 1, 200);
             since_seconds = Mathf.Clamp(since_seconds, 0, 86400);
             source = string.IsNullOrEmpty(source) ? "auto" : source.ToLowerInvariant();
@@ -267,6 +271,14 @@ namespace KitWright.Editor.Tools.Builtins
                 foreach (var bit in forcedBits)
                     setFlagMethod.Invoke(null, new object[] { bit, false });
             }
+        }
+
+        // Both read paths filter on these four and treat anything else as "all", so an unknown value
+        // (info, warn) used to return the whole log as if it had been filtered.
+        internal static bool TryNormalizeLogType(string logType, out string normalized)
+        {
+            normalized = string.IsNullOrWhiteSpace(logType) ? "all" : logType.Trim().ToLowerInvariant();
+            return normalized == "all" || normalized == "log" || normalized == "warning" || normalized == "error";
         }
 
         // LogLevelLog, LogLevelWarning, LogLevelError in UnityEditor's console flags.

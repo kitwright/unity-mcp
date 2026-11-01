@@ -217,7 +217,8 @@ namespace KitWright.Editor.Tools.Scripting
 
         internal static string[] GetCodeDomPaths()
         {
-            return FilterForCodeDom(GetLoadedPaths());
+            return FilterForCodeDom(RoslynCscScriptCompiler.GetReferencePaths(
+                GetLoadedPaths(), RoslynCscScriptCompiler.ResolveMonoLibRoot()));
         }
 
         internal static string[] FilterForCodeDom(string[] paths)
@@ -379,7 +380,7 @@ namespace KitWright.Editor.Tools.Scripting
             if (string.IsNullOrEmpty(compilerHostPath) || string.IsNullOrEmpty(cscPath))
                 TryResolvePreferredCompilerHost(out compilerHostPath, out cscPath);
             if (string.IsNullOrEmpty(monoLibRoot))
-                monoLibRoot = FindFirstExisting(GetMonoLibRootCandidates());
+                monoLibRoot = ResolveMonoLibRoot();
 
             if (string.IsNullOrEmpty(compilerHostPath))
             {
@@ -415,7 +416,7 @@ namespace KitWright.Editor.Tools.Scripting
             sb.AppendLine("-unsafe-");
             sb.AppendLine("-out:" + QuoteResponseFileValue(outputPath));
 
-            foreach (var reference in GetReferencePaths(monoLibRoot))
+            foreach (var reference in GetReferencePaths(ScriptCompilerReferences.GetLoadedPaths(), monoLibRoot))
                 sb.AppendLine("-r:" + QuoteResponseFileValue(reference));
 
             sb.AppendLine(QuoteResponseFileValue(sourcePath));
@@ -474,14 +475,20 @@ namespace KitWright.Editor.Tools.Scripting
             "Microsoft.CSharp"
         };
 
-        private static IEnumerable<string> GetReferencePaths(string monoLibRoot)
+        internal static string ResolveMonoLibRoot() => FindFirstExisting(GetMonoLibRootCandidates());
+
+        // The CodeDom fallback takes this list too, so a snippet resolves the same BCL types with either compiler.
+        internal static string[] GetReferencePaths(IEnumerable<string> loadedPaths, string monoLibRoot)
         {
             var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in ScriptCompilerReferences.GetLoadedPaths())
+            foreach (var path in loadedPaths)
                 references[Path.GetFileName(path)] = path;
 
-            foreach (var name in ProfileAssemblies)
-                AddProfileReferenceIfMissing(references, monoLibRoot, name + ".dll");
+            if (!string.IsNullOrEmpty(monoLibRoot))
+            {
+                foreach (var name in ProfileAssemblies)
+                    AddProfileReferenceIfMissing(references, monoLibRoot, name + ".dll");
+            }
 
             return references.Values
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)

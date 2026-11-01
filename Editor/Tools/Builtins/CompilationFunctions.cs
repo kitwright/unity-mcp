@@ -200,8 +200,7 @@ namespace KitWright.Editor.Tools.Builtins
         // A compile that never ran leaves an empty error list, which would read as success.
         internal static string ScriptsNewerThanCompilationError(ScriptChangeState state = null)
         {
-            state = state ?? EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
-            var pending = state.OutOfDateSourceCount + state.UnknownProjectScriptCount;
+            var pending = PendingScriptFileCount(state);
             if (pending == 0)
                 return null;
 
@@ -212,6 +211,32 @@ namespace KitWright.Editor.Tools.Builtins
                     ? "Unity does not compile while playing. Call exit_play_mode, then request_recompile."
                     : "These files are newer than the last compilation. Call request_recompile, then wait_for_compilation(force_refresh=false)."
             });
+        }
+
+        internal static int PendingScriptFileCount(ScriptChangeState state = null)
+        {
+            state = state ?? EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: false);
+            return state.OutOfDateSourceCount + state.UnknownProjectScriptCount;
+        }
+
+        // Written after a domain reload, when the error list is empty whether or not a compile ran:
+        // leaving Play Mode reloads before RecompileAsync starts, and that is not a finished compile.
+        internal static (string Summary, MCPToolCallStatus Status) DescribeRecoveredCompile(string issues, int pendingScriptFiles)
+        {
+            var hasIssues = !string.Equals(issues, "No compilation errors or warnings detected.", StringComparison.Ordinal) &&
+                            !string.Equals(issues, "No compilation errors detected.", StringComparison.Ordinal);
+
+            if (hasIssues)
+                return ("External changes were imported, but compilation reported issues.\n" + issues, MCPToolCallStatus.Error);
+
+            if (pendingScriptFiles > 0)
+            {
+                return ("SCRIPT_CHANGES_NOT_COMPILED: the call was cut short by a domain reload before the recompile ran, " +
+                        $"and {pendingScriptFiles} script file(s) on disk are still newer than the last compilation. " +
+                        "Call request_recompile again.", MCPToolCallStatus.Error);
+            }
+
+            return ("External changes were imported and script compilation finished successfully after domain reload.", MCPToolCallStatus.Success);
         }
 
         [Description("Get the latest Unity script compilation errors from the most recent compilation cycle. " +
@@ -400,23 +425,10 @@ namespace KitWright.Editor.Tools.Builtins
                 return;
             }
 
-            var issues = compilationService.GetCompilationErrors(includeWarnings: true);
-            var hasIssues = !string.Equals(issues, "No compilation errors or warnings detected.", StringComparison.Ordinal) &&
-                            !string.Equals(issues, "No compilation errors detected.", StringComparison.Ordinal);
-
-            if (hasIssues)
-            {
-                DomainReloadHandler.StoreRecoveryInfo(
-                    "request_recompile",
-                    MCPToolCallStatus.Error.ToString(),
-                    "External changes were imported, but compilation reported issues.\n" + issues + playModeNote);
-                return;
-            }
-
-            DomainReloadHandler.StoreRecoveryInfo(
-                "request_recompile",
-                MCPToolCallStatus.Success.ToString(),
-                "External changes were imported and script compilation finished successfully after domain reload." + playModeNote);
+            var outcome = CompilationFunctions.DescribeRecoveredCompile(
+                compilationService.GetCompilationErrors(includeWarnings: true),
+                CompilationFunctions.PendingScriptFileCount());
+            DomainReloadHandler.StoreRecoveryInfo("request_recompile", outcome.Status.ToString(), outcome.Summary + playModeNote);
         }
     }
 }

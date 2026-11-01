@@ -344,31 +344,43 @@ namespace KitWright.Editor.Tools.Builtins
             if (go == null)
                 return ObjectsHelper.NotFound("target", target, find_method);
 
-            Undo.RecordObject(go, $"Set tag/layer of {go.name}");
+            tag = tag?.Trim();
+            layer = layer?.Trim();
+            var hasTag = !string.IsNullOrEmpty(tag);
+            var hasLayer = !string.IsNullOrEmpty(layer);
+            if (!hasTag && !hasLayer)
+                return Response.Error("NO_PARAMS", new { hint = "Provide tag and/or layer." });
+
             var changes = new List<string>();
             var warnings = new List<string>();
 
-            if (!string.IsNullOrEmpty(tag))
+            // Checked against the defined tags rather than caught: assigning an undefined tag
+            // raises UnityException on some versions and simply takes the string on others (6000.3
+            // does), so the catch reported nothing while the tag silently did not stick. The layer
+            // half has always pre-checked, and this is the same warning in the same shape.
+            var tagDefined = hasTag && System.Array.IndexOf(UnityEditorInternal.InternalEditorUtility.tags, tag) >= 0;
+            var layerIndex = hasLayer ? LayerMask.NameToLayer(layer) : -1;
+            if (hasTag && !tagDefined)
+                warnings.Add($"Tag '{tag}' is not defined; use add_tag first.");
+            if (hasLayer && layerIndex < 0)
+                warnings.Add($"Layer '{layer}' is not defined; use add_layer first.");
+
+            // A call that applied nothing is not a success; one that applied one half and could not
+            // apply the other still is, with the warning saying which.
+            if (!tagDefined && layerIndex < 0)
+                return Response.Error("INVALID_PARAM", new { target = go.name, warnings },
+                    "Nothing was applied: neither the tag nor the layer exists.");
+
+            Undo.RecordObject(go, $"Set tag/layer of {go.name}");
+            if (tagDefined)
             {
-                // Checked against the defined tags rather than caught: assigning an undefined tag
-                // raises UnityException on some versions and simply takes the string on others (6000.3
-                // does), so the catch reported nothing while the tag silently did not stick. The layer
-                // half below has always pre-checked, and this is the same warning in the same shape.
-                if (System.Array.IndexOf(UnityEditorInternal.InternalEditorUtility.tags, tag) >= 0)
-                {
-                    go.tag = tag;
-                    changes.Add($"tag={tag}");
-                }
-                else
-                {
-                    warnings.Add($"Tag '{tag}' is not defined; use add_tag first.");
-                }
+                go.tag = tag;
+                changes.Add($"tag={tag}");
             }
-            if (!string.IsNullOrEmpty(layer))
+            if (layerIndex >= 0)
             {
-                int idx = LayerMask.NameToLayer(layer);
-                if (idx >= 0) { go.layer = idx; changes.Add($"layer={layer}"); }
-                else warnings.Add($"Layer '{layer}' is not defined; use add_layer first.");
+                go.layer = layerIndex;
+                changes.Add($"layer={layer}");
             }
 
             return Response.Success($"Updated '{go.name}'.", new

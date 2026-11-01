@@ -5,9 +5,11 @@ using System.Collections.Generic;
 using System.Linq;
 
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
@@ -22,15 +24,26 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Name for the Canvas", Required = false)] string name = "Canvas",
             [ToolParam("Render mode: ScreenSpaceOverlay, ScreenSpaceCamera, WorldSpace", Required = false)] string render_mode = "ScreenSpaceOverlay")
         {
+            if (!TryParseRenderMode(render_mode, out var mode))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "render_mode", provided = render_mode, valid = Enum.GetNames(typeof(RenderMode)) });
+
             var canvasGo = new GameObject(name);
+            StageUtility.PlaceGameObjectInCurrentStage(canvasGo);
             Undo.RegisterCreatedObjectUndo(canvasGo, $"Create Canvas {name}");
 
+            var uiLayer = LayerMask.NameToLayer("UI");
+            if (uiLayer >= 0)
+                canvasGo.layer = uiLayer;
+
             var canvas = canvasGo.AddComponent<Canvas>();
-            switch (render_mode.ToLowerInvariant())
+            canvas.renderMode = mode;
+
+            var note = string.Empty;
+            if (mode == RenderMode.ScreenSpaceCamera)
             {
-                case "screenspacecamera": canvas.renderMode = RenderMode.ScreenSpaceCamera; break;
-                case "worldspace": canvas.renderMode = RenderMode.WorldSpace; break;
-                default: canvas.renderMode = RenderMode.ScreenSpaceOverlay; break;
+                canvas.worldCamera = Camera.main;
+                if (canvas.worldCamera == null)
+                    note = " No Camera.main to assign: a Screen Space - Camera canvas renders as Overlay until Canvas.worldCamera is set.";
             }
 
             canvasGo.AddComponent<CanvasScaler>();
@@ -38,7 +51,14 @@ namespace KitWright.Editor.Tools.Builtins
             EnsureEventSystem();
 
             Selection.activeGameObject = canvasGo;
-            return $"Created Canvas '{name}' with {render_mode} render mode";
+            return $"Created Canvas '{name}' with {mode} render mode.{note}";
+        }
+
+        internal static bool TryParseRenderMode(string value, out RenderMode mode)
+        {
+            mode = RenderMode.ScreenSpaceOverlay;
+            return string.IsNullOrWhiteSpace(value) ||
+                ValueConverter.TryParseEnum(value.Replace("_", "").Replace("-", "").Replace(" ", ""), out mode);
         }
 
         [Description("Create a UI Button")]
@@ -51,9 +71,9 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Anchor preset: 'top-left','top-center','top-right','middle-left','center','middle-right','bottom-left','bottom-center','bottom-right','stretch-horizontal','stretch-vertical','stretch-full'", Required = false)] string anchor = null,
             [ToolParam("Pivot as 'x,y' (0-1)", Required = false)] string pivot = null)
         {
-            var parent = FindParent(parent_name);
+            var parent = ResolveParent(parent_name, out var parentError);
             if (parent == null)
-                return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
+                return parentError;
 
             var invalidLayout = CheckLayout(size, position, pivot, anchor);
             if (invalidLayout != null)
@@ -64,7 +84,7 @@ namespace KitWright.Editor.Tools.Builtins
             buttonGo.transform.SetParent(parent, false);
 
             var rect = buttonGo.AddComponent<RectTransform>();
-            rect.sizeDelta = ValueConverter.ParseVector2(size, Vector2.zero);
+            rect.sizeDelta = ValueConverter.ParseVector2(size, new Vector2(160, 40));
             rect.anchoredPosition = ValueConverter.ParseVector2(position, Vector2.zero);
             ApplyAnchorPreset(rect, anchor, pivot);
 
@@ -87,6 +107,9 @@ namespace KitWright.Editor.Tools.Builtins
             textComp.fontSize = 16;
             textComp.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
+            SetLayerRecursively(buttonGo, parent.gameObject.layer);
+            EnsureEventSystem();
+
             Selection.activeGameObject = buttonGo;
             return $"Created UI Button '{name}' with text '{text}'";
         }
@@ -102,13 +125,13 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Anchor preset: 'top-left','top-center','top-right','middle-left','center','middle-right','bottom-left','bottom-center','bottom-right','stretch-horizontal','stretch-vertical','stretch-full'", Required = false)] string anchor = null,
             [ToolParam("Pivot as 'x,y' (0-1)", Required = false)] string pivot = null)
         {
-            var parent = FindParent(parent_name);
+            var parent = ResolveParent(parent_name, out var parentError);
             if (parent == null)
-                return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
+                return parentError;
 
             // Before the GameObject exists: failing after it is created leaves an orphan behind.
-            if (!ValueConverter.TryParseInt(font_size, out var fontSize))
-                return ToolResultFormatter.Error("INVALID_FONT_SIZE", new { font_size });
+            if (!ValueConverter.TryParseInt(font_size, out var fontSize) || fontSize < MinFontSize || fontSize > MaxFontSize)
+                return ToolResultFormatter.Error("INVALID_FONT_SIZE", new { font_size, valid = $"an integer from {MinFontSize} to {MaxFontSize}" });
 
             var invalidLayout = CheckLayout(size, position, pivot, anchor);
             if (invalidLayout != null)
@@ -117,9 +140,10 @@ namespace KitWright.Editor.Tools.Builtins
             var textGo = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(textGo, $"Create Text {name}");
             textGo.transform.SetParent(parent, false);
+            textGo.layer = parent.gameObject.layer;
 
             var rect = textGo.AddComponent<RectTransform>();
-            rect.sizeDelta = ValueConverter.ParseVector2(size, Vector2.zero);
+            rect.sizeDelta = ValueConverter.ParseVector2(size, new Vector2(300, 60));
             rect.anchoredPosition = ValueConverter.ParseVector2(position, Vector2.zero);
             ApplyAnchorPreset(rect, anchor, pivot);
 
@@ -144,18 +168,20 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Anchor preset: 'top-left','top-center','top-right','middle-left','center','middle-right','bottom-left','bottom-center','bottom-right','stretch-horizontal','stretch-vertical','stretch-full'", Required = false)] string anchor = null,
             [ToolParam("Pivot as 'x,y' (0-1)", Required = false)] string pivot = null)
         {
-            var parent = FindParent(parent_name);
+            var parent = ResolveParent(parent_name, out var parentError);
             if (parent == null)
-                return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
+                return parentError;
 
             if (!ValueConverter.TryParseColor(color, Color.white, out var imageColor, out var colorError))
                 return ToolResultFormatter.Error("INVALID_PARAM", new { param = "color", provided = color, detail = colorError });
+            if (!IsUnitColor(imageColor))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "color", provided = color, detail = UnitColorDetail(imageColor) });
 
             var invalidLayout = CheckLayout(size, position, pivot, anchor);
             if (invalidLayout != null)
                 return invalidLayout;
 
-            var imageGo = CreateImageObject(parent, name, ValueConverter.ParseVector2(size, Vector2.zero), ValueConverter.ParseVector2(position, Vector2.zero), anchor, pivot);
+            var imageGo = CreateImageObject(parent, name, ValueConverter.ParseVector2(size, new Vector2(100, 100)), ValueConverter.ParseVector2(position, Vector2.zero), anchor, pivot);
             var image = imageGo.GetComponent<Image>();
             image.color = imageColor;
 
@@ -180,9 +206,9 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Anchor preset: 'top-left','top-center','top-right','middle-left','center','middle-right','bottom-left','bottom-center','bottom-right','stretch-horizontal','stretch-vertical','stretch-full'", Required = false)] string anchor = null,
             [ToolParam("Pivot as 'x,y' (0-1)", Required = false)] string pivot = null)
         {
-            var parent = FindParent(parent_name);
+            var parent = ResolveParent(parent_name, out var parentError);
             if (parent == null)
-                return ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name, hint = "Create a Canvas first." });
+                return parentError;
 
             var invalidLayout = CheckLayout(size, position, pivot, anchor);
             if (invalidLayout != null)
@@ -214,9 +240,13 @@ namespace KitWright.Editor.Tools.Builtins
             if (!string.IsNullOrWhiteSpace(name))
                 go.name = name;
             go.transform.SetParent(parent, false);
+            SetLayerRecursively(go, parent.gameObject.layer);
             EnsureEventSystem();
 
             var rect = go.GetComponent<RectTransform>();
+            // On stretch anchors (a panel) sizeDelta is a margin added to the parent's size, not a size.
+            if (string.IsNullOrEmpty(anchor) && !string.IsNullOrEmpty(size) && rect.anchorMin != rect.anchorMax)
+                ApplyAnchorPreset(rect, "center", null);
             rect.anchoredPosition = ValueConverter.ParseVector2(position, Vector2.zero);
             if (!string.IsNullOrEmpty(size))
                 rect.sizeDelta = ValueConverter.ParseVector2(size, rect.sizeDelta);
@@ -250,9 +280,34 @@ namespace KitWright.Editor.Tools.Builtins
             if (UnityEngine.Object.FindAnyObjectByType<EventSystem>() != null) return;
 
             var esGo = new GameObject("EventSystem");
+            StageUtility.PlaceGameObjectInCurrentStage(esGo);
             esGo.AddComponent<EventSystem>();
-            esGo.AddComponent<StandaloneInputModule>();
+            ObjectFactory.AddComponent(esGo, ChooseInputModuleType(ActiveInputHandler(), TypeResolver.Resolve(InputSystemModuleTypeName)));
             Undo.RegisterCreatedObjectUndo(esGo, "Create EventSystem");
+        }
+
+        private const string InputSystemModuleTypeName = "UnityEngine.InputSystem.UI.InputSystemUIInputModule";
+
+        // StandaloneInputModule reads UnityEngine.Input, which throws every frame once the project's
+        // Active Input Handling excludes the old Input Manager. Unity's own menu picks the same way.
+        internal static Type ChooseInputModuleType(int activeInputHandler, Type inputSystemModule) =>
+            activeInputHandler != 0 && inputSystemModule != null ? inputSystemModule : typeof(StandaloneInputModule);
+
+        // 0 = Input Manager (old), 1 = Input System Package (new), 2 = both.
+        private static int ActiveInputHandler()
+        {
+            var settings = AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/ProjectSettings.asset");
+            if (settings == null || settings.Length == 0 || settings[0] == null)
+                return 0;
+
+            using (var serialized = new SerializedObject(settings[0]))
+                return serialized.FindProperty("activeInputHandler")?.intValue ?? 0;
+        }
+
+        private static void SetLayerRecursively(GameObject root, int layer)
+        {
+            foreach (var t in root.GetComponentsInChildren<Transform>(true))
+                t.gameObject.layer = layer;
         }
 
         // Shared sprite-placement helper for CreateImage.
@@ -261,6 +316,7 @@ namespace KitWright.Editor.Tools.Builtins
             var imageGo = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(imageGo, $"Create Image {name}");
             imageGo.transform.SetParent(parent, false);
+            imageGo.layer = parent.gameObject.layer;
 
             var rect = imageGo.AddComponent<RectTransform>();
             rect.sizeDelta = size;
@@ -273,7 +329,9 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Set RectTransform layout on a UI element: anchor preset, anchored position, size, and pivot. " +
                      "anchor presets: top-left/top-center/top-right/middle-left/center/middle-right/bottom-left/bottom-center/bottom-right/stretch-horizontal/stretch-vertical/stretch-full. " +
-                     "Any omitted value is kept.")]
+                     "Any omitted value is kept, with two exceptions: an anchor preset also sets the pivot to the preset's own " +
+                     "(pass pivot to override it), and the stretch-* presets reset the offsets of the stretched axis, " +
+                     "so its width or height is lost. At least one of anchor, anchored_position, size, pivot is required.")]
         public static string SetRectTransform(
             [ToolParam("UI GameObject name, hierarchy path, or instance ID")] string target,
             [ToolParam("Anchor preset (see description)", Required = false)] string anchor = null,
@@ -292,6 +350,10 @@ namespace KitWright.Editor.Tools.Builtins
             var invalidLayout = CheckLayout(size, anchored_position, pivot, anchor, "anchored_position");
             if (invalidLayout != null)
                 return invalidLayout;
+
+            if (string.IsNullOrEmpty(anchor) && string.IsNullOrEmpty(anchored_position) && string.IsNullOrEmpty(size) && string.IsNullOrEmpty(pivot))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "anchor/anchored_position/size/pivot" },
+                    "Give at least one of anchor, anchored_position, size, pivot.");
 
             Undo.RecordObject(rect, $"Set RectTransform of {go.name}");
 
@@ -322,12 +384,36 @@ namespace KitWright.Editor.Tools.Builtins
                 ? null
                 : ToolResultFormatter.Error("INVALID_PARAM", new { param = "anchor", provided = anchor, valid = AnchorPresets });
 
+        // Finite is not enough: 3e38 passes, and the rect's corner math overflows to Infinity.
+        private const float MaxRectValue = 1e6f;
+        private const int MinFontSize = 1;
+        private const int MaxFontSize = 1000;
+
         private static string CheckVector2(string param, string value)
         {
-            string detail = null;
-            if (string.IsNullOrEmpty(value) || ValueConverter.TryParseVector2(value, out _, out detail))
+            if (string.IsNullOrEmpty(value))
                 return null;
+
+            if (ValueConverter.TryParseVector2(value, out var parsed, out var detail))
+            {
+                if (Mathf.Abs(parsed.x) <= MaxRectValue && Mathf.Abs(parsed.y) <= MaxRectValue)
+                    return null;
+                detail = $"components must be within +/-{MaxRectValue:0}";
+            }
             return ToolResultFormatter.Error("INVALID_PARAM", new { param, provided = value, expected = "Vector2 'x,y'", detail });
+        }
+
+        internal static bool IsUnitColor(Color color) =>
+            color.r >= 0f && color.r <= 1f && color.g >= 0f && color.g <= 1f &&
+            color.b >= 0f && color.b <= 1f && color.a >= 0f && color.a <= 1f;
+
+        internal static string UnitColorDetail(Color color)
+        {
+            var max = Mathf.Max(color.r, Mathf.Max(color.g, color.b));
+            var min = Mathf.Min(color.r, Mathf.Min(color.g, color.b));
+            return max > 1f && min >= 0f && max <= 255f
+                ? "each component must be within 0-1 (0-255 values are not accepted)"
+                : "each component must be within 0-1";
         }
 
         internal static void ApplyAnchorPreset(RectTransform rect, string anchor, string pivot)
@@ -415,10 +501,35 @@ namespace KitWright.Editor.Tools.Builtins
                 rect.pivot = ValueConverter.ParseVector2(pivot, Vector2.zero);
         }
 
-        private static Transform FindParent(string name)
+        internal static string ParentNotFoundHint(bool canvasToolExposed) =>
+            canvasToolExposed ? "Create a Canvas first." : "Pass an existing Canvas or a UI element inside one as parent_name.";
+
+        private static Transform ResolveParent(string name, out string error)
         {
-            var go = ObjectsHelper.FindTarget(name);
-            return go?.transform;
+            error = null;
+            var parent = ObjectsHelper.FindTarget(name)?.transform;
+            if (parent == null)
+            {
+                error = ToolResultFormatter.Error("PARENT_NOT_FOUND", new { parent_name = name, hint = ParentNotFoundHint(MCPToolExportPolicy.IsToolExposed("create_canvas")) });
+                return null;
+            }
+
+            if (parent.GetComponentInParent<Canvas>(true) == null)
+            {
+                error = ToolResultFormatter.Error("NOT_UNDER_CANVAS", new { parent_name = name },
+                    "A UI element only renders under a Canvas: pass a Canvas or a UI element inside one as parent_name" +
+                    (MCPToolExportPolicy.IsToolExposed("create_canvas") ? ", or make one with create_canvas." : "."));
+                return null;
+            }
+
+            if (!(parent is RectTransform))
+            {
+                error = ToolResultFormatter.Error("NO_RECT_TRANSFORM", new { parent_name = name },
+                    "The parent has no RectTransform, so a UI element cannot be laid out under it.");
+                return null;
+            }
+
+            return parent;
         }
 
         [Description("Diagnose what UI (or physics) elements a click/tap at a screen point would hit, using the live " +

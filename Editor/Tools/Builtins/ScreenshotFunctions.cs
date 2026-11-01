@@ -70,7 +70,7 @@ namespace KitWright.Editor.Tools.Builtins
                 var directory = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(directory))
                     Directory.CreateDirectory(directory);
-                File.WriteAllBytes(path, pngBytes);
+                AtomicFile.WriteAllBytes(path, pngBytes);
                 savedPath = path;
                 return true;
             }

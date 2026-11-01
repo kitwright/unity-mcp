@@ -107,10 +107,10 @@ namespace KitWright.Editor.Tests
         /// <summary>
         /// The schema is what the client obeys, so an argument listed under `required` there has to be
         /// one the tool genuinely will not run without. Some are enforced by the invoker and answer
-        /// MISSING_PARAM; some carry a compile-time default and are guarded in the body instead, which
-        /// is equally fine. What is not fine is a schema that demands an argument the tool quietly
-        /// substitutes a default for: the client is made to always send it, and the one time it does
-        /// not, it gets a plausible answer computed from something it never asked for.
+        /// MISSING_PARAM. ToolSchemaBuilder no longer lists a parameter with a compile-time default as
+        /// required, so what is left here is a safety net: a schema that demands an argument the tool
+        /// quietly substitutes a default for would make the client always send it, and the one time it
+        /// does not, it gets a plausible answer computed from something it never asked for.
         /// </summary>
         [UnityTest]
         public IEnumerator EveryToolThatDeclaresARequiredArgumentRefusesACallWithoutIt()

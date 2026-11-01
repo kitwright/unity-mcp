@@ -114,9 +114,9 @@ namespace KitWright.Editor.Tools.Builtins
                      "Pass `properties` as a JSON object: {\"mass\": 5, \"isKinematic\": true, \"material\": {\"fileID\": 12345}}. " +
                      "Returns per-field success so partial failures are diagnosable.")]
         public static object SetComponentProperties(
+            [ToolParam("JSON object of property→value pairs")] string properties,
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
             [ToolParam("Component type name (omit if using component_instance_id)", Required = false)] string component = null,
-            [ToolParam("JSON object of property→value pairs")] string properties = null,
             [ToolParam("Component instanceId (alternative to target+component)", Required = false)] string component_instance_id = null,
             [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {

@@ -2,6 +2,7 @@
 using System;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.Services;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -80,19 +81,15 @@ namespace KitWright.Editor.Tools.Builtins
             return await Outcome(Client.Remove(name), $"removal of '{name}'");
         }
 
-        [Description("List all installed packages")]
+        [Description("List the packages the project depends on directly: the whole of Packages/manifest.json. " +
+                     "Transitive dependencies and built-in modules are not in that file.")]
         [ReadOnlyTool]
-        public static string ListPackages()
-        {
-            var manifestPath = "Packages/manifest.json";
-            if (System.IO.File.Exists(manifestPath))
-            {
-                var content = System.IO.File.ReadAllText(manifestPath);
-                if (content.Length > 5000)
-                    content = content.Substring(0, 5000) + "\n... (truncated)";
-                return $"Package manifest:\n{content}";
-            }
-            return "Package listing initiated. Check Package Manager window.";
-        }
+        public static string ListPackages() =>
+            ListManifest(System.IO.Path.Combine(ApplicationPaths.ProjectRoot, "Packages", "manifest.json"));
+
+        internal static string ListManifest(string manifestPath) =>
+            System.IO.File.Exists(manifestPath)
+                ? $"Package manifest:\n{System.IO.File.ReadAllText(manifestPath)}"
+                : ToolResultFormatter.Error("MANIFEST_NOT_FOUND", new { path = "Packages/manifest.json" });
     }
 }

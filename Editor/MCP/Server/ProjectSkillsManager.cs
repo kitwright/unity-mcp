@@ -947,9 +947,22 @@ $@"{ManagedMarker}
                 : block;
         }
 
-        private static string BuildCursorRuleContent(SkillDefinition skill)
+        internal static string BuildCursorRuleContent(SkillDefinition skill)
         {
             var alwaysApply = skill.IsBuiltIn ? "true" : "false";
+
+            if (!string.IsNullOrEmpty(skill.Body))
+                return
+$@"---
+description: {PackageSkillCatalog.YamlScalar(skill.Description)}
+alwaysApply: {alwaysApply}
+version: {skill.Version}
+---
+{ManagedMarker}
+{BuildSkillVersionMarker(skill)}
+
+{skill.Body}
+";
 
             return
 $@"---
@@ -977,7 +990,12 @@ version: {skill.Version}
 ";
         }
 
-        private static string BuildSkillDocument(SkillDefinition skill, SkillPlatform platform)
+        private static string ExtraFrontMatterLines(SkillDefinition skill)
+        {
+            return string.IsNullOrEmpty(skill.ExtraFrontMatter) ? string.Empty : skill.ExtraFrontMatter + "\n";
+        }
+
+        internal static string BuildSkillDocument(SkillDefinition skill, SkillPlatform platform)
         {
             if (string.Equals(skill.Id, "unity-mcp-workflow", StringComparison.OrdinalIgnoreCase))
                 return BuildUnityMcpWorkflowSkillDocument(skill, platform);
@@ -986,10 +1004,10 @@ version: {skill.Version}
                 return
 $@"---
 name: {skill.Id}
-description: {skill.Description}
+description: {PackageSkillCatalog.YamlScalar(skill.Description)}
 version: {skill.Version}
 platform: {platform.ToString().ToLowerInvariant()}
----
+{ExtraFrontMatterLines(skill)}---
 {ManagedMarker}
 {BuildSkillVersionMarker(skill)}
 
@@ -1367,7 +1385,7 @@ $@"
 
         internal sealed class SkillDefinition
         {
-            public SkillDefinition(string id, string version, string title, string description, bool isBuiltIn, string whenToUse, IReadOnlyList<string> rules, string body = null)
+            public SkillDefinition(string id, string version, string title, string description, bool isBuiltIn, string whenToUse, IReadOnlyList<string> rules, string body = null, string extraFrontMatter = null)
             {
                 Id = id;
                 Version = version;
@@ -1377,6 +1395,7 @@ $@"
                 WhenToUse = whenToUse;
                 Rules = rules ?? Array.Empty<string>();
                 Body = body;
+                ExtraFrontMatter = extraFrontMatter;
             }
 
             public string Id { get; }
@@ -1390,6 +1409,10 @@ $@"
             /// <summary>Ready-made skill text. When set, it is written verbatim instead of
             /// generating a document from WhenToUse and Rules.</summary>
             public string Body { get; }
+
+            /// <summary>Front matter lines the skill's author wrote beyond name, description, version and
+            /// platform, copied into the installed SKILL.md as they were.</summary>
+            public string ExtraFrontMatter { get; }
         }
 
         private sealed class ExpectedSkillVersionFile

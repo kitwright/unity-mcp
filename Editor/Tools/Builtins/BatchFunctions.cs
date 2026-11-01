@@ -90,8 +90,13 @@ namespace KitWright.Editor.Tools.Builtins
                     // This runs its own invoker, so MCPExecutionBridge never sees the sub-commands:
                     // without this check a batch reaches tools that a direct call answers with
                     // TOOL_NOT_EXPOSED. Unknown names answer UNKNOWN_TOOL first, as a direct call does.
+                    // The budget, the clock and the undo group are this batch's: an inner batch would
+                    // hide its commands from the budget and start a clock of its own.
                     string refusal = null;
-                    if (ToolRegistry.GetMethod(name) == null && !ToolRegistry.IsManualTool(name))
+                    if (string.Equals(name, ToolRegistry.BatchToolName, System.StringComparison.OrdinalIgnoreCase))
+                        refusal = ToolResultFormatter.Error("BATCH_NESTED", new { tool = name },
+                            "batch_execute cannot run inside batch_execute. Put the inner commands in this batch's own commands array (up to 100).");
+                    else if (ToolRegistry.GetMethod(name) == null && !ToolRegistry.IsManualTool(name))
                         refusal = ToolResultFormatter.Error("UNKNOWN_TOOL", new { tool = name });
                     else if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
                         refusal = MCPExecutionBridge.WithheldToolError(

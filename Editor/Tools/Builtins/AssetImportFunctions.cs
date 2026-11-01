@@ -118,16 +118,16 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        [Description("Apply import settings to an asset. settings_json is a JSON object of field->value using the same field " +
-                     "names get_asset_import_settings returns for the resolved importer type. " +
-                     "TextureImporter: maxTextureSize, textureCompression(enum name), filterMode, wrapMode, sRGBTexture, mipmapEnabled, isReadable. " +
+        [Description("Apply import settings to an asset. settings_json is a JSON object of field->value. Only the fields listed below can be set: " +
+                     "get_asset_import_settings returns more (textureType, alphaSource, defaultPlatform, importCameras, ...), and those read-only fields are refused as unknown. " +
+                     "TextureImporter: maxTextureSize (a power of two from 32 to 16384), textureCompression(enum name), filterMode, wrapMode, sRGBTexture, mipmapEnabled, isReadable. " +
                      "AudioImporter: forceToMono, preloadAudioData, loadInBackground, loadType(enum name), compressionFormat(enum name), quality. " +
                      "ModelImporter: globalScale, isReadable, meshCompression(enum name), importBlendShapes. " +
                      "The complete request is validated before any importer field is changed; unknown or malformed fields fail the call without a partial reimport. " +
                      "Returns each applied field read back FROM the importer after reimport so postprocessor overrides are visible.")]
         public static object SetAssetImportSettings(
             [ToolParam("Project-relative asset path, e.g. 'Assets/Art/icon.png'")] string path,
-            [ToolParam("JSON object of field->value to apply (same field names get_asset_import_settings returns for this importer type)")] string settings_json)
+            [ToolParam("JSON object of field->value to apply; only the writable fields named in the tool description")] string settings_json)
         {
             try
             {
@@ -238,7 +238,7 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     switch (name)
                     {
-                        case "maxTextureSize": valid = TryGetInt(token, out var size) && size > 0; break;
+                        case "maxTextureSize": valid = IsWholeNumber(token) && TryGetInt(token, out var size) && IsValidMaxTextureSize(size); break;
                         case "textureCompression": valid = TryParseEnum<TextureImporterCompression>(token, out _); break;
                         case "filterMode": valid = TryParseEnum<FilterMode>(token, out _); break;
                         case "wrapMode": valid = TryParseEnum<TextureWrapMode>(token, out _); break;
@@ -283,6 +283,9 @@ namespace KitWright.Editor.Tools.Builtins
 
             return errors;
         }
+
+        internal static bool IsValidMaxTextureSize(int size) =>
+            size >= 32 && size <= 16384 && (size & (size - 1)) == 0;
 
         private static void ApplyTexture(TextureImporter ti, JObject obj, List<string> applied, List<string> skipped)
         {
@@ -433,6 +436,9 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // -------- JToken coercion helpers --------
+
+        private static bool IsWholeNumber(JToken t) =>
+            t.Type == JTokenType.Integer || (t.Type == JTokenType.Float && t.Value<double>() % 1 == 0);
 
         internal static bool TryGetInt(JToken t, out int v)
         {

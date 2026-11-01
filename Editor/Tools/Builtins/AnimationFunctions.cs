@@ -192,7 +192,9 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Play a specific Animator state by name, e.g. to drive UI or a character to a known visual state " +
                      "before taking a screenshot. In Edit Mode the animator is force-evaluated once so the pose applies " +
-                     "without entering Play Mode. Runtime-only state: not undoable.")]
+                     "without entering Play Mode; there the pose is written into the scene objects the clips animate, " +
+                     "so it is registered with Undo and the scene is marked modified. In Play Mode it is runtime-only " +
+                     "state that resets when Play Mode exits.")]
         public static object PlayAnimatorState(
             [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
             [ToolParam("State name as defined in the Animator Controller (e.g. 'Idle' or 'Base Layer.Idle')")] string state,
@@ -235,11 +237,20 @@ namespace KitWright.Editor.Tools.Builtins
             if (!found)
                 return Response.Error("STATE_NOT_FOUND", new { state, layer, hint = "Check the state name in the Animator Controller (short name or 'LayerName.StateName')." });
 
+            var editMode = !EditorApplication.isPlaying;
+            if (editMode)
+                Undo.RegisterFullObjectHierarchyUndo(animator.gameObject, "Play Animator State");
+
             animator.Play(hash, resolvedLayer, normalized_time);
 
             // In Edit Mode the animator doesn't tick on its own -- evaluate once so the pose is visible immediately.
-            if (!EditorApplication.isPlaying)
+            // The pose lands in serialized scene data, so the scene has to show as modified.
+            if (editMode)
+            {
                 animator.Update(0f);
+                if (animator.gameObject.scene.IsValid())
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(animator.gameObject.scene);
+            }
 
             return Response.Success($"Playing state '{state}' on '{animator.gameObject.name}' (layer {layer}).", new
             {
@@ -247,7 +258,9 @@ namespace KitWright.Editor.Tools.Builtins
                 state,
                 layer = resolvedLayer,
                 requestedLayer = layer
-            });
+            }, editMode
+                ? "Edit Mode: the pose was written into the scene objects the clips animate. The scene is marked modified; Undo restores the previous pose."
+                : null);
         }
 
         [Description("Add a parameter to an Animator Controller asset. Parameters are what transitions test, so add " +

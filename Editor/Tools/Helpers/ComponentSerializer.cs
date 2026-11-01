@@ -426,6 +426,7 @@ namespace KitWright.Editor.Tools.Helpers
 
             string instanceId = null;
             string assetPath = null;
+            string subAsset = null;
 
             if (value.Type == JTokenType.Integer)
             {
@@ -436,17 +437,25 @@ namespace KitWright.Editor.Tools.Helpers
                 if (obj.TryGetValue("fileID", out var fid)) instanceId = fid.ToString();
                 else if (obj.TryGetValue("instanceId", out var iid)) instanceId = iid.ToString();
                 if (obj.TryGetValue("assetPath", out var ap)) assetPath = ap.ToObject<string>();
+                if (obj.TryGetValue("subAsset", out var sub)) subAsset = sub.ToObject<string>();
             }
             else if (value.Type == JTokenType.String)
             {
                 assetPath = value.ToObject<string>();
             }
 
+            // p.type looks like "PPtr<$Rigidbody>".
+            var wanted = ExtractPPtrTypeName(p.type);
             UnityEngine.Object resolved = null;
             if (!string.IsNullOrWhiteSpace(instanceId))
                 resolved = ObjectIdCodec.ToObject(instanceId);
             if (resolved == null && !string.IsNullOrEmpty(assetPath))
-                resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            {
+                if (string.IsNullOrEmpty(subAsset))
+                    resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                else if (!TryPickSubAsset(assetPath, subAsset, a => string.IsNullOrEmpty(wanted) || IsA(a.GetType(), wanted), false, out resolved, out error))
+                    return false;
+            }
 
             if (resolved == null)
             {
@@ -457,8 +466,7 @@ namespace KitWright.Editor.Tools.Helpers
             }
 
             // Editor drag-drop auto-extracts a component when a GameObject is dropped on a
-            // component-typed field. p.type looks like "PPtr<$Rigidbody>".
-            var wanted = ExtractPPtrTypeName(p.type);
+            // component-typed field.
             if (resolved is GameObject droppedGo)
             {
                 if (!string.IsNullOrEmpty(wanted) && wanted != "GameObject")
@@ -471,7 +479,9 @@ namespace KitWright.Editor.Tools.Helpers
             else if (!string.IsNullOrEmpty(assetPath) && !string.IsNullOrEmpty(wanted) && !IsA(resolved.GetType(), wanted))
             {
                 // A .png's main asset is its Texture2D; a Sprite field takes the Sprite under it.
-                resolved = AssetDatabase.LoadAllAssetsAtPath(assetPath).FirstOrDefault(a => a != null && IsA(a.GetType(), wanted)) ?? resolved;
+                if (!TryPickSubAsset(assetPath, subAsset, a => IsA(a.GetType(), wanted), wanted == "Sprite", out var picked, out error))
+                    return false;
+                resolved = picked ?? resolved;
             }
 
             // Unity writes a reference of the wrong type as null without a word.
@@ -489,6 +499,35 @@ namespace KitWright.Editor.Tools.Helpers
             for (; type != null; type = type.BaseType)
                 if (type.Name == name) return true;
             return false;
+        }
+
+        // A sliced sprite sheet holds many Sprites under one path; taking the first wrote an arbitrary
+        // frame and reported success. picked stays null when nothing matches and no name was asked for.
+        internal static bool TryPickSubAsset(string assetPath, string subAsset, Func<UnityEngine.Object, bool> matches,
+            bool refuseAmbiguous, out UnityEngine.Object picked, out string error)
+        {
+            picked = null;
+            error = null;
+            var candidates = AssetDatabase.LoadAllAssetsAtPath(assetPath).Where(a => a != null && matches(a)).ToArray();
+            var names = string.Join(", ", candidates.Select(a => a.name).Take(30));
+
+            if (!string.IsNullOrEmpty(subAsset))
+            {
+                picked = candidates.FirstOrDefault(a => a.name == subAsset);
+                if (picked == null)
+                    error = $"'{assetPath}' has no matching sub-asset named '{subAsset}'. Available: {names}.";
+                return picked != null;
+            }
+
+            if (refuseAmbiguous && candidates.Length > 1)
+            {
+                error = $"'{assetPath}' holds {candidates.Length} matching sub-assets ({names}); " +
+                        "name one with {\"assetPath\": \"...\", \"subAsset\": \"<name>\"}.";
+                return false;
+            }
+
+            picked = candidates.FirstOrDefault();
+            return true;
         }
 
         internal static string ExtractPPtrTypeName(string propType)
@@ -634,8 +673,18 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     // Same reasoning as the SerializedProperty path above: a .png's main asset is its
                     // Texture2D, so a Sprite-typed field needs the sub-asset search, not a typed load.
-                    var loaded = AssetDatabase.LoadAssetAtPath(path, targetType)
-                        ?? AssetDatabase.LoadAllAssetsAtPath(path).FirstOrDefault(a => a != null && targetType.IsInstanceOfType(a));
+                    var subAsset = (token as JObject)?["subAsset"]?.ToObject<string>();
+                    UnityEngine.Object loaded;
+                    if (!string.IsNullOrEmpty(subAsset) || targetType == typeof(Sprite))
+                    {
+                        if (!TryPickSubAsset(path, subAsset, a => targetType.IsInstanceOfType(a), targetType == typeof(Sprite), out loaded, out var pickError))
+                            throw new ArgumentException(pickError);
+                    }
+                    else
+                    {
+                        loaded = AssetDatabase.LoadAssetAtPath(path, targetType)
+                            ?? AssetDatabase.LoadAllAssetsAtPath(path).FirstOrDefault(a => a != null && targetType.IsInstanceOfType(a));
+                    }
                     return loaded ?? throw new ArgumentException($"No {targetType.Name} at '{path}'.");
                 }
             }

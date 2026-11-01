@@ -4,7 +4,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -148,19 +147,24 @@ namespace KitWright.Editor.MCP.Server
                 return false;
 
             // The text is edited, not the parsed tree written back: the codec reads no comments or
-            // trailing commas, so serializing what it did parse dropped every key after one.
-            var updated = json;
-            foreach (var url in stale.Distinct())
-            {
-                var literal = Newtonsoft.Json.JsonConvert.ToString(url);
-                if (!updated.Contains(literal))
-                {
-                    Debug.LogWarning($"[KitWright MCP Server] Config auto-rewrite left {configPath} alone: its URL is written in a form this rewrite cannot replace in place.");
-                    return false;
-                }
+            // trailing commas, so serializing what it did parse dropped every key after one. Only the
+            // entry's own URL literals change: the same URL in another entry or in a comment is not ours.
+            var urlSpans = JsonCodec.FindStringValues(json, rootKey, serverName)
+                .Where(span => ClientConfigPanel.UrlProperties.Contains(span.Key))
+                .Select(span => (Start: span.Start, Length: span.Length, Text: json.Substring(span.Start, span.Length)))
+                .ToList();
 
-                updated = updated.Replace(literal, Newtonsoft.Json.JsonConvert.ToString(serverUrl));
+            var staleLiterals = stale.Distinct().Select(staleUrl => Newtonsoft.Json.JsonConvert.ToString(staleUrl)).ToList();
+            if (staleLiterals.Any(literal => !urlSpans.Any(span => span.Text == literal)))
+            {
+                Debug.LogWarning($"[KitWright MCP Server] Config auto-rewrite left {configPath} alone: its URL is written in a form this rewrite cannot replace in place.");
+                return false;
             }
+
+            var replacement = Newtonsoft.Json.JsonConvert.ToString(serverUrl);
+            var updated = json;
+            foreach (var target in urlSpans.Where(span => staleLiterals.Contains(span.Text)).OrderByDescending(span => span.Start))
+                updated = updated.Substring(0, target.Start) + replacement + updated.Substring(target.Start + target.Length);
 
             return WriteIfUnchanged(configPath, json, updated);
         }
@@ -175,10 +179,10 @@ namespace KitWright.Editor.MCP.Server
             var section = content.Substring(start, end - start);
             if (leaveOtherProjectsAlone)
             {
-                var current = Regex.Match(section, "url\\s*=\\s*\"([^\"]*)\"");
-                if (current.Success && TargetsAnotherProject(current.Groups[1].Value))
+                var current = ClientConfigPanel.TomlUrlValue(section);
+                if (current != null && TargetsAnotherProject(current))
                 {
-                    WarnLeftAlone(path, current.Groups[1].Value);
+                    WarnLeftAlone(path, current);
                     return false;
                 }
             }

@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -28,14 +29,14 @@ namespace KitWright.Editor.Tools.Builtins
 
             var sceneArray = string.IsNullOrWhiteSpace(scenes)
                 ? EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray()
-                : scenes.Split(',').Select(s => s.Trim()).Where(s => s.Length > 0).ToArray();
+                : scenes.Split(',').Select(NormalizeScenePath).Where(s => s.Length > 0).ToArray();
 
             if (sceneArray.Length == 0)
                 return Response.Error("NO_SCENES", new { message = "No scenes to build. Enable scenes in Build Settings or pass the scenes parameter." });
 
-            var missing = sceneArray.Where(p => !System.IO.File.Exists(p)).ToArray();
+            var missing = sceneArray.Where(p => !SceneExists(p)).ToArray();
             if (missing.Length > 0)
-                return Response.Error("SCENE_NOT_FOUND", new { missing });
+                return Response.Error("SCENE_NOT_FOUND", new { missing }, SceneHint);
 
             var outputPath = string.IsNullOrWhiteSpace(output_path)
                 ? DefaultOutputPath(buildTarget, PlayerSettings.productName)
@@ -119,14 +120,15 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Scene asset path, e.g. 'Assets/Scenes/Main.unity'")] string scene_path)
         {
             action = action?.ToLowerInvariant();
+            scene_path = NormalizeScenePath(scene_path);
             var list = EditorBuildSettings.scenes.ToList();
             int idx = list.FindIndex(s => string.Equals(s.path, scene_path, StringComparison.OrdinalIgnoreCase));
 
             switch (action)
             {
                 case "add":
-                    if (!System.IO.File.Exists(scene_path))
-                        return Response.Error("SCENE_NOT_FOUND", new { scene_path });
+                    if (!SceneExists(scene_path))
+                        return Response.Error("SCENE_NOT_FOUND", new { scene_path }, SceneHint);
                     if (idx >= 0)
                         return Response.Error("SCENE_ALREADY_LISTED", new { scene_path });
                     list.Add(new EditorBuildSettingsScene(scene_path, true));
@@ -164,11 +166,48 @@ namespace KitWright.Editor.Tools.Builtins
             if (EditorUserBuildSettings.activeBuildTarget == buildTarget)
                 return Response.Success($"Active build target already {buildTarget}.");
 
-            bool ok = EditorUserBuildSettings.SwitchActiveBuildTarget(group, buildTarget);
-            return ok
-                ? Response.Success($"Switched active build target to {buildTarget}.")
-                : Response.Error("SWITCH_FAILED", new { target = buildTarget.ToString(), hint = "the platform build support module may not be installed" });
+            bool accepted = EditorUserBuildSettings.SwitchActiveBuildTarget(group, buildTarget);
+            var active = EditorUserBuildSettings.activeBuildTarget;
+            switch (ClassifySwitch(accepted, buildTarget, active))
+            {
+                case SwitchOutcome.Switched:
+                    return Response.Success($"Switched active build target to {buildTarget}.");
+                case SwitchOutcome.Queued:
+                    return Response.Success(
+                        $"Unity accepted the switch to {buildTarget} but has not made it: the active build target is still {active}.",
+                        new { queued = true, requested = buildTarget.ToString(), activeBuildTarget = active.ToString() },
+                        "Unity runs a queued switch once the editor is idle (after a compile or import). Read the active target again" +
+                        (MCPToolExportPolicy.IsToolExposed("get_build_settings") ? " with get_build_settings" : string.Empty) +
+                        " before building for it.");
+                default:
+                    return Response.Error("SWITCH_FAILED", new { target = buildTarget.ToString(), hint = "the platform build support module may not be installed" });
+            }
         }
+
+        internal enum SwitchOutcome { Switched, Queued, Failed }
+
+        // The call answers true for a switch it only queued, so the active target is what says it happened.
+        internal static SwitchOutcome ClassifySwitch(bool accepted, BuildTarget requested, BuildTarget active) =>
+            !accepted ? SwitchOutcome.Failed : active == requested ? SwitchOutcome.Switched : SwitchOutcome.Queued;
+
+        private const string SceneHint =
+            "A scene is an existing .unity asset under Assets/ or Packages/, written like 'Assets/Scenes/Main.unity'.";
+
+        internal static string NormalizeScenePath(string path) => (path ?? string.Empty).Trim().Replace('\\', '/');
+
+        // Shape first, so a path outside the project or to some other kind of file is refused the same way as a
+        // missing scene instead of being answered by whether a file of that name exists on disk.
+        internal static bool IsSceneAssetPath(string path)
+        {
+            var p = NormalizeScenePath(path);
+            return (p.StartsWith("Assets/", StringComparison.OrdinalIgnoreCase) ||
+                    p.StartsWith("Packages/", StringComparison.OrdinalIgnoreCase)) &&
+                   p.EndsWith(".unity", StringComparison.OrdinalIgnoreCase) &&
+                   !p.Split('/').Contains("..");
+        }
+
+        private static bool SceneExists(string path) =>
+            IsSceneAssetPath(path) && AssetDatabase.GetMainAssetTypeAtPath(path) == typeof(SceneAsset);
 
         internal static bool TryResolveTarget(string name, out BuildTarget target)
         {

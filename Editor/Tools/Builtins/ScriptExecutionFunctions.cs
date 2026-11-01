@@ -187,16 +187,20 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Re-run a past execute_code invocation by its history id (use get_execute_code_history to discover ids). " +
                      "The original code is re-compiled and executed; this also appends a new history entry. " +
                      "An id that has left the history (it keeps the latest 50) is refused rather than matched to another entry. " +
-                     "Pass safety_checks to override the MCP Settings window default.")]
+                     "Pass safety_checks to override the MCP Settings window default. " +
+                     "Like execute_code, the AssetDatabase is refreshed before compiling unless skip_refresh=true (use it to replay a read-only snippet " +
+                     "without risking an import or domain reload); timeout_seconds raises the budget for the snippet's loops.")]
         public static async Task<object> ReplayExecuteCode(
             [ToolParam("History entry id to replay: the `id` field returned by get_execute_code_history. It is an id, not a list position.")] int index,
-            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null)
+            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
+            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready, as for execute_code. Use only when the editor is already up to date, e.g. replaying a read-only inspection snippet: the default refresh can trigger an import/domain reload on a shared editor.", Required = false)] bool skip_refresh = false,
+            [ToolParam("Seconds the snippet may run, as for execute_code (up to 1680): raises the budget for the snippet's loops from 20 s to this. 0 (default) keeps the ordinary limit; a value never narrows it.", Required = false)] int timeout_seconds = 0)
         {
             var refusal = ResolveReplayEntry(LoadHistory(), index, out var entry);
             if (refusal != null)
                 return refusal;
 
-            return await ExecuteCode(entry.code, safety_checks);
+            return await ExecuteCode(entry.code, safety_checks, skip_refresh, timeout_seconds);
         }
 
         internal static object ResolveReplayEntry(HistoryBox box, int id, out HistoryEntry entry)

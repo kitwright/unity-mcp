@@ -71,8 +71,8 @@
 |------|-------------|
 | `close_scene` | Close/unload an open scene (used in multi-scene editing). |
 | `create_new_scene` | Create a new empty scene. |
-| `enter_play_mode` *(core)* | Enter play mode in the editor |
-| `exit_play_mode` *(core)* | Exit play mode in the editor |
+| `enter_play_mode` *(core)* | Enter play mode in the editor. |
+| `exit_play_mode` *(core)* | Exit play mode in the editor. |
 | `get_scene_info` *(core)* | Get information about every loaded scene (the active scene plus any additively loaded ones), including path, dirty state, and a shallow root-object hierarchy per scene. |
 | `list_scenes` | List all scenes in the project |
 | `load_scene_additive` | Open a scene additively (keeps currently open scenes loaded), for multi-scene editing. |
@@ -231,7 +231,7 @@
 | `get_audio_source_info` | Get the AudioSource settings on a GameObject. |
 | `play_clip_preview` | Preview-play an AudioClip in the editor without entering Play Mode (uses the internal AudioUtil API). |
 | `set_global_audio` | Set global audio settings: master volume (AudioListener.volume) and/or pause all audio (AudioListener.pause). |
-| `stop_clip_preview` | Stop all editor audio clip previews started by play_clip_preview. |
+| `stop_clip_preview` | Stop all editor audio clip previews, including ones started from the Inspector, not only those from play_clip_preview. |
 
 ## Code (6)
 
@@ -263,7 +263,7 @@
 | `add_nav_mesh_obstacle` | Add a NavMeshObstacle component to a GameObject so it blocks or carves the NavMesh. |
 | `bake_nav_mesh` | Bake the NavMesh for the current scene using the legacy scene NavMesh settings. |
 | `clear_nav_mesh` | Clear all baked NavMesh data from the current scene. |
-| `get_nav_mesh_info` | Get NavMesh info for the current scene: baked vertex and triangle counts, and per-area default costs. |
+| `get_nav_mesh_info` | Get NavMesh info: baked vertex and triangle counts. |
 | `set_agent_destination` | Set a NavMeshAgent's destination so it starts path-finding. |
 
 ## Shader (6)
@@ -323,7 +323,7 @@
 |------|-------------|
 | `add_volume_override` | Add a post-processing override to a Volume profile (URP). |
 | `create_volume` | Create a post-processing Volume GameObject (URP). |
-| `get_volume_info` | List post-processing overrides on a Volume's profile (URP), with each override's active state. |
+| `get_volume_info` | List post-processing overrides on a Volume's profile (URP), with each override's active state and how many of its parameters are ticked (overrideState). |
 | `remove_volume_override` | Remove a post-processing override from a Volume profile (URP). |
 | `set_volume_override_property` | Set a single parameter on a Volume override and enable its overrideState (URP). |
 
@@ -331,10 +331,10 @@
 
 | Tool | Description |
 |------|-------------|
-| `get_camera_properties` | Get all camera properties including type, FOV, clipping planes, background, and culling mask |
-| `set_camera_culling_mask` | Set the camera culling mask to show/hide specific layers |
+| `get_camera_properties` | Get a camera's type, FOV or size, clipping planes, background, clear flags, depth, culling mask, viewport rect, rendering path, HDR/MSAA, target display and texture, enabled state and transform. |
+| `set_camera_culling_mask` | Set the camera culling mask to show/hide specific layers. |
 | `set_camera_projection` | Set camera projection to orthographic or perspective with size/FOV |
-| `set_camera_settings` | Set camera clipping planes, background color, and clear flags |
+| `set_camera_settings` | Set camera clipping planes, background color, clear flags and depth. |
 
 ## Compilation (4)
 
@@ -417,7 +417,7 @@
 | Tool | Description |
 |------|-------------|
 | `install_package` | Install a Unity package by name. |
-| `list_packages` | List all installed packages |
+| `list_packages` | List the packages the project depends on directly: the whole of Packages/manifest.json. |
 | `remove_package` | Remove a Unity package |
 
 ## Physics (3)

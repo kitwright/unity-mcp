@@ -91,7 +91,7 @@ namespace KitWright.Editor.Tools
 
                     try
                     {
-                        foreach (var type in assembly.GetTypes())
+                        foreach (var type in LoadableTypes(assembly))
                         {
                             try
                             {
@@ -101,6 +101,9 @@ namespace KitWright.Editor.Tools
                                 var methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static);
                                 foreach (var method in methods)
                                 {
+                                    if (method.IsSpecialName)
+                                        continue;
+
                                     var snakeName = ToSnakeCase(method.Name);
 
                                     if (BlockedTools.Contains(snakeName))
@@ -114,7 +117,7 @@ namespace KitWright.Editor.Tools
                                     }
                                     else
                                     {
-                                        Debug.LogWarning($"[KitWright] Duplicate tool function name: {snakeName}");
+                                        Debug.LogWarning(DuplicateToolMessage(snakeName, methodCache[snakeName], method));
                                     }
                                 }
                             }
@@ -139,14 +142,57 @@ namespace KitWright.Editor.Tools
             _customToolNames = customToolNames;
         }
 
+        // One type that fails to load must not cost the assembly's other tools. Only an assembly that can
+        // hold tools warns: the scan walks every assembly in the domain, and many unrelated ones load partially.
+        private static IEnumerable<Type> LoadableTypes(Assembly assembly)
+        {
+            try
+            {
+                return assembly.GetTypes();
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                var loaded = (ex.Types ?? Type.EmptyTypes).Where(type => type != null).ToList();
+                if (CanDeclareTools(assembly))
+                {
+                    var cause = ex.LoaderExceptions?.FirstOrDefault(inner => inner != null)?.Message;
+                    Debug.LogWarning($"[KitWright] Scanning '{assembly.GetName().Name}' for tools: some types failed to load " +
+                                     $"and were skipped, {loaded.Count} loaded. {cause}");
+                }
+
+                return loaded;
+            }
+        }
+
+        private static bool CanDeclareTools(Assembly assembly)
+        {
+            try
+            {
+                return IsPackageAssembly(assembly) ||
+                       assembly.GetReferencedAssemblies().Any(reference => IsPackageAssembly(reference.Name));
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+        }
+
+        internal static string DuplicateToolMessage(string snakeName, MethodInfo kept, MethodInfo ignored) =>
+            $"[KitWright] Duplicate tool function name '{snakeName}': keeping {DescribeTool(kept)}, ignoring {DescribeTool(ignored)}.";
+
+        private static string DescribeTool(MethodInfo method) =>
+            $"{method.DeclaringType?.FullName}.{method.Name} ({method.DeclaringType?.Assembly.GetName().Name})";
+
         /// <summary>
         /// True when the tool was declared outside this package — i.e. by project or
-        /// third-party code marked with [ToolProvider]. Those tools are exposed regardless of
-        /// the active profile, since the project author opted in by writing them.
+        /// third-party code marked with [ToolProvider], or registered at runtime with
+        /// <see cref="Register"/>. Those tools are exposed regardless of the active profile,
+        /// since the project author opted in by writing them.
         /// </summary>
         public static bool IsCustomTool(string snakeCaseName)
         {
             if (string.IsNullOrEmpty(snakeCaseName)) return false;
+            if (IsManualTool(snakeCaseName)) return true;
             if (_customToolNames == null)
                 lock (_lock) { if (_customToolNames == null) ScanAssemblies(); }
             return _customToolNames.Contains(snakeCaseName);
@@ -213,10 +259,11 @@ namespace KitWright.Editor.Tools
             if (string.IsNullOrEmpty(name as string))
                 return fallback;
 
-            if (string.Equals((string)name, BatchToolName, StringComparison.Ordinal))
+            if (string.Equals((string)name, BatchToolName, StringComparison.OrdinalIgnoreCase))
                 return BatchBudgetSeconds(BatchCommandNames(parameters), fallback);
 
-            if (string.Equals((string)name, ExecuteCodeToolName, StringComparison.Ordinal))
+            if (string.Equals((string)name, ExecuteCodeToolName, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals((string)name, ReplayExecuteCodeToolName, StringComparison.OrdinalIgnoreCase))
             {
                 var requested = ExecuteCodeTimeoutSeconds(parameters);
                 return requested > 0 ? Math.Max(requested + ExecuteCodeBudgetMarginSeconds, fallback) : fallback;
@@ -226,7 +273,7 @@ namespace KitWright.Editor.Tools
             return budget > fallback ? budget : fallback;
         }
 
-        private const string BatchToolName = "batch_execute";
+        internal const string BatchToolName = "batch_execute";
 
         // A batch holding build_player was cut off at the ordinary ceiling while the build ran on.
         // It gets the ordinary ceiling once, plus each long-running command's own budget, capped
@@ -242,6 +289,8 @@ namespace KitWright.Editor.Tools
         private const int MaxBatchBudgetSeconds = 1800;
 
         private const string ExecuteCodeToolName = "execute_code";
+
+        internal const string ReplayExecuteCodeToolName = "replay_execute_code";
 
         // Room for the pre-compile refresh (up to 120 s) and the compile, which run before the snippet's own budget starts.
         private const int ExecuteCodeBudgetMarginSeconds = 120;
@@ -333,6 +382,12 @@ namespace KitWright.Editor.Tools
                 Debug.LogWarning($"[KitWright] Cannot register blocked tool: {name}");
                 return;
             }
+
+            // The exporter reads both unguarded, and tools/list is built from the definition, not from `name`.
+            definition.parameters ??= new ToolParametersDef();
+            definition.parameters.properties ??= new Dictionary<string, ToolPropertyDef>();
+            if (string.IsNullOrEmpty(definition.name))
+                definition.name = name;
 
             lock (_lock)
             {

@@ -13,18 +13,28 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("EditorWindowInteraction")]
     internal static class EditorWindowInteractionFunctions
     {
+        private const string WindowParamText = "Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). Case-insensitive. " +
+                                               "Several equally good matches are refused with AMBIGUOUS_TARGET unless exactly one of them is the focused window.";
+
+        internal const int MaxClickCount = 10;
+
         [Description("Click inside any open EditorWindow (Inspector, Console, Project, custom tool windows...) as a real user would. " +
                      "Coordinates are in pixels with 0,0 at the TOP-LEFT of the window, matching what capture_editor_window returns. " +
                      "Dispatches pointer-down + pointer-up into the window's UI Toolkit panel, so UI Toolkit controls react. " +
-                     "A point that lands on legacy IMGUI is refused with IMGUI_CLICK_UNSUPPORTED rather than reported as a click that did nothing.")]
+                     "A point that lands on legacy IMGUI is refused with IMGUI_CLICK_UNSUPPORTED, and one outside the window's panel with NOTHING_AT_POINT, rather than reported as a click that did nothing.")]
         public static string SimulateEditorWindowClick(
-            [ToolParam("Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). Case-insensitive.")] string window,
+            [ToolParam(WindowParamText)] string window,
             [ToolParam("X coordinate in pixels from the window's left edge")] int x,
             [ToolParam("Y coordinate in pixels from the window's top edge")] int y,
             [ToolParam("Mouse button: left, right, or middle", Required = false)] string button = "left",
-            [ToolParam("Number of clicks (2 for a double-click)", Required = false)] int click_count = 1,
+            [ToolParam("Number of clicks, 1 to 10 (2 for a double-click)", Required = false)] int click_count = 1,
             [ToolParam("Focus the window before clicking", Required = false)] bool focus = true)
         {
+            if (click_count < 1 || click_count > MaxClickCount)
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "click_count", provided = click_count, valid = $"1 to {MaxClickCount}" });
+            if (!TryParseButton(button, out var mouseButton))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "button", provided = button, valid = ButtonNames });
+
             if (!TryResolvePanel(window, focus, out var target, out var root, out var error))
                 return error;
 
@@ -32,8 +42,6 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 var pixelsPerPoint = EditorGUIUtility.pixelsPerPoint;
                 var point = new Vector2(x / pixelsPerPoint, y / pixelsPerPoint);
-                var mouseButton = ParseButton(button);
-                var clicks = Mathf.Max(1, click_count);
 
                 // Panel coordinates belong to the whole host view, so a docked window's own origin sits
                 // below the tab bar: (0,0) in the window is not (0,0) in the panel.
@@ -41,6 +49,11 @@ namespace KitWright.Editor.Tools.Builtins
                 var tree = root.panel.visualTree;
 
                 var picked = root.panel.Pick(world);
+                if (picked == null)
+                {
+                    return ToolResultFormatter.Error("NOTHING_AT_POINT", new { window = target.titleContent.text, x, y },
+                        "The point is outside the window's panel, so no click was sent. Coordinates are pixels from the window's top-left.");
+                }
 
                 // ponytail: IMGUI is refused, not driven. Driving it needs the panel's own pointer
                 // position to follow the synthesized event (PointerDeviceState, internal).
@@ -61,7 +74,7 @@ namespace KitWright.Editor.Tools.Builtins
                 // so a click followed by simulate_editor_window_key would type into nothing.
                 FocusPicked(picked);
 
-                for (var i = 0; i < clicks; i++)
+                for (var i = 0; i < click_count; i++)
                 {
                     using (var down = PointerDownEvent.GetPooled(MakeMouseEvent(EventType.MouseDown, world, mouseButton, i + 1)))
                         tree.SendEvent(down);
@@ -70,7 +83,7 @@ namespace KitWright.Editor.Tools.Builtins
                 }
                 target.Repaint();
 
-                return $"{button} click x{clicks} at pixel ({x}, {y}) -> panel point ({world.x:F1}, {world.y:F1}) in '{target.titleContent.text}'";
+                return $"{ButtonNames[mouseButton]} click x{click_count} at pixel ({x}, {y}) -> panel point ({world.x:F1}, {world.y:F1}) in '{target.titleContent.text}'";
             }
             catch (Exception ex)
             {
@@ -82,13 +95,17 @@ namespace KitWright.Editor.Tools.Builtins
                      "Dispatches real key-down + key-up events to the panel's focused element. " +
                      "Either provide 'text' to type a string character-by-character, or 'key' for a single named key (Return, Escape, Tab, Backspace, Delete, LeftArrow...).")]
         public static string SimulateEditorWindowKey(
-            [ToolParam("Window title or type name. Case-insensitive.")] string window,
+            [ToolParam(WindowParamText)] string window,
             [ToolParam("Text to type character-by-character", Required = false)] string text = null,
-            [ToolParam("A single named key to send (e.g. Return, Escape, Tab, Backspace)", Required = false)] string key = null,
+            [ToolParam("A single named key to send (e.g. Return, Escape, Tab, Backspace). Not together with 'text'.", Required = false)] string key = null,
             [ToolParam("Focus the window before typing", Required = false)] bool focus = true)
         {
-            if (string.IsNullOrEmpty(text) && string.IsNullOrEmpty(key))
-                return ToolResultFormatter.ErrorMessage("INVALID_INPUT", "Provide either 'text' or 'key'.");
+            if (string.IsNullOrEmpty(text) == string.IsNullOrEmpty(key))
+                return ToolResultFormatter.ErrorMessage("INVALID_INPUT", "Provide exactly one of 'text' or 'key'.");
+
+            var keyCode = KeyCode.None;
+            if (!string.IsNullOrEmpty(key) && (!ValueConverter.TryParseEnum(key, out keyCode) || keyCode == KeyCode.None))
+                return ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED", $"Key '{key}' is not a KeyCode name (numbers are not accepted: digits are Alpha0 to Alpha9, or send them as 'text'). Examples: Return, Escape, Tab, Backspace, Delete, LeftArrow.");
 
             if (!TryResolvePanel(window, focus, out var target, out var root, out var error))
                 return error;
@@ -108,15 +125,11 @@ namespace KitWright.Editor.Tools.Builtins
                         sent++;
                     }
                 }
-                else if (Enum.TryParse<KeyCode>(key, ignoreCase: true, out var keyCode))
+                else
                 {
                     SendKey(keyTarget, MakeKeyEvent(EventType.KeyDown, keyCode));
                     SendKey(keyTarget, MakeKeyEvent(EventType.KeyUp, keyCode));
                     sent = 1;
-                }
-                else
-                {
-                    return ToolResultFormatter.ErrorMessage("KEY_NOT_RECOGNIZED", $"Key '{key}' is not a valid KeyCode. Examples: Return, Escape, Tab, Backspace, Delete, LeftArrow.");
                 }
 
                 target.Repaint();
@@ -141,7 +154,20 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             var allWindows = Resources.FindObjectsOfTypeAll<EditorWindow>().Where(w => w != null).ToArray();
-            target = ResolveEditorWindow(allWindows, window.Trim());
+            target = ResolveEditorWindow(allWindows, window.Trim(), out var ambiguous, EditorWindow.focusedWindow);
+            if (ambiguous != null)
+            {
+                error = ToolResultFormatter.Error("AMBIGUOUS_TARGET",
+                    new
+                    {
+                        requested = window,
+                        match_count = ambiguous.Length,
+                        candidates = ambiguous.Select(w => new { title = w.titleContent.text, type = w.GetType().Name }).ToArray()
+                    },
+                    "Give a longer title or the exact type name, focus the window you mean (click inside it, or open its tab) so that it is the focused window, or close the extra ones.");
+                return false;
+            }
+
             if (target == null)
             {
                 error = ToolResultFormatter.Error("WINDOW_NOT_FOUND", new
@@ -225,10 +251,15 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static Event MakeCharEvent(EventType type, char character)
         {
-            var evt = new Event { type = type, character = character };
-            if (Enum.TryParse<KeyCode>(character.ToString(), ignoreCase: true, out var code))
-                evt.keyCode = code;
-            return evt;
+            return new Event { type = type, character = character, keyCode = KeyCodeForChar(character) };
+        }
+
+        // Enum.TryParse takes "8" as the number 8 (Backspace) and "9" as Tab, so a digit has to be mapped by hand.
+        internal static KeyCode KeyCodeForChar(char character)
+        {
+            if (character >= '0' && character <= '9')
+                return KeyCode.Alpha0 + (character - '0');
+            return ValueConverter.TryParseEnum<KeyCode>(character.ToString(), out var code) ? code : KeyCode.None;
         }
 
         private static Event MakeKeyEvent(EventType type, KeyCode keyCode)
@@ -236,48 +267,46 @@ namespace KitWright.Editor.Tools.Builtins
             return new Event { type = type, keyCode = keyCode };
         }
 
-        private static int ParseButton(string button)
+        // The index is the UnityEngine.Event button number.
+        private static readonly string[] ButtonNames = { "left", "right", "middle" };
+
+        internal static bool TryParseButton(string button, out int mouseButton)
         {
-            switch ((button ?? "left").Trim().ToLowerInvariant())
-            {
-                case "right":
-                    return 1;
-                case "middle":
-                    return 2;
-                default:
-                    return 0;
-            }
+            mouseButton = Array.IndexOf(ButtonNames, string.IsNullOrWhiteSpace(button) ? "left" : button.Trim().ToLowerInvariant());
+            return mouseButton >= 0;
         }
 
-        private static EditorWindow ResolveEditorWindow(EditorWindow[] windows, string trimmed)
+        // The first tier with a match decides. Several matches in it are ambiguous unless exactly one is the
+        // focused window; picking the first of them would act on a window the caller may not have meant.
+        // hasFocus is no tie-break: it is true for several windows at once, focusedWindow is only one.
+        internal static EditorWindow ResolveEditorWindow(EditorWindow[] windows, string trimmed, out EditorWindow[] ambiguous, EditorWindow focusedWindow = null)
         {
-            EditorWindow PickPreferFocused(System.Collections.Generic.IEnumerable<EditorWindow> candidates)
+            ambiguous = null;
+            var tiers = new Func<EditorWindow, bool>[]
             {
-                EditorWindow first = null;
-                foreach (var candidate in candidates)
-                {
-                    if (candidate.hasFocus)
-                        return candidate;
-                    if (first == null)
-                        first = candidate;
-                }
-                return first;
+                w => string.Equals(w.titleContent.text, trimmed, StringComparison.OrdinalIgnoreCase),
+                w => w.titleContent.text != null && w.titleContent.text.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0,
+                w => string.Equals(w.GetType().Name, trimmed, StringComparison.OrdinalIgnoreCase),
+                w => w.GetType().Name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0
+            };
+
+            foreach (var tier in tiers)
+            {
+                var matches = windows.Where(tier).ToArray();
+                if (matches.Length == 0)
+                    continue;
+                if (matches.Length == 1)
+                    return matches[0];
+
+                var focused = matches.Where(w => w == focusedWindow).ToArray();
+                if (focused.Length == 1)
+                    return focused[0];
+
+                ambiguous = matches;
+                return null;
             }
 
-            var exactTitle = PickPreferFocused(windows.Where(w =>
-                string.Equals(w.titleContent.text, trimmed, StringComparison.OrdinalIgnoreCase)));
-            if (exactTitle != null)
-                return exactTitle;
-
-            var containsTitle = PickPreferFocused(windows.Where(w =>
-                w.titleContent.text != null &&
-                w.titleContent.text.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0));
-            if (containsTitle != null)
-                return containsTitle;
-
-            return PickPreferFocused(windows.Where(w =>
-                string.Equals(w.GetType().Name, trimmed, StringComparison.OrdinalIgnoreCase) ||
-                w.GetType().Name.IndexOf(trimmed, StringComparison.OrdinalIgnoreCase) >= 0));
+            return null;
         }
     }
 }

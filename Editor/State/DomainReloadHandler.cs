@@ -210,18 +210,32 @@ namespace KitWright.Editor.State
                 return null;
 
             // Discard if too old (> 120 seconds)
+            var reloadedAt = DateTime.MinValue;
             if (DateTime.TryParse(timestampStr, null,
                     System.Globalization.DateTimeStyles.RoundtripKind, out var ts))
             {
                 if ((DateTime.Now - ts).TotalSeconds > 120)
                     return null;
+
+                reloadedAt = ts;
             }
 
             return new InterruptedState
             {
                 State = state,
-                PendingFunction = pendingFunction
+                PendingFunction = pendingFunction,
+                ReloadedAt = reloadedAt
             };
+        }
+
+        // The new domain's own recovery code may already have recorded this tool's outcome, with
+        // data (Play Mode errors) that the generic interrupted record would overwrite.
+        internal static bool IsRecordedSince(RecoveryInfo info, string toolName, DateTime since)
+        {
+            return info != null &&
+                   since > DateTime.MinValue &&
+                   info.Timestamp >= since &&
+                   string.Equals(info.ToolName, toolName, StringComparison.OrdinalIgnoreCase);
         }
 
         internal static bool ShouldDeferPendingCompletion()
@@ -290,6 +304,7 @@ namespace KitWright.Editor.State
         {
             public KitWrightState State;
             public PendingFunctionInfo PendingFunction;
+            public DateTime ReloadedAt;
 
             public string GetDescription()
             {

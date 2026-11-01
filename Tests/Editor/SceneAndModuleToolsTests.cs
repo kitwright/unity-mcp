@@ -242,11 +242,10 @@ namespace KitWright.Editor.Tests
         [Test]
         public void TimeScaleIsWrittenAndTheFrameStepperNeedsPlayMode()
         {
-            Ok("set_time_scale", "scale", "0.25");
-            Assert.AreEqual(0.25f, Time.timeScale, 0.001f);
-
-            Ok("set_time_scale", "scale", "1");
-            Assert.AreEqual(1f, Time.timeScale, 0.001f);
+            // Outside Play Mode the value would be the project's TimeManager setting, which carries into the next run.
+            var before = Time.timeScale;
+            Assert.AreEqual("PLAY_MODE_REQUIRED", Code("set_time_scale", "scale", "0.25"));
+            Assert.AreEqual(before, Time.timeScale, 0.001f);
 
             // A scale is a float, so the invoker refuses a value that is not one instead of leaving the
             // game running at zero.

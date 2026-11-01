@@ -39,6 +39,12 @@ namespace KitWright.Editor.Tools.Builtins
         private static Dictionary<string, ProfilerRecorder> _recorders;
         private static bool _initializedReloadHook;
 
+        // A new recorder has no completed frame yet, so the Render counters read 0 until a few have passed.
+        private const double RecorderWarmupSeconds = 1.0;
+        private static double _recordersStartedAt;
+
+        internal static bool IsWarmingUp(double startedAt, double now) => now - startedAt < RecorderWarmupSeconds;
+
         private static bool SessionActive => SessionState.GetBool(SessionKey, false);
 
         [Description("Start a Profiler capture session (enables UnityEngine.Profiling.Profiler and starts a set of " +
@@ -170,7 +176,8 @@ namespace KitWright.Editor.Tools.Builtins
                 var recorders = _recorders ?? CreateRecorders(memoryOnly: true);
                 try
                 {
-                    return FormatCounters(recorders, oneShot, names);
+                    var warmingUp = !oneShot && IsWarmingUp(_recordersStartedAt, EditorApplication.timeSinceStartup);
+                    return FormatCounters(recorders, oneShot, names, warmingUp);
                 }
                 finally
                 {
@@ -184,12 +191,15 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static string FormatCounters(Dictionary<string, ProfilerRecorder> recorders, bool oneShot, string names)
+        private static string FormatCounters(Dictionary<string, ProfilerRecorder> recorders, bool oneShot, string names, bool warmingUp)
         {
             var sb = new StringBuilder();
             if (oneShot)
                 sb.AppendLine("WARNING: profiler_start was not called, so only the Memory counters were read (once, from recorders disposed afterwards). " +
                               "Render counters (Draw Calls, Batches, SetPass Calls, Triangles, Vertices) need profiler_start, a few frames, then get_counters.");
+            else if (warmingUp)
+                sb.AppendLine("WARNING: these recorders were created less than a second ago (profiler_start, or resumed after a domain reload such as entering Play Mode), " +
+                              "so no frame has completed for them and the Render counters can read 0. Call get_counters again in a moment.");
 
             var keysToShow = new List<string>();
             if (string.IsNullOrEmpty(names))
@@ -239,6 +249,7 @@ namespace KitWright.Editor.Tools.Builtins
                 return; // already running, idempotent
 
             _recorders = CreateRecorders();
+            _recordersStartedAt = EditorApplication.timeSinceStartup;
         }
 
         private static void ResumeSessionRecorders()

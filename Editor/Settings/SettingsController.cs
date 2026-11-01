@@ -6,6 +6,7 @@ using System.IO;
 using System.Linq;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Services;
+using KitWright.Editor.Tools.Helpers;
 using UnityEngine;
 
 namespace KitWright.Editor.Settings
@@ -31,6 +32,7 @@ namespace KitWright.Editor.Settings
         private readonly string _settingsPath;
         private readonly object _lock = new object();
         private SettingsData _settings;
+        private bool _startedFromDefaults;
 
         // projectPath is only passed by tests pointing at a temp project; production resolves it.
         public SettingsController(string projectPath = null)
@@ -41,13 +43,13 @@ namespace KitWright.Editor.Settings
                 projectPath,
                 SettingsDirectoryName,
                 SettingsFileName);
-            // Only a project with no settings file yet gets the derived port. An existing file
-            // holding 8765 may hold it because the user typed it — a firewall rule, an SSH tunnel
+            // Only a project with no usable settings yet gets the derived port. A file that parses and
+            // holds 8765 may hold it because the user typed it — a firewall rule, an SSH tunnel
             // or a hand-written client config can depend on that — and nothing on disk tells the
-            // deliberate 8765 apart from the old shared default.
-            var firstRun = !File.Exists(_settingsPath);
+            // deliberate 8765 apart from the old shared default. A blank or unreadable file holds
+            // no such choice.
             _settings = LoadSettings();
-            if (firstRun)
+            if (_startedFromDefaults)
                 DeriveProjectPort(projectPath);
         }
 
@@ -351,12 +353,35 @@ namespace KitWright.Editor.Settings
             }
             catch (Exception ex)
             {
-                Debug.LogWarning($"[KitWright] Failed to read MCP settings file '{_settingsPath}': {ex.Message}");
+                var kept = KeepUnreadableFile();
+                Debug.LogWarning(
+                    $"[KitWright] Failed to read MCP settings file '{_settingsPath}': {ex.Message}" +
+                    (kept == null ? string.Empty : $" It was copied to '{kept}' before the defaults replaced it."));
             }
 
+            _startedFromDefaults = true;
             var defaults = CreateDefaultSettings();
             SaveSettings(defaults);
             return defaults;
+        }
+
+        // A hand edit with a typo reads as no settings at all, and the defaults written next would take
+        // the custom tool lists and every other choice in the file with them.
+        private string KeepUnreadableFile()
+        {
+            var backup = _settingsPath + ".bak";
+            try
+            {
+                if (!File.Exists(_settingsPath))
+                    return null;
+
+                File.Copy(_settingsPath, backup, true);
+                return backup;
+            }
+            catch (Exception ex) when (ex is IOException || ex is UnauthorizedAccessException)
+            {
+                return null;
+            }
         }
 
         private void SaveSettings(SettingsData settings)
@@ -368,7 +393,7 @@ namespace KitWright.Editor.Settings
                     Directory.CreateDirectory(directory);
 
                 var json = JsonUtility.ToJson(settings, true);
-                File.WriteAllText(_settingsPath, json);
+                AtomicFile.WriteAllText(_settingsPath, json);
             }
             catch (Exception ex)
             {

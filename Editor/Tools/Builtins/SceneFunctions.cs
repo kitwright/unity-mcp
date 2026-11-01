@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.Reflection;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
+using KitWright.Editor.MCP.Server;
+using KitWright.Editor.Services;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -49,6 +51,9 @@ namespace KitWright.Editor.Tools.Builtins
                 ? $"Saved scene '{scene.name}' to {path}"
                 : ToolResultFormatter.Error("SCENE_SAVE_FAILED", new { scene = scene.name, path });
         }
+
+        internal const string DiscardedWithPlayMode =
+            "Play Mode is active, so this change is discarded when it ends (saving the scene now does not keep it).";
 
         // Clearing the flag is what stops Unity raising its own save prompt. The API is internal.
         private static readonly MethodInfo ClearSceneDirtiness = typeof(EditorSceneManager)
@@ -263,24 +268,69 @@ namespace KitWright.Editor.Tools.Builtins
             return sb.ToString();
         }
 
-        [Description("Enter play mode in the editor")]
+        [Description("Enter play mode in the editor. Entry is asynchronous: the reply means it was requested, so read " +
+                     "get_editor_state (isPlaying) before relying on it. Refused while the scripts have compile errors, " +
+                     "and while an exit from play mode is still in flight.")]
         public static string EnterPlayMode()
         {
-            if (EditorApplication.isPlaying)
-                return "Already in play mode";
+            // The flag describes the last finished compile, so it means nothing while a newer one runs.
+            var compileFailed = EditorUtility.scriptCompilationFailed && !CompilationService.IsActuallyCompiling;
+            var reply = EnterPlayModeReply(
+                EditorApplication.isPlaying, EditorApplication.isPlayingOrWillChangePlaymode, compileFailed);
+            if (reply != null)
+                return reply;
 
             EditorApplication.isPlaying = true;
-            return "Entering play mode";
+            return "Entering play mode (requested, not yet playing: poll get_editor_state until isPlaying is true).";
         }
 
-        [Description("Exit play mode in the editor")]
+        [Description("Exit play mode in the editor. Refused while an entry into play mode is still in flight.")]
         public static string ExitPlayMode()
         {
-            if (!EditorApplication.isPlaying)
-                return "Not in play mode";
+            var reply = ExitPlayModeReply(EditorApplication.isPlaying, EditorApplication.isPlayingOrWillChangePlaymode);
+            if (reply != null)
+                return reply;
 
             EditorApplication.isPlaying = false;
             return "Exiting play mode";
+        }
+
+        // isPlaying flips only at the end of the editor tick, so a request made earlier in the same
+        // tick (batch_execute runs its commands back to back) is invisible to it. isPlayingOrWillChangePlaymode
+        // already says "entering" but, measured, goes false the moment an exit is requested, so
+        // (isPlaying, willChange) = (true, false) is an exit in flight and (false, true) an entry in flight.
+        // Null means the request should go ahead.
+        internal static string EnterPlayModeReply(bool isPlaying, bool isPlayingOrWillChange, bool scriptCompilationFailed)
+        {
+            if (isPlaying)
+                return isPlayingOrWillChange ? "Already in play mode" : PlayModeTransitionPending("exiting", "enter_play_mode");
+            if (isPlayingOrWillChange)
+                return "Already entering play mode";
+            return scriptCompilationFailed ? CompileErrorsBlockPlayMode() : null;
+        }
+
+        internal static string ExitPlayModeReply(bool isPlaying, bool isPlayingOrWillChange)
+        {
+            if (!isPlaying)
+                return isPlayingOrWillChange ? PlayModeTransitionPending("entering", "exit_play_mode") : "Not in play mode";
+            return isPlayingOrWillChange ? null : "Already exiting play mode";
+        }
+
+        private static string PlayModeTransitionPending(string pending, string tool)
+        {
+            return ToolResultFormatter.Error("PLAY_MODE_TRANSITION_PENDING", new { pending },
+                $"Play Mode is still {pending}. Poll get_editor_state until the transition ends, then call {tool} again.");
+        }
+
+        private static string CompileErrorsBlockPlayMode()
+        {
+            var issues = CompilationService.Instance?.GetCompilationErrors(10);
+            if (string.IsNullOrEmpty(issues) || issues.StartsWith("No compilation errors", StringComparison.Ordinal))
+                issues = "Unity reports a failed script compilation, but its error list is empty in this session. Read the console errors.";
+
+            return ToolResultFormatter.Error("COMPILATION_FAILED", new { issues },
+                "Unity does not enter Play Mode while scripts have compile errors. Fix them" +
+                (MCPToolExportPolicy.IsToolExposed("request_recompile") ? ", then call request_recompile." : "."));
         }
 
         [Description("Pause or resume play mode. Requires being in play mode. Use step_frame to advance one frame while paused.")]
@@ -306,7 +356,8 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Set the game time scale. Use 0 to pause, 1 for normal speed, " +
-                     "2 for double speed, etc. Useful for testing or slow-motion debugging.")]
+                     "2 for double speed, etc. Useful for testing or slow-motion debugging. Requires being in play mode: " +
+                     "outside it Time.timeScale is the project's TimeManager setting, which this tool does not change.")]
         public static string SetTimeScale(
             [ToolParam("Time scale value (0=paused, 1=normal, 2=double speed, etc.)")] float scale)
         {
@@ -314,6 +365,13 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error("INVALID_TIME_SCALE", new { scale = float.IsNaN(scale) ? "NaN" : (object)scale, min = 0f });
             if (scale > 100f)
                 return ToolResultFormatter.Error("INVALID_TIME_SCALE", new { scale, max = 100f });
+
+            if (!EditorApplication.isPlaying)
+                return ToolResultFormatter.Error("PLAY_MODE_REQUIRED", new
+                {
+                    hint = "Enter play mode first. In Edit Mode Time.timeScale is the project's TimeManager value, " +
+                           "so writing it would change the project setting the next Play Mode starts with."
+                });
 
             float previousScale = UnityEngine.Time.timeScale;
             UnityEngine.Time.timeScale = scale;

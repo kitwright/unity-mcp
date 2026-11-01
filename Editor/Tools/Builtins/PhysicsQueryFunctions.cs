@@ -2,7 +2,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEngine;
@@ -28,35 +27,32 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Layer mask bitfield (-1 = all layers)", Required = false)] int layer_mask = -1,
             [ToolParam("Maximum hits to return", Required = false)] int max_hits = 20)
         {
-            Vector3 o, d;
-            try { o = ParseVec3(origin); }
-            catch (FormatException ex)
-            {
-                return Response.Error("INVALID_PARAM", new { param = "origin", provided = origin, expected = "Vector3 'x,y,z'", detail = ex.Message });
-            }
-            try { d = ParseVec3(direction); }
-            catch (FormatException ex)
-            {
-                return Response.Error("INVALID_PARAM", new { param = "direction", provided = direction, expected = "Vector3 'x,y,z'", detail = ex.Message });
-            }
+            if (!ValueConverter.TryParseVector3(origin, out var o, out var originError))
+                return Response.Error("INVALID_PARAM", new { param = "origin", provided = origin, expected = "Vector3 'x,y,z'", detail = originError });
+            if (!ValueConverter.TryParseVector3(direction, out var d, out var directionError))
+                return Response.Error("INVALID_PARAM", new { param = "direction", provided = direction, expected = "Vector3 'x,y,z'", detail = directionError });
 
-            if (d.sqrMagnitude < 1e-12f)
-                return Response.Error("INVALID_PARAM", new { param = "direction", provided = direction, expected = "non-zero Vector3 'x,y,z'" });
+            // Vector3.normalized answers zero below 1e-5 and when the length overflows, so the guard
+            // has to be on the result: a squared-length test lets those through as a ray that hits nothing.
+            var unitDirection = d.normalized;
+            if (unitDirection == Vector3.zero)
+                return Response.Error("INVALID_PARAM", new { param = "direction", provided = direction, expected = "a Vector3 'x,y,z' that is neither zero nor vanishingly small or large" });
             if (!IsFinite(max_distance) || max_distance <= 0f)
                 return Response.Error("INVALID_PARAM", new { param = "max_distance", provided = max_distance, expected = "a finite number > 0" });
+            if (max_hits <= 0)
+                return Response.Error("INVALID_PARAM", new { param = "max_hits", provided = max_hits, expected = "an integer > 0" });
 
             // In Edit Mode Unity does not auto-step physics; with autoSyncTransforms off (the
             // default) the PhysX scene can hold stale collider poses after a transform edit.
             // Sync first so queries reflect current geometry.
             Physics.SyncTransforms();
-            var hits = Physics.RaycastAll(new Ray(o, d.normalized), max_distance, layer_mask);
+            var hits = Physics.RaycastAll(new Ray(o, unitDirection), max_distance, layer_mask);
             Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
 
-            int cap = max_hits > 0 ? max_hits : 20;
             var list = new List<object>();
             foreach (var h in hits)
             {
-                if (list.Count >= cap) break;
+                if (list.Count >= max_hits) break;
                 var col = h.collider;
                 var go = col != null ? col.gameObject : null;
                 list.Add(new
@@ -85,12 +81,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Layer mask bitfield (-1 = all layers)", Required = false)] int layer_mask = -1,
             [ToolParam("Maximum hits to return", Required = false)] int max_hits = 50)
         {
-            Vector3 c;
-            try { c = ParseVec3(center); }
-            catch (FormatException ex)
-            {
-                return Response.Error("INVALID_PARAM", new { param = "center", provided = center, expected = "Vector3 'x,y,z'", detail = ex.Message });
-            }
+            if (!ValueConverter.TryParseVector3(center, out var c, out var centerError))
+                return Response.Error("INVALID_PARAM", new { param = "center", provided = center, expected = "Vector3 'x,y,z'", detail = centerError });
+            if (max_hits <= 0)
+                return Response.Error("INVALID_PARAM", new { param = "max_hits", provided = max_hits, expected = "an integer > 0" });
 
             Physics.SyncTransforms(); // reflect current poses in Edit Mode (see PhysicsRaycast note)
             Collider[] cols;
@@ -103,12 +97,8 @@ namespace KitWright.Editor.Tools.Builtins
                     cols = Physics.OverlapSphere(c, radius, layer_mask);
                     break;
                 case "box":
-                    Vector3 sz;
-                    try { sz = ParseVec3(size); }
-                    catch (FormatException ex)
-                    {
-                        return Response.Error("INVALID_PARAM", new { param = "size", provided = size, expected = "Vector3 'x,y,z'", detail = ex.Message });
-                    }
+                    if (!ValueConverter.TryParseVector3(size, out var sz, out var sizeError))
+                        return Response.Error("INVALID_PARAM", new { param = "size", provided = size, expected = "Vector3 'x,y,z'", detail = sizeError });
                     if (sz.x <= 0f || sz.y <= 0f || sz.z <= 0f)
                         return Response.Error("INVALID_PARAM", new { param = "size", provided = size, expected = "positive Vector3 full extents 'x,y,z'" });
                     // OverlapBox takes half-extents; `size` is the full box dimension.
@@ -118,11 +108,10 @@ namespace KitWright.Editor.Tools.Builtins
                     return Response.Error("INVALID_PARAM", new { param = "shape", provided = shape, expected = "'sphere' or 'box'" });
             }
 
-            int cap = max_hits > 0 ? max_hits : 50;
             var list = new List<object>();
             foreach (var col in cols)
             {
-                if (list.Count >= cap) break;
+                if (list.Count >= max_hits) break;
                 if (col == null) continue;
                 var go = col.gameObject;
                 list.Add(new
@@ -147,12 +136,8 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Point as 'x,y'")] string point,
             [ToolParam("Layer mask bitfield (-1 = all layers)", Required = false)] int layer_mask = -1)
         {
-            Vector2 p;
-            try { p = ParseVec2(point); }
-            catch (FormatException ex)
-            {
-                return Response.Error("INVALID_PARAM", new { param = "point", provided = point, expected = "Vector2 'x,y'", detail = ex.Message });
-            }
+            if (!ValueConverter.TryParseVector2(point, out var p, out var pointError))
+                return Response.Error("INVALID_PARAM", new { param = "point", provided = point, expected = "Vector2 'x,y'", detail = pointError });
 
             Physics2D.SyncTransforms(); // reflect current poses in Edit Mode (see PhysicsRaycast note)
             var cols = Physics2D.OverlapPointAll(p, layer_mask);
@@ -175,39 +160,6 @@ namespace KitWright.Editor.Tools.Builtins
 #endif
 
         // -------- Helpers --------
-
-        // Parse an 'x,y,z' vector. Throws FormatException on wrong arity (or a non-numeric
-        // component, via float.Parse) so callers can translate it into a clean INVALID_PARAM.
-        private static Vector3 ParseVec3(string value)
-        {
-            var trimmed = (value ?? string.Empty).Trim('(', ')', ' ');
-            var parts = trimmed.Split(',');
-            if (parts.Length != 3)
-                throw new FormatException($"expected 3 comma-separated numbers 'x,y,z', got {parts.Length}");
-            var result = new Vector3(
-                float.Parse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture),
-                float.Parse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture));
-            if (!IsFinite(result.x) || !IsFinite(result.y) || !IsFinite(result.z))
-                throw new FormatException("vector components must be finite numbers");
-            return result;
-        }
-
-        // Parse an 'x,y' vector. Throws FormatException on wrong arity (or a non-numeric
-        // component, via float.Parse) so callers can translate it into a clean INVALID_PARAM.
-        private static Vector2 ParseVec2(string value)
-        {
-            var trimmed = (value ?? string.Empty).Trim('(', ')', ' ');
-            var parts = trimmed.Split(',');
-            if (parts.Length != 2)
-                throw new FormatException($"expected 2 comma-separated numbers 'x,y', got {parts.Length}");
-            var result = new Vector2(
-                float.Parse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture));
-            if (!IsFinite(result.x) || !IsFinite(result.y))
-                throw new FormatException("vector components must be finite numbers");
-            return result;
-        }
 
         private static bool IsFinite(float value)
         {

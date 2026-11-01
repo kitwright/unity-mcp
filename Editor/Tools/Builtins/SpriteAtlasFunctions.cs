@@ -16,30 +16,42 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("SpriteAtlas")]
     internal static class SpriteAtlasFunctions
     {
+        private const int MaxAtlasPadding = 1024;
+
         [Description("Create a new SpriteAtlas asset (.spriteatlas) at the given path.")]
         public static object CreateSpriteAtlas(
             [ToolParam("Asset path, e.g. 'Assets/Atlases/MyAtlas.spriteatlas'")] string path,
             [ToolParam("Include the atlas in builds", Required = false)] bool include_in_build = true)
         {
-            if (!IsUnderAssets(path)) return Response.Error("INVALID_PATH", new { path, hint = "path must be under Assets/ and end with .spriteatlas" });
-            path = path.Replace('\\', '/');
-            if (!path.EndsWith(".spriteatlas", StringComparison.OrdinalIgnoreCase))
-                path += ".spriteatlas";
+            var requested = path;
+            if (!string.IsNullOrWhiteSpace(path) && !path.TrimEnd().EndsWith(".spriteatlas", StringComparison.OrdinalIgnoreCase))
+                path = path.TrimEnd() + ".spriteatlas";
 
-            try { PathSafety.ResolveAssetPath(path); }
+            if (!AssetFunctions.TryNormalizeAssetPath(path, out path))
+                return Response.Error("INVALID_PATH", new { path = requested },
+                    "path must be under Assets/ with no '..' segments, and no folder or file name that starts or ends " +
+                    "with a dot or space, ends with '~', or holds a character a file name cannot");
+
+            string absolutePath;
+            try { absolutePath = PathSafety.ResolveAssetPath(path); }
             catch (PathOutsideProjectException ex)
             { return Response.Error("INVALID_PATH", new { path, message = ex.Message }); }
 
-            if (File.Exists(path)) return Response.Error("ATLAS_EXISTS", new { path });
+            if (File.Exists(absolutePath)) return Response.Error("ATLAS_EXISTS", new { path });
 
-            var dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath));
 
             var atlas = new SpriteAtlas();
             atlas.SetIncludeInBuild(include_in_build);
             AssetDatabase.CreateAsset(atlas, path);
             AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
+
+            if (AssetDatabase.LoadAssetAtPath<SpriteAtlas>(path) == null)
+            {
+                if (!AssetDatabase.Contains(atlas)) Object.DestroyImmediate(atlas);
+                return Response.Error("ATLAS_CREATE_FAILED", new { path });
+            }
 
             return Response.Success($"SpriteAtlas created at '{path}'.", new { path, includeInBuild = include_in_build });
         }
@@ -68,7 +80,7 @@ namespace KitWright.Editor.Tools.Builtins
             });
         }
 
-        [Description("Add sprites, textures, or folders (as packables) to a SpriteAtlas. Pass a comma-separated list of asset paths.")]
+        [Description("Add sprites, textures, or folders (as packables) to a SpriteAtlas. Pass a comma-separated list of asset paths. Anything else (materials, prefabs, scripts) is refused; the reply counts what was actually added. Assets already packed are skipped.")]
         public static object AddToSpriteAtlas(
             [ToolParam("Asset path of the SpriteAtlas")] string path,
             [ToolParam("Comma-separated asset paths to add (sprites, textures, or folders)")] string asset_paths)
@@ -80,15 +92,36 @@ namespace KitWright.Editor.Tools.Builtins
             if (missing.Count > 0) return Response.Error("ASSET_NOT_FOUND", new { missing });
             if (objects.Count == 0) return Response.Error("NO_ASSETS", new { message = "no valid asset paths provided" });
 
-            atlas.Add(objects.ToArray());
-            EditorUtility.SetDirty(atlas);
-            AssetDatabase.SaveAssetIfDirty(atlas);
-            AssetDatabase.ImportAsset(path);
+            var notPackable = objects.Where(o => !IsPackable(o)).Select(AssetDatabase.GetAssetPath).ToList();
+            if (notPackable.Count > 0)
+                return Response.Error("NOT_PACKABLE", new { notPackable },
+                    "A SpriteAtlas packs Sprites, Textures and folders only.");
 
-            return Response.Success($"Added {objects.Count} packable(s) to '{Path.GetFileName(path)}'.", new { added = objects.Count, packableCount = atlas.GetPackables().Length });
+            // Unity does not dedupe: Add lists an already packed asset (or one named twice) again.
+            var packedPaths = PackedPaths(atlas);
+            var fresh = objects.Where(o => packedPaths.Add(AssetDatabase.GetAssetPath(o))).ToArray();
+
+            var added = 0;
+            if (fresh.Length > 0)
+            {
+                var before = atlas.GetPackables().Length;
+                atlas.Add(fresh);
+                added = atlas.GetPackables().Length - before;
+            }
+            if (added > 0)
+            {
+                EditorUtility.SetDirty(atlas);
+                AssetDatabase.SaveAssetIfDirty(atlas);
+                AssetDatabase.ImportAsset(path);
+            }
+
+            return Response.Success(added > 0
+                    ? $"Added {added} packable(s) to '{Path.GetFileName(path)}'."
+                    : $"Nothing added to '{Path.GetFileName(path)}': everything given was already packed.",
+                new { added, requested = objects.Count, packableCount = atlas.GetPackables().Length });
         }
 
-        [Description("Remove packables from a SpriteAtlas. Pass a comma-separated list of asset paths currently packed.")]
+        [Description("Remove packables from a SpriteAtlas. Pass a comma-separated list of asset paths currently packed. Answers NOT_PACKED when none of them was packed.")]
         public static object RemoveFromSpriteAtlas(
             [ToolParam("Asset path of the SpriteAtlas")] string path,
             [ToolParam("Comma-separated asset paths to remove")] string asset_paths)
@@ -100,15 +133,27 @@ namespace KitWright.Editor.Tools.Builtins
             if (missing.Count > 0) return Response.Error("ASSET_NOT_FOUND", new { missing });
             if (objects.Count == 0) return Response.Error("NO_ASSETS", new { message = "no valid asset paths provided" });
 
-            atlas.Remove(objects.ToArray());
+            // Only members go to Remove: what it does with a non-member is not documented.
+            var packedPaths = PackedPaths(atlas);
+            var members = objects.Where(o => packedPaths.Contains(AssetDatabase.GetAssetPath(o))).ToArray();
+
+            var before = atlas.GetPackables().Length;
+            if (members.Length > 0)
+                atlas.Remove(members);
+            var removed = before - atlas.GetPackables().Length;
+            if (removed == 0)
+                return Response.Error("NOT_PACKED", new { path, requested = objects.Count, packableCount = before },
+                    "None of those assets is packed in this atlas, so nothing was removed. get_sprite_atlas_info lists the packables.");
+
             EditorUtility.SetDirty(atlas);
             AssetDatabase.SaveAssetIfDirty(atlas);
             AssetDatabase.ImportAsset(path);
 
-            return Response.Success($"Removed {objects.Count} packable(s) from '{Path.GetFileName(path)}'.", new { removed = objects.Count, packableCount = atlas.GetPackables().Length });
+            return Response.Success($"Removed {removed} packable(s) from '{Path.GetFileName(path)}'.",
+                new { removed, requested = objects.Count, packableCount = atlas.GetPackables().Length });
         }
 
-        [Description("Update SpriteAtlas packing and texture settings. Only the parameters you pass are applied.")]
+        [Description("Update SpriteAtlas packing and texture settings. Only the parameters you pass are applied, and at least one is required.")]
         public static object SetSpriteAtlasSettings(
             [ToolParam("Asset path of the SpriteAtlas")] string path,
             [ToolParam("Include in builds", Required = false)] bool? include_in_build = null,
@@ -123,6 +168,11 @@ namespace KitWright.Editor.Tools.Builtins
             var atlas = LoadAtlas(path, out var error);
             if (atlas == null) return error;
 
+            if (!include_in_build.HasValue && !enable_rotation.HasValue && !enable_tight_packing.HasValue && !padding.HasValue &&
+                !readable.HasValue && !generate_mip_maps.HasValue && !srgb.HasValue && filter_mode == null)
+                return Response.Error("NOTHING_TO_SET", new { path },
+                    "Pass at least one setting: include_in_build, enable_rotation, enable_tight_packing, padding, readable, generate_mip_maps, srgb or filter_mode.");
+
             // Validated before anything is written. filter_mode used to be parsed last, after
             // include_in_build and the packing settings had already been applied, so a typo there
             // left half the call's changes on an asset the answer said had failed - and they reach
@@ -130,10 +180,14 @@ namespace KitWright.Editor.Tools.Builtins
             FilterMode? filterMode = null;
             if (filter_mode != null)
             {
-                if (!Enum.TryParse<FilterMode>(filter_mode, true, out var parsed))
+                if (!ValueConverter.TryParseEnum<FilterMode>(filter_mode, out var parsed))
                     return Response.Error("INVALID_FILTER_MODE", new { filter_mode, valid = new[] { "Point", "Bilinear", "Trilinear" } });
                 filterMode = parsed;
             }
+
+            if (padding.HasValue && (padding.Value < 0 || padding.Value > MaxAtlasPadding))
+                return Response.Error("INVALID_PARAM", new { param = "padding", provided = padding.Value },
+                    $"padding must be between 0 and {MaxAtlasPadding} pixels.");
 
             if (include_in_build.HasValue) atlas.SetIncludeInBuild(include_in_build.Value);
 
@@ -193,6 +247,10 @@ namespace KitWright.Editor.Tools.Builtins
             return atlas;
         }
 
+        private static HashSet<string> PackedPaths(SpriteAtlas atlas) =>
+            new HashSet<string>(
+                atlas.GetPackables().Where(p => p != null).Select(AssetDatabase.GetAssetPath), StringComparer.OrdinalIgnoreCase);
+
         private static (List<Object> objects, List<string> missing) LoadObjects(string csv)
         {
             var objects = new List<Object>();
@@ -210,9 +268,7 @@ namespace KitWright.Editor.Tools.Builtins
             return (objects, missing);
         }
 
-        private static bool IsUnderAssets(string path)
-        {
-            return !string.IsNullOrEmpty(path) && path.Replace('\\', '/').StartsWith("Assets/", StringComparison.OrdinalIgnoreCase);
-        }
+        private static bool IsPackable(Object obj) =>
+            obj is Sprite || obj is Texture2D || (obj is DefaultAsset && AssetDatabase.IsValidFolder(AssetDatabase.GetAssetPath(obj)));
     }
 }

@@ -428,9 +428,9 @@ public static class MyCustomTools
 }
 ```
 
-Public static methods on the class are discovered automatically, converted to snake_case (`spawn_enemies`), and exposed via MCP with JSON Schema definitions generated from the parameter list. Mark a method `[ReadOnlyTool]` when it does not modify the scene or project, and clients receive `annotations.readOnlyHint` for it.
+Public static methods on the class are discovered automatically, converted to snake_case (`spawn_enemies`), and exposed via MCP with JSON Schema definitions generated from the parameter list. Mark a method `[ReadOnlyTool]` when it does not modify the scene or project, and clients receive `annotations.readOnlyHint` for it. A parameter with a C# default (`int count = 5`) is optional in the schema; one without a default is required unless it says `Required = false`.
 
-Project-declared tools are exposed under **every** profile, including the default `core`, since writing one is already an explicit opt-in — a custom tool would otherwise be invisible to the profile most clients connect with. They still appear in the **Tool Exposure** tab, so a profile configured there can turn them off like any built-in tool.
+Project-declared tools, including those registered in code with `ToolRegistry.Register`, are exposed under **every** profile, including the default `core`, since writing one is already an explicit opt-in — a custom tool would otherwise be invisible to the profile most clients connect with. They still appear in the **Tool Exposure** tab, so a profile configured there can turn them off like any built-in tool.
 
 ## Architecture
 

@@ -197,13 +197,13 @@ namespace KitWright.Editor.Tools.Builtins
         /// Captures the game view including ScreenSpaceOverlay UI by temporarily
         /// switching overlay canvases to ScreenSpaceCamera during render.
         /// </summary>
-        private static byte[] CaptureWithUIPngBytes(Camera camera, int width, int height)
+        internal static byte[] CaptureWithUIPngBytes(Camera camera, int width, int height)
         {
             RenderTexture renderTexture = null;
             RenderTexture previousTarget = null;
             RenderTexture previousActive = null;
             Texture2D screenshot = null;
-            var overlayCanvases = new List<Canvas>();
+            var overlayCanvases = new List<(Canvas Canvas, Camera WorldCamera, float PlaneDistance)>();
 
             RequireAGraphicsDevice();
 
@@ -218,7 +218,7 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     if (canvas.renderMode == RenderMode.ScreenSpaceOverlay && canvas.gameObject.activeInHierarchy)
                     {
-                        overlayCanvases.Add(canvas);
+                        overlayCanvases.Add((canvas, canvas.worldCamera, canvas.planeDistance));
                         canvas.renderMode = RenderMode.ScreenSpaceCamera;
                         canvas.worldCamera = camera;
                         canvas.planeDistance = camera.nearClipPlane + 0.1f;
@@ -239,11 +239,12 @@ namespace KitWright.Editor.Tools.Builtins
             finally
             {
                 // Restore overlay canvases
-                foreach (var canvas in overlayCanvases)
+                foreach (var (canvas, worldCamera, planeDistance) in overlayCanvases)
                 {
                     if (canvas != null)
                     {
-                        canvas.worldCamera = null;
+                        canvas.worldCamera = worldCamera;
+                        canvas.planeDistance = planeDistance;
                         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                     }
                 }

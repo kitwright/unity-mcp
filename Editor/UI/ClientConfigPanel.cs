@@ -470,6 +470,13 @@ namespace KitWright.Editor.MCP.Server
             if (content == existing)
                 return;
 
+            // ~/.claude.json is rewritten by its own client all the time; a write over what was read
+            // would drop whatever it saved in between.
+            if (ReadExistingConfig(path) != existing)
+                throw new IOException(
+                    $"{path} changed while it was being edited. Nothing was written, so that change is " +
+                    "intact. Configure again.");
+
             if (!string.IsNullOrWhiteSpace(existing))
                 BackUpConfig(path);
 
@@ -1090,11 +1097,21 @@ namespace KitWright.Editor.MCP.Server
         }
 
         private static readonly Regex TomlUrlLine =
-            new Regex(@"(?m)^([ \t]*url[ \t]*=[ \t]*)(?:""[^""\r\n]*""|'[^'\r\n]*')", RegexOptions.Compiled);
+            new Regex(@"(?m)^([ \t]*url[ \t]*=[ \t]*)(?:""([^""\r\n]*)""|'([^'\r\n]*)')", RegexOptions.Compiled);
 
         internal static string SetTomlUrl(string section, string url)
         {
             return TomlUrlLine.Replace(section, match => match.Groups[1].Value + "\"" + url + "\"", 1);
+        }
+
+        // The `url` key of the table itself: `base_url = ...` or a commented line is not it.
+        internal static string TomlUrlValue(string section)
+        {
+            var match = TomlUrlLine.Match(section);
+            if (!match.Success)
+                return null;
+
+            return match.Groups[2].Success ? match.Groups[2].Value : match.Groups[3].Value;
         }
 
         // Header lines are told apart from array rows (`[1,2],`) and from text inside a multi-line
