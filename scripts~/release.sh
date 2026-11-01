@@ -43,6 +43,7 @@ Options:
   --no-export          Skip unitypackage export; validates an existing package if present
   --no-wrapper         Skip wrapper version bump and dotnet pack
   --dry-run            Print major actions without mutating files or publishing
+  --bump-only          Only bump package.json and the README snippets, then stop
   -h, --help           Show this help
 
 Environment:
@@ -80,6 +81,7 @@ PUBLISH_NUGET=0
 PUBLISH_REGISTRY=0
 VERIFY_OPENUPM=0
 DRY_RUN=0
+BUMP_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -91,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --publish-registry) PUBLISH_REGISTRY=1 ;;
     --verify-openupm) VERIFY_OPENUPM=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --bump-only) BUMP_ONLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
@@ -649,6 +652,10 @@ archive_artifacts() {
 
 main() {
   require_command node
+  if [[ "$BUMP_ONLY" == 1 ]]; then
+    bump_versions
+    return
+  fi
   require_command rg
   require_command shasum
   run mkdir -p "$OUT_DIR"
