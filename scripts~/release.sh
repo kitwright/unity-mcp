@@ -435,7 +435,7 @@ generate_notes_and_sums() {
   info "Generating release notes and SHA256SUMS"
   {
     if awk -v version="$VERSION" '
-      $0 ~ "^## \\[" version "\\]" { found = 1; next }
+      index($0, "## [" version "]") == 1 { found = 1; next }
       found && /^## \[/ { exit }
       found { print }
       END { exit found ? 0 : 1 }

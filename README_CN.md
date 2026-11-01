@@ -76,7 +76,7 @@ openupm add com.kitwright.unity.mcp
     }
   ],
   "dependencies": {
-    "com.kitwright.unity.mcp": "1.0.1"
+    "com.kitwright.unity.mcp": "1.0.2"
   }
 }
 ```
