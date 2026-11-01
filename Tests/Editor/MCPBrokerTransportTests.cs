@@ -14,6 +14,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.State;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
@@ -1356,6 +1357,28 @@ namespace KitWright.Editor
         {
             if (Directory.Exists(path))
                 Directory.Delete(path, true);
+        }
+
+        [Test]
+        public void KeepWithinBrokerLimit_PassesASmallReplyThroughUntouched()
+        {
+            const string reply = "{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}";
+
+            Assert.AreSame(reply, MCPBrokerClientTransport.KeepWithinBrokerLimit(reply, 1));
+        }
+
+        [Test]
+        public void KeepWithinBrokerLimit_AnswersAReplyTheBrokerWouldDropWithAnErrorForTheSameRequest()
+        {
+            var tooBig = new string('x', 33 * 1024 * 1024);
+
+            var answer = MCPBrokerClientTransport.KeepWithinBrokerLimit(tooBig, 7);
+
+            Assert.Less(answer.Length, 1024);
+            var parsed = JObject.Parse(answer);
+            Assert.AreEqual(7, (int)parsed["id"]);
+            Assert.AreEqual(-32000, (int)parsed["error"]["code"]);
+            StringAssert.Contains("32 MB", (string)parsed["error"]["message"]);
         }
     }
 }
