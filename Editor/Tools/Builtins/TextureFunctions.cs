@@ -191,9 +191,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (AssetImporter.GetAtPath(path) is TextureImporter sheet &&
                 sheet.textureType == TextureImporterType.Sprite && sheet.spriteImportMode == SpriteImportMode.Multiple)
             {
-#pragma warning disable CS0618
-                keptSlices = sheet.spritesheet?.Length ?? 0;
-#pragma warning restore CS0618
+                keptSlices = SpriteFunctions.SlicedSpriteCount(sheet);
                 if (keptSlices > 0)
                 {
                     sheet.GetSourceTextureWidthAndHeight(out var oldWidth, out var oldHeight);

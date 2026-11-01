@@ -42,6 +42,7 @@ EXPECTED = [
     r"Windows 8\.3 names",
     r"Windows path spellings",
     r"needs a scene already in the build list",
+    r"does not run module initializers",
 ]
 
 

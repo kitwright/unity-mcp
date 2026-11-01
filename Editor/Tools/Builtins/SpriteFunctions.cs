@@ -14,6 +14,30 @@ namespace KitWright.Editor.Tools.Builtins
     {
         private const int MaxSliceCells = 10000;
 
+        // Unity 6000.6 reports one entry for a sheet that was only switched to Multiple: "<name>_0" over the
+        // whole texture, with no border. Nobody cut that, so it is not a slice to protect.
+        internal static int SlicedSpriteCount(TextureImporter importer)
+        {
+#pragma warning disable CS0618
+            var sheet = importer.spritesheet;
+#pragma warning restore CS0618
+            if (sheet == null || sheet.Length == 0)
+                return 0;
+
+            if (sheet.Length == 1)
+            {
+                importer.GetSourceTextureWidthAndHeight(out var width, out var height);
+                var only = sheet[0];
+                if (only.name == System.IO.Path.GetFileNameWithoutExtension(importer.assetPath) + "_0" &&
+                    only.border == Vector4.zero && only.rect == new Rect(0f, 0f, width, height))
+                {
+                    return 0;
+                }
+            }
+
+            return sheet.Length;
+        }
+
         [Description("Set a texture asset's type to Sprite. mode 'single' for one sprite, 'multiple' for a sheet you then slice. Reimports the asset. Only what you pass is changed: without mode a texture that is already a Sprite keeps its mode (anything else becomes 'single'), without pixels_per_unit the current value stays.")]
         public static object SetTextureAsSprite(
             [ToolParam("Project-relative texture path, e.g. 'Assets/Art/hero.png'")] string path,
@@ -117,8 +141,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (metas.Count == 0)
                 return Response.Error("NO_CELLS_GENERATED", new { path, texW, texH, cell_width, cell_height, hint = "Cell size larger than the source image, or offset too big." });
 
+            var existing = SlicedSpriteCount(ti);
 #pragma warning disable CS0618
-            var existing = ti.spritesheet?.Length ?? 0;
             if (existing > 0 && !overwrite)
                 return Response.Error("SPRITESHEET_EXISTS", new { path, existingSprites = existing, wouldCreate = metas.Count },
                     "The sheet already has sprites, possibly cut by hand with their own names, pivots and borders. " +

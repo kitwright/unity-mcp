@@ -124,7 +124,7 @@ namespace KitWright.Editor.Tools.Helpers
             // Auto-detect default method
             if (string.IsNullOrEmpty(searchMethod))
             {
-                if (long.TryParse(target, out _))
+                if (ObjectIdCodec.LooksLikeId(target))
                     searchMethod = MethodById;
                 else if (target.Contains('/'))
                     searchMethod = MethodByPath;
@@ -473,7 +473,7 @@ namespace KitWright.Editor.Tools.Helpers
 
             // Instance ids are reassigned by every domain reload, so a stale id is the one failure
             // an agent cannot diagnose from the name alone.
-            if (!string.IsNullOrEmpty(value) && long.TryParse(value, out _))
+            if (ObjectIdCodec.LooksLikeId(value))
                 return "Instance ids change on every domain reload (script compile, entering play mode). " +
                        "Re-read get_hierarchy or find_game_objects for current ids.";
 
@@ -493,7 +493,7 @@ namespace KitWright.Editor.Tools.Helpers
         internal static List<string> SuggestTargets(string query)
         {
             var suggestions = new List<string>();
-            if (string.IsNullOrEmpty(query) || long.TryParse(query, out _))
+            if (string.IsNullOrEmpty(query) || ObjectIdCodec.LooksLikeId(query))
                 return suggestions;
 
             var matchPath = query.Contains('/');

@@ -344,6 +344,11 @@ public class EarlyBird
             Assert.IsFalse(ModuleInitializerSentinel.Fired, "the safety scan ran the module initializer before judging it");
 
             compilation.Assembly.GetType("EarlyBird").GetMethod("Run").Invoke(null, null);
+            System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(compilation.Assembly.ManifestModule.ModuleHandle);
+#if UNITY_6000_6_OR_NEWER
+            if (!ModuleInitializerSentinel.Fired)
+                Assert.Ignore("Mono in this Unity does not run module initializers, even when asked to, so there was nothing for the scan to get ahead of.");
+#endif
             Assert.IsTrue(ModuleInitializerSentinel.Fired, "the initializer never ran at all, so this test proved nothing");
         }
 

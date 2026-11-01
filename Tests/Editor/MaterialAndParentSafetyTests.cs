@@ -200,7 +200,7 @@ namespace KitWright.Editor.Tests
         {
             var instance = NewPrefabInstance(out var child);
             var other = Make(new GameObject(Unique("Other")));
-            var properties = "{\"parent\":{\"fileID\":" + Id(other.transform) + "}}";
+            var properties = "{\"parent\":{\"fileID\":\"" + Id(other.transform) + "\"}}";
 
             LogAssert.ignoreFailingMessages = true;
             try
