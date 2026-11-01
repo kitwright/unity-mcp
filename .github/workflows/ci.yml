@@ -91,8 +91,6 @@ jobs:
         permissions:
             contents: read
             checks: write
-        # An experimental leg still shows its red X in the PR checks, but does not fail the run.
-        continue-on-error: ${{ matrix.experimental }}
         strategy:
             # The minimum version package.json declares, the Unity 6 line we develop against, so a
             # UNITY_6000_0_OR_NEWER branch cannot break unnoticed, and the newest supported stream.
@@ -102,13 +100,10 @@ jobs:
                 include:
                     - unityVersion: 2022.3.0f1
                       inputSystem: ""
-                      experimental: false
                     - unityVersion: 6000.0.75f1
                       inputSystem: "1.18.0"
-                      experimental: false
                     - unityVersion: 6000.6.7f1
                       inputSystem: "1.20.1"
-                      experimental: true
 
         steps:
             - name: Checkout
