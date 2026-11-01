@@ -27,6 +27,25 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void WriteAllText_ToAPathThatDoesNotExistYet_LogsNothing()
+        {
+            var logged = new System.Collections.Generic.List<string>();
+            UnityEngine.Application.LogCallback capture = (message, stack, type) => logged.Add(type + ": " + message);
+
+            UnityEngine.Application.logMessageReceived += capture;
+            try
+            {
+                AtomicFile.WriteAllText(Path.Combine(_root, "Fresh.cs"), "// one\n");
+            }
+            finally
+            {
+                UnityEngine.Application.logMessageReceived -= capture;
+            }
+
+            CollectionAssert.IsEmpty(logged);
+        }
+
+        [Test]
         public void WriteAllText_CreatesFileWithoutLeavingSiblings()
         {
             var path = Path.Combine(_root, "New.cs");
