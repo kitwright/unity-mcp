@@ -69,6 +69,7 @@ there only when the test needs something the runners do not have, and name the t
 - [ ] Initial tags or release tags follow the chosen versioning scheme
 - [ ] The `.unitypackage` was exported from an explicit filtered asset list, without `IncludeDependencies` or `IncludeLibraryAssets`
 - [ ] The `.unitypackage` contains only `Assets/unity-mcp` paths; verify there are no `ProjectSettings/`, `Packages/`, `Library/`, `Tests/`, `CLAUDE.md`, or local token entries before upload
+- [ ] The `.unitypackage` has a `packagemanagermanifest` entry listing the `package.json` dependencies, so Unity's import window offers to install them (`release.sh` adds it)
 
 ## 6. Publish
 
