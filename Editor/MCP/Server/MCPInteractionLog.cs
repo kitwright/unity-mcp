@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
 
@@ -33,6 +34,10 @@ namespace KitWright.Editor.MCP.Server
         internal const string SessionStateKey = "KitWright.MCP.InteractionLog";
         private static readonly string ImageDir =
             Path.Combine("Library", "KitWrightMcp", "ActivityImages");
+
+        private const int ImagesKept = 100;
+        private const int PruneEveryWrites = 50;
+        private static int _writesSincePrune = PruneEveryWrites;
 
         private MCPLogEntry[] _buffer;
         private int _head;
@@ -271,6 +276,9 @@ namespace KitWright.Editor.MCP.Server
                 var path = Path.Combine(ImageDir,
                     $"shot_{DateTime.Now:yyyyMMdd_HHmmss_fff}_{Guid.NewGuid():N}.{ExtensionOf(dataUri)}");
                 File.WriteAllBytes(path, bytes);
+
+                if (Housekeeping.Due(ref _writesSincePrune, PruneEveryWrites))
+                    Housekeeping.PruneFiles(ImageDir, "shot_*", ImagesKept, path);
                 return path;
             }
             catch (Exception ex)

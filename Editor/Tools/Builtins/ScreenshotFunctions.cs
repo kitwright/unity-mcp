@@ -28,6 +28,10 @@ namespace KitWright.Editor.Tools.Builtins
         // that: 512KB raw -> ~683KB base64, leaving headroom under the drop point.
         internal const int MaxInlineScreenshotBytes = 512 * 1024;
 
+        private const int ScreenshotsKept = 200;
+        private const int PruneEveryWrites = 50;
+        private static int _writesSincePrune = PruneEveryWrites;
+
         internal static bool ShouldSpillScreenshotToFile(long pngBytes, bool saveToFile)
         {
             return saveToFile || pngBytes > MaxInlineScreenshotBytes;
@@ -70,8 +74,11 @@ namespace KitWright.Editor.Tools.Builtins
                 var directory = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(directory))
                     Directory.CreateDirectory(directory);
-                File.WriteAllBytes(path, pngBytes);
+                AtomicFile.WriteAllBytes(path, pngBytes);
                 savedPath = path;
+
+                if (Housekeeping.Due(ref _writesSincePrune, PruneEveryWrites))
+                    Housekeeping.PruneFiles(Path.Combine(projectRoot, ScreenshotDirRelative), "*.png", ScreenshotsKept, path);
                 return true;
             }
             catch (Exception ex)
@@ -248,9 +255,11 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 readableRenderTexture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
                 readableRenderTexture.Create();
-                Graphics.Blit(sourceTexture, readableRenderTexture);
 
+                // Before the Blit, which leaves the target active: read after it, this "restored" the
+                // texture about to be released and Unity warned about releasing the active one.
                 previousActive = RenderTexture.active;
+                Graphics.Blit(sourceTexture, readableRenderTexture);
                 RenderTexture.active = readableRenderTexture;
 
                 screenshot = ReadActiveRenderTextureToTexture2D(width, height, flipVertically);

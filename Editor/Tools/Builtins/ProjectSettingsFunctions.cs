@@ -85,7 +85,8 @@ namespace KitWright.Editor.Tools.Builtins
                      "entry a means 'layer a collides with layer b' — Unity keeps it symmetric, so clear or set both " +
                      "entry a bit b and entry b bit a.\n" +
                      "Writes go through SerializedObject and are flushed with AssetDatabase.SaveAssets, so the editor's " +
-                     "copy of the page and the file on disk move together. Patching ProjectSettings/*.asset as text " +
+                     "copy of the page and the file on disk move together. That save also writes any other asset with unsaved " +
+                     "changes, and does not run when no field was applied. Patching ProjectSettings/*.asset as text " +
                      "instead is picked up only if an AssetDatabase.Refresh follows; without one the editor keeps its " +
                      "own copy and overwrites the edit the next time Unity writes settings.")]
         public static object SetProjectSettings(
@@ -100,18 +101,18 @@ namespace KitWright.Editor.Tools.Builtins
             if (target == null) return resolveError;
 
             JObject parsed;
-            try { parsed = JObject.Parse(properties); }
+            try { parsed = JsonParse.Object(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
 
             var results = ComponentSerializer.WriteProperties(target, parsed, $"Set {singleton}");
 
-            // The singleton is outside the AssetDatabase, so SetDirty alone leaves the change in memory
-            // until Unity next decides to write ProjectSettings/*.asset.
-            AssetDatabase.SaveAssets();
-
             var success = results.Count(r => r.Success);
             if (success == 0)
                 return Response.Error("PROPERTY_SET_FAILED", new { singleton, fields = results });
+
+            // The singleton is outside the AssetDatabase, so SetDirty alone leaves the change in memory
+            // until Unity next decides to write ProjectSettings/*.asset.
+            AssetDatabase.SaveAssets();
 
             return Response.Success($"Applied {success} of {results.Count} field(s) on {singleton}.", new
             {

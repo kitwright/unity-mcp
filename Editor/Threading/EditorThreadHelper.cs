@@ -15,7 +15,7 @@ namespace KitWright.Editor.Threading
             = new ConcurrentQueue<(Func<object>, TaskCompletionSource<object>, CancellationToken)>();
 
         private readonly int _mainThreadId;
-        private readonly SynchronizationContext _syncContext;
+        private volatile SynchronizationContext _syncContext;
         private bool _disposed;
 
         private static long s_lastPumpTicks = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -87,6 +87,11 @@ namespace KitWright.Editor.Threading
             _syncContext = SynchronizationContext.Current;
             EditorApplication.update += ProcessQueues;
         }
+
+        // Built from an [InitializeOnLoad] constructor, this runs before Unity installs the main-thread
+        // context, so the constructor's capture can be null for good: take it again on the editor thread.
+        internal static SynchronizationContext CaptureIfMissing(SynchronizationContext captured) =>
+            captured ?? SynchronizationContext.Current;
 
         // QueuePlayerLoopUpdate is main-thread-only, so off-thread callers go through the
         // captured sync context. Unfocused post-to-exec: ~154ms with this wake vs ~238ms without
@@ -275,6 +280,7 @@ namespace KitWright.Editor.Threading
         internal void ProcessQueues()
         {
             Interlocked.Exchange(ref s_lastPumpTicks, System.Diagnostics.Stopwatch.GetTimestamp());
+            _syncContext = CaptureIfMissing(_syncContext);
             Volatile.Write(ref s_busyAtLastPump,
                 CompilationService.IsActuallyCompiling || EditorApplication.isUpdating);
             if (_disposed) return;

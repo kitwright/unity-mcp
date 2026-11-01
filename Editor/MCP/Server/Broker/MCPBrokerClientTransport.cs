@@ -22,6 +22,10 @@ namespace KitWright.Editor.MCP.Server
         private const int RequestExecutionTimeoutSeconds = 300;
         private const int MaxConcurrentPushes = 8;
 
+        // Same value as MaxBodyBytes in keepalive-broker.cs.txt: a bigger push is dropped there without an
+        // answer, and the client then waits out the hold deadline for a reply that never comes.
+        private const int BrokerMaxBodyBytes = 32 * 1024 * 1024;
+
         private readonly int _port;
         private readonly string _token;
         private readonly string _clientToken;
@@ -195,9 +199,11 @@ namespace KitWright.Editor.MCP.Server
             string issuedSessionId = null;
             var clientStatus = 0;
             string clientContentTypeOverride = null;
+            object requestId = null;
             try
             {
                 var request = ParseJsonRequest(pull.Body);
+                requestId = request?.Id;
                 if (request != null)
                 {
                     request.IsBrokerRedelivery = pull.IsRedelivery;
@@ -259,6 +265,8 @@ namespace KitWright.Editor.MCP.Server
             {
                 responseJson = SerializeResponse(CreateError(null, -32603, "Internal error: " + ex.Message));
             }
+
+            responseJson = KeepWithinBrokerLimit(responseJson, requestId);
 
             var contentType = clientContentTypeOverride;
             var notified = canPiggybackNotification && pull.AcceptsSse &&
@@ -371,6 +379,16 @@ namespace KitWright.Editor.MCP.Server
 
             return string.IsNullOrEmpty(request.SessionId) ||
                    SSE.SSESessionManager.Instance.TryGetSession(request.SessionId, out _);
+        }
+
+        internal static string KeepWithinBrokerLimit(string responseJson, object requestId)
+        {
+            if (Encoding.UTF8.GetByteCount(responseJson ?? string.Empty) <= BrokerMaxBodyBytes)
+                return responseJson;
+
+            return SerializeResponse(CreateError(requestId, -32000,
+                "The reply is larger than the 32 MB the MCP broker accepts. Ask for less: fewer commands " +
+                "in one batch_execute, or a smaller max_nodes or max_chars."));
         }
 
         private void PushOnce(long requestId, string body, string clientContentType = null,

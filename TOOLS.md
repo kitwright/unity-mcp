@@ -63,7 +63,7 @@
 | `memory_take_snapshot` | Take a lightweight memory snapshot (aggregate numbers only, NOT a real Unity .snap file openable in the Memory Profiler window) and save it as JSON under MemoryCaptures/mcp-snapshots/. |
 | `profiler_start` | Start a Profiler capture session (enables UnityEngine.Profiling.Profiler and starts a set of persistent ProfilerRecorder counters used by get_counters/get_frame_timing). |
 | `profiler_status` | Report whether a Profiler capture session is currently running and how many counters are active. |
-| `profiler_stop` | Stop the current Profiler capture session and dispose all persistent ProfilerRecorder counters. |
+| `profiler_stop` | Stop the Profiler capture session started by profiler_start: disposes its ProfilerRecorder counters and turns Profiler.enabled off, even when it was already on before profiler_start. |
 
 ## Scene (13)
 
@@ -71,8 +71,8 @@
 |------|-------------|
 | `close_scene` | Close/unload an open scene (used in multi-scene editing). |
 | `create_new_scene` | Create a new empty scene. |
-| `enter_play_mode` *(core)* | Enter play mode in the editor |
-| `exit_play_mode` *(core)* | Exit play mode in the editor |
+| `enter_play_mode` *(core)* | Enter play mode in the editor. |
+| `exit_play_mode` *(core)* | Exit play mode in the editor. |
 | `get_scene_info` *(core)* | Get information about every loaded scene (the active scene plus any additively loaded ones), including path, dirty state, and a shallow root-object hierarchy per scene. |
 | `list_scenes` | List all scenes in the project |
 | `load_scene_additive` | Open a scene additively (keeps currently open scenes loaded), for multi-scene editing. |
@@ -91,8 +91,8 @@
 | `add_animator_state` | Add a state to an Animator Controller layer, optionally binding an Animation Clip to it. |
 | `add_animator_transition` | Add a transition between two Animator states. |
 | `assign_animator` | Assign an Animator Controller to a GameObject |
-| `create_animation_clip` | Create an Animation Clip asset |
-| `create_animator_controller` | Create an Animator Controller asset |
+| `create_animation_clip` | Create an Animation Clip asset. |
+| `create_animator_controller` | Create an Animator Controller asset. |
 | `get_animator_state` | Get an Animator's current runtime state: active state name (resolved from the controller when possible), normalized time, transition status, and all parameters with their current values. |
 | `play_animator_state` | Play a specific Animator state by name, e.g. |
 | `set_animator_parameter` | Set an Animator parameter by name. |
@@ -104,7 +104,7 @@
 |------|-------------|
 | `apply_prefab_overrides` | Apply a prefab instance's overrides back to its source prefab asset, so the changes become part of the prefab itself. |
 | `close_prefab_stage` | Close the currently open prefab stage and return to the main stage. |
-| `create_prefab` *(core)* | Create a prefab from a GameObject in the scene |
+| `create_prefab` *(core)* | Create a prefab from a GameObject in the scene. |
 | `create_prefab_variant` | Create a prefab variant from an existing prefab asset. |
 | `get_prefab_variant_info` | Get prefab info for a scene instance or prefab asset: prefab type (Regular/Variant/Model), asset path, whether it is a variant, and its base prefab path. |
 | `instantiate_prefab` | Instantiate a prefab in the scene |
@@ -118,7 +118,7 @@
 | Tool | Description |
 |------|-------------|
 | `assign_material` | Assign a material to a GameObject's renderer |
-| `copy_asset` | Copy an asset to a new location |
+| `copy_asset` | Copy an asset to a new location. |
 | `create_folder` | Create a project folder (and any missing parent folders) under Assets. |
 | `create_material` | Create a new material with a specified color |
 | `delete_asset` | Delete an asset by moving it to the OS trash (Recycle Bin). |
@@ -231,7 +231,7 @@
 | `get_audio_source_info` | Get the AudioSource settings on a GameObject. |
 | `play_clip_preview` | Preview-play an AudioClip in the editor without entering Play Mode (uses the internal AudioUtil API). |
 | `set_global_audio` | Set global audio settings: master volume (AudioListener.volume) and/or pause all audio (AudioListener.pause). |
-| `stop_clip_preview` | Stop all editor audio clip previews started by play_clip_preview. |
+| `stop_clip_preview` | Stop all editor audio clip previews, including ones started from the Inspector, not only those from play_clip_preview. |
 
 ## Code (6)
 
@@ -263,7 +263,7 @@
 | `add_nav_mesh_obstacle` | Add a NavMeshObstacle component to a GameObject so it blocks or carves the NavMesh. |
 | `bake_nav_mesh` | Bake the NavMesh for the current scene using the legacy scene NavMesh settings. |
 | `clear_nav_mesh` | Clear all baked NavMesh data from the current scene. |
-| `get_nav_mesh_info` | Get NavMesh info for the current scene: baked vertex and triangle counts, and per-area default costs. |
+| `get_nav_mesh_info` | Get NavMesh info: baked vertex and triangle counts. |
 | `set_agent_destination` | Set a NavMeshAgent's destination so it starts path-finding. |
 
 ## Shader (6)
@@ -323,7 +323,7 @@
 |------|-------------|
 | `add_volume_override` | Add a post-processing override to a Volume profile (URP). |
 | `create_volume` | Create a post-processing Volume GameObject (URP). |
-| `get_volume_info` | List post-processing overrides on a Volume's profile (URP), with each override's active state. |
+| `get_volume_info` | List post-processing overrides on a Volume's profile (URP), with each override's active state and how many of its parameters are ticked (overrideState). |
 | `remove_volume_override` | Remove a post-processing override from a Volume profile (URP). |
 | `set_volume_override_property` | Set a single parameter on a Volume override and enable its overrideState (URP). |
 
@@ -331,10 +331,10 @@
 
 | Tool | Description |
 |------|-------------|
-| `get_camera_properties` | Get all camera properties including type, FOV, clipping planes, background, and culling mask |
-| `set_camera_culling_mask` | Set the camera culling mask to show/hide specific layers |
+| `get_camera_properties` | Get a camera's type, FOV or size, clipping planes, background, clear flags, depth, culling mask, viewport rect, rendering path, HDR/MSAA, target display and texture, enabled state and transform. |
+| `set_camera_culling_mask` | Set the camera culling mask to show/hide specific layers. |
 | `set_camera_projection` | Set camera projection to orthographic or perspective with size/FOV |
-| `set_camera_settings` | Set camera clipping planes, background color, and clear flags |
+| `set_camera_settings` | Set camera clipping planes, background color, clear flags and depth. |
 
 ## Compilation (4)
 
@@ -361,7 +361,7 @@
 | `clear_execute_code_history` | Erase the entire execute_code history for the current Editor session. |
 | `execute_code` *(core)* | Primary high-flexibility execution tool. |
 | `get_execute_code_history` | Return the most recent execute_code invocations (success or failure) from the current Editor session. |
-| `replay_execute_code` | Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). |
+| `replay_execute_code` | Re-run a past execute_code invocation by its history id (use get_execute_code_history to discover ids). |
 
 ## Texture (4)
 
@@ -417,7 +417,7 @@
 | Tool | Description |
 |------|-------------|
 | `install_package` | Install a Unity package by name. |
-| `list_packages` | List all installed packages |
+| `list_packages` | List the packages the project depends on directly: the whole of Packages/manifest.json. |
 | `remove_package` | Remove a Unity package |
 
 ## Physics (3)

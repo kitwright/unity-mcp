@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using System.IO;
+using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using KitWright.Editor.Tools.Helpers;
@@ -15,14 +16,33 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Code")]
     internal static class CodeFunctions
     {
+        private const string DefaultScriptFolder = "Assets/Scripts/";
+
+        private static readonly char[] InvalidScriptNameChars =
+            Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\' }).Distinct().ToArray();
+
         [Description("Create a new C# script with the specified content")]
         public static string CreateScript(
-            [ToolParam("Script file name (without .cs)")]
+            [ToolParam("Script file name (without .cs, no folders)")]
             string name,
             [ToolParam("C# source code content")] string content,
-            [ToolParam("Path to save (e.g. 'Assets/Scripts/')", Required = false)]
-            string save_path = "Assets/Scripts/")
+            [ToolParam("Folder to save into (e.g. 'Assets/Scripts/'); the file name goes in name", Required = false)]
+            string save_path = DefaultScriptFolder)
         {
+            if (string.IsNullOrWhiteSpace(save_path))
+                save_path = DefaultScriptFolder;
+
+            if (name != null && name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                name = name.Substring(0, name.Length - 3);
+
+            if (string.IsNullOrWhiteSpace(name) || name == ".." || name.IndexOfAny(InvalidScriptNameChars) >= 0)
+                return ToolResultFormatter.Error("INVALID_NAME", new { name },
+                    "name is the file name alone, without .cs and without folders; pass the folder in save_path.");
+
+            if (save_path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
+                return ToolResultFormatter.Error("INVALID_SAVE_PATH", new { save_path },
+                    "save_path is the folder to write into, not the file; put the file name in name.");
+
             var assetPath = Path.Combine(save_path, $"{name}.cs");
             var fullPath = PathSafety.ResolveProjectPath(assetPath);
 
@@ -85,6 +105,7 @@ namespace KitWright.Editor.Tools.Builtins
             var staleError = CheckPrecondition(path, original, expected_sha256);
             if (staleError != null) return staleError;
 
+            content = MatchLineEndings(content, original);
             var syntaxError = CheckSyntaxRegression(path, original, content);
             if (syntaxError != null) return syntaxError;
 
@@ -121,6 +142,9 @@ namespace KitWright.Editor.Tools.Builtins
 
             var staleError = CheckPrecondition(path, content, expected_sha256);
             if (staleError != null) return staleError;
+
+            old_text = MatchLineEndings(old_text, content);
+            new_text = MatchLineEndings(new_text, content);
 
             if (!content.Contains(old_text))
                 return ToolResultFormatter.Error("PATCH_TEXT_NOT_FOUND",
@@ -251,7 +275,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             var parsed = new List<CSharpMemberEditor.MemberEdit>();
 
-            foreach (var token in JArray.Parse(edits))
+            foreach (var token in JsonParse.Array(edits))
             {
                 parsed.Add(new CSharpMemberEditor.MemberEdit
                 {
@@ -265,6 +289,23 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             return parsed;
+        }
+
+        // A client sends "\n"; a CRLF file would then never match a multi-line old_text and an
+        // edit_script rewrite would leave the file with mixed endings. A file that already mixes them
+        // is left alone, since there is no single ending to match.
+        internal static string MatchLineEndings(string text, string reference)
+        {
+            if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(reference))
+                return text;
+
+            var hasCrlf = reference.Contains("\r\n");
+            var hasLf = reference.Replace("\r\n", string.Empty).Contains('\n');
+            if (hasCrlf == hasLf)
+                return text;
+
+            var flat = text.Replace("\r\n", "\n");
+            return hasCrlf ? flat.Replace("\n", "\r\n") : flat;
         }
 
         // Optimistic-lock check: reject when the caller's snapshot no longer matches the file on disk.

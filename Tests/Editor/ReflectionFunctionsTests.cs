@@ -23,6 +23,8 @@ namespace KitWright.Editor.Tests
     public static class ReflectionProbeExtensions
     {
         public static int KitWrightProbe(this ReflectionProbeSubject subject, int factor) => factor;
+
+        public static int KitWrightAnyProbe<T>(this T value) => 0;
     }
 }
 
@@ -52,6 +54,48 @@ namespace KitWright.Editor.Tests
         {
             var result = ReflectionFunctions.ReflectApi(name, member, search, scope, includeNonPublic);
             return JObject.Parse(JsonConvert.SerializeObject(result));
+        }
+
+        [Test]
+        public void DescribeType_ListsConstructorsAndOperators()
+        {
+            var members = Call("Vector3")["data"]["members"];
+
+            Assert.IsTrue(members["constructors"].Any(c => ((string)c).Contains("Vector3(float x, float y, float z)")),
+                "constructors are how a caller builds the type");
+            Assert.IsTrue(members["operators"].Any(o => (string)o == "op_Addition"));
+        }
+
+        [Test]
+        public void Member_AnswersToAConstructorAndAnOperatorByName()
+        {
+            var constructors = Call("Vector3", ".ctor")["data"]["signatures"];
+            var addition = Call("Vector3", "op_Addition")["data"]["signatures"];
+
+            Assert.IsTrue(constructors.Any(c => ((string)c).Contains("float x, float y")));
+            Assert.IsTrue(addition.Any(s => ((string)s).Contains("op_Addition")));
+        }
+
+        [Test]
+        public void MemberNotFound_NeverSuggestsAnAccessorItWillNotAnswerTo()
+        {
+            var missing = Call("Rigidbody", "get_mass");
+
+            Assert.AreEqual("MEMBER_NOT_FOUND", (string)missing["code"]);
+            Assert.IsFalse(missing["data"]["candidates"].Any(c => (string)c == "get_mass"),
+                "suggesting the query back sent the caller in a circle");
+        }
+
+        [Test]
+        public void DescribeType_LeavesOutExtensionsThatTargetEveryType_ButStillAnswersByName()
+        {
+            var listed = Call("ReflectionProbeSubject")["data"]["extension_methods"].Select(t => (string)t).ToArray();
+
+            Assert.Contains("KitWrightProbe", listed);
+            Assert.IsFalse(listed.Contains("KitWrightAnyProbe"), "a 'this T' with no constraint applies to every type");
+
+            var byName = Call("ReflectionProbeSubject", "KitWrightAnyProbe");
+            Assert.IsTrue((bool)byName["success"], byName.ToString());
         }
 
         [Test]

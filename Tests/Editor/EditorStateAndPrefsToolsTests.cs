@@ -151,13 +151,13 @@ namespace KitWright.Editor.Tests
                 Assert.AreEqual(second, Selection.activeGameObject, "A second call replaces the selection.");
                 Assert.AreEqual(1, Selection.objects.Length);
 
-                // A name that resolves to nothing is reported as found-nothing rather than refused,
-                // and it does clear the selection - pinned because an agent has to read notFound to
-                // know its click target was never there.
+                // A name that resolves to nothing is refused and the selection is left as it was, so a
+                // mistyped name cannot wipe what the user had selected; notFound names what was missing.
                 var missed = Call("set_selection", "targets", "KwSweepNothingCalledThis", "find_method", "by_name");
-                AssertSuccess(missed);
-                Assert.AreEqual(0, ((JArray)missed["data"]["selected"]).Count, missed.ToString());
+                AssertFailed(missed);
+                Assert.AreEqual("NO_TARGETS_RESOLVED", (string)missed["code"], missed.ToString());
                 StringAssert.Contains("KwSweepNothingCalledThis", missed["data"]["notFound"].ToString());
+                Assert.AreEqual(second, Selection.activeGameObject);
             }
             finally
             {

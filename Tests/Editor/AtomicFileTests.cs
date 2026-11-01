@@ -27,6 +27,25 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void WriteAllText_ToAPathThatDoesNotExistYet_LogsNothing()
+        {
+            var logged = new System.Collections.Generic.List<string>();
+            UnityEngine.Application.LogCallback capture = (message, stack, type) => logged.Add(type + ": " + message);
+
+            UnityEngine.Application.logMessageReceived += capture;
+            try
+            {
+                AtomicFile.WriteAllText(Path.Combine(_root, "Fresh.cs"), "// one\n");
+            }
+            finally
+            {
+                UnityEngine.Application.logMessageReceived -= capture;
+            }
+
+            CollectionAssert.IsEmpty(logged);
+        }
+
+        [Test]
         public void WriteAllText_CreatesFileWithoutLeavingSiblings()
         {
             var path = Path.Combine(_root, "New.cs");
@@ -62,6 +81,25 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("// two\n", File.ReadAllText(path));
             Assert.AreEqual("// someone else's draft\n", File.ReadAllText(neighbour),
                 "the swap wrote through a file that was never ours");
+        }
+
+        [Test]
+        public void WriteAllText_KeepsABomTheFileHadAndAddsNoneToANewFile()
+        {
+            var bom = new byte[] { 0xEF, 0xBB, 0xBF };
+            var withBom = Path.Combine(_root, "WithBom.cs");
+            File.WriteAllBytes(withBom, bom);
+
+            AtomicFile.WriteAllText(withBom, "// two\n");
+
+            var written = File.ReadAllBytes(withBom);
+            CollectionAssert.AreEqual(bom, new[] { written[0], written[1], written[2] });
+            Assert.AreEqual("// two\n", File.ReadAllText(withBom));
+
+            var fresh = Path.Combine(_root, "Fresh.cs");
+            AtomicFile.WriteAllText(fresh, "// one\n");
+
+            Assert.AreEqual((byte)'/', File.ReadAllBytes(fresh)[0]);
         }
 
         private static void AssertNoSiblings(string path)

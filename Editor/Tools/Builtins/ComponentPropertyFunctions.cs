@@ -23,7 +23,7 @@ namespace KitWright.Editor.Tools.Builtins
         [ReadOnlyTool]
         public static object ListComponents(
             [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method, searchInactive: true);
             if (go == null)
@@ -52,7 +52,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
             [ToolParam("Component type name (e.g. 'Rigidbody'). Omit if using component_instance_id.", Required = false)] string component = null,
             [ToolParam("Component instanceId (alternative to target+component)", Required = false)] string component_instance_id = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null,
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null,
             [ToolParam("Comma-separated name substrings; a property is kept if it contains any of them (case-insensitive). Matches Unity's serialized names, so 'resolution' finds 'm_ReferenceResolution'. Empty = every property.", Required = false)] string name_filter = null,
             [ToolParam("Also return nested and array/list element properties, named by full path (e.g. 'm_Sizes.Array.data[0]'). Off by default: arrays then read as '<Array length=N>'.", Required = false)] bool descend = false,
             [ToolParam("Stop after this many properties (1-5000). Mostly matters with descend, where an array of a few thousand elements is one property per element. The response reports the untruncated total.", Required = false)] int max_properties = 400,
@@ -114,11 +114,11 @@ namespace KitWright.Editor.Tools.Builtins
                      "Pass `properties` as a JSON object: {\"mass\": 5, \"isKinematic\": true, \"material\": {\"fileID\": 12345}}. " +
                      "Returns per-field success so partial failures are diagnosable.")]
         public static object SetComponentProperties(
+            [ToolParam("JSON object of property→value pairs")] string properties,
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
             [ToolParam("Component type name (omit if using component_instance_id)", Required = false)] string component = null,
-            [ToolParam("JSON object of property→value pairs")] string properties = null,
             [ToolParam("Component instanceId (alternative to target+component)", Required = false)] string component_instance_id = null,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrWhiteSpace(properties))
                 return Response.Error("PROPERTIES_REQUIRED");
@@ -127,7 +127,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (resolved.Error != null) return resolved.Error;
 
             JObject jobj;
-            try { jobj = JObject.Parse(properties); }
+            try { jobj = JsonParse.Object(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
 
             var results = ComponentSerializer.WriteProperties(resolved.Component, jobj,

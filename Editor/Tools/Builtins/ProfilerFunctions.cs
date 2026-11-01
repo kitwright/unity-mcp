@@ -28,8 +28,24 @@ namespace KitWright.Editor.Tools.Builtins
             ("Memory", "Total Used Memory"),
         };
 
+        // Without StartImmediately a ProfilerRecorder stays stopped and reads 0 forever.
+        private const ProfilerRecorderOptions RecorderOptions =
+            ProfilerRecorderOptions.Default | ProfilerRecorderOptions.StartImmediately;
+
+        // Survives a domain reload, unlike _recorders: profiler_stop must still turn off a Profiler
+        // that profiler_start enabled before the reload (entering Play Mode reloads by default).
+        private const string SessionKey = "KitWright.Profiler.SessionStarted";
+
         private static Dictionary<string, ProfilerRecorder> _recorders;
         private static bool _initializedReloadHook;
+
+        // A new recorder has no completed frame yet, so the Render counters read 0 until a few have passed.
+        private const double RecorderWarmupSeconds = 1.0;
+        private static double _recordersStartedAt;
+
+        internal static bool IsWarmingUp(double startedAt, double now) => now - startedAt < RecorderWarmupSeconds;
+
+        private static bool SessionActive => SessionState.GetBool(SessionKey, false);
 
         [Description("Start a Profiler capture session (enables UnityEngine.Profiling.Profiler and starts a set of " +
                      "persistent ProfilerRecorder counters used by get_counters/get_frame_timing). Safe to call again while already running.")]
@@ -39,6 +55,7 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 EnsureReloadHook();
                 Profiler.enabled = true;
+                SessionState.SetBool(SessionKey, true);
                 StartRecorders();
                 return "Profiler started. Recorders running: " + _recorders.Count +
                        ". Call get_frame_timing / get_counters after a few frames have elapsed.";
@@ -49,13 +66,19 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        [Description("Stop the current Profiler capture session and dispose all persistent ProfilerRecorder counters.")]
+        [Description("Stop the Profiler capture session started by profiler_start: disposes its ProfilerRecorder counters and " +
+                     "turns Profiler.enabled off, even when it was already on before profiler_start. Without a profiler_start " +
+                     "session (one survives a domain reload) it does nothing, so a recording the user started themselves is left alone.")]
         public static string ProfilerStop()
         {
             try
             {
+                if (!SessionActive && _recorders == null)
+                    return $"No profiler_start session is running; nothing to stop. Profiler.enabled left unchanged ({Profiler.enabled}).";
+
                 StopRecorders();
                 Profiler.enabled = false;
+                SessionState.EraseBool(SessionKey);
                 return "Profiler stopped.";
             }
             catch (Exception ex)
@@ -70,8 +93,10 @@ namespace KitWright.Editor.Tools.Builtins
         {
             try
             {
+                ResumeSessionRecorders();
                 var sb = new StringBuilder();
                 sb.AppendLine("Profiler Status");
+                sb.AppendLine($"- Session running (profiler_start): {SessionActive}");
                 sb.AppendLine($"- Profiler.enabled: {Profiler.enabled}");
                 sb.AppendLine($"- Active recorders: {(_recorders?.Count ?? 0)}");
                 if (_recorders != null)
@@ -138,69 +163,27 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Read current values of high-signal rendering/memory counters (Draw Calls, Batches, Triangles, " +
-                     "SetPass Calls, GC/Gfx memory, etc). Requires profiler_start to have been called at least a few frames earlier; " +
-                     "if not running, starts recorders automatically and returns zero/stale values with a warning. " +
-                     "KNOWN LIMITATION: Render-category counters (Draw Calls/Batches/SetPass Calls/Triangles/Vertices Count) " +
-                     "have been observed to read 0 in the Unity Editor even during confirmed active rendering (verified via " +
-                     "frame_debugger_get_events showing real events at the same time); Memory-category counters are unaffected. " +
-                     "Not verified whether this limitation also applies to a Standalone Player build.")]
+                     "SetPass Calls, GC/Gfx memory, etc). The Render counters need profiler_start called a few frames earlier. " +
+                     "Without a profiler_start session only the Memory counters are read, once, from recorders disposed afterwards.")]
         [ReadOnlyTool]
         public static string GetCounters(
             [ToolParam("Comma-separated list of specific counter names to query (e.g. 'Draw Calls Count,Triangles Count'). Omit for the default set.", Required = false)] string names = null)
         {
             try
             {
-                bool wasRunning = _recorders != null;
-                if (!wasRunning)
+                ResumeSessionRecorders();
+                var oneShot = _recorders == null;
+                var recorders = _recorders ?? CreateRecorders(memoryOnly: true);
+                try
                 {
-                    EnsureReloadHook();
-                    StartRecorders();
+                    var warmingUp = !oneShot && IsWarmingUp(_recordersStartedAt, EditorApplication.timeSinceStartup);
+                    return FormatCounters(recorders, oneShot, names, warmingUp);
                 }
-
-                var sb = new StringBuilder();
-                if (!wasRunning)
-                    sb.AppendLine("WARNING: profiler_start was not called; recorders were just started now, values below may be 0/stale until a few more frames elapse.");
-
-                var keysToShow = new List<string>();
-                if (string.IsNullOrEmpty(names))
+                finally
                 {
-                    keysToShow.AddRange(_recorders.Keys);
+                    if (oneShot)
+                        DisposeRecorders(recorders);
                 }
-                else
-                {
-                    var rawNames = names.Split(',');
-                    var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                    foreach (var rawName in rawNames)
-                        wanted.Add(rawName.Trim());
-                    foreach (var kv in _recorders)
-                    {
-                        var shortName = kv.Key.Substring(kv.Key.IndexOf('/') + 1);
-                        if (wanted.Contains(shortName))
-                            keysToShow.Add(kv.Key);
-                    }
-
-                    if (keysToShow.Count == 0)
-                    {
-                        var available = new List<string>();
-                        foreach (var kv in _recorders)
-                            available.Add(kv.Key.Substring(kv.Key.IndexOf('/') + 1));
-
-                        var hint = "Only the counters listed in available_names are recorded; omit 'names' to read them all.";
-                        if (!wasRunning)
-                            hint += " profiler_start was not called; the recorders were just started now, which is why available_names is the default set.";
-
-                        return ToolResultFormatter.Error("UNKNOWN_COUNTERS",
-                            new { requested_names = wanted, available_names = available },
-                            hint);
-                    }
-                }
-
-                foreach (var key in keysToShow)
-                {
-                    var recorder = _recorders[key];
-                    sb.AppendLine($"{key}: last={recorder.LastValueAsDouble:F0}, current={recorder.CurrentValueAsDouble:F0}, unit={recorder.UnitType}");
-                }
-                return sb.ToString();
             }
             catch (Exception ex)
             {
@@ -208,25 +191,108 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
+        private static string FormatCounters(Dictionary<string, ProfilerRecorder> recorders, bool oneShot, string names, bool warmingUp)
+        {
+            var sb = new StringBuilder();
+            if (oneShot)
+                sb.AppendLine("WARNING: profiler_start was not called, so only the Memory counters were read (once, from recorders disposed afterwards). " +
+                              "Render counters (Draw Calls, Batches, SetPass Calls, Triangles, Vertices) need profiler_start, a few frames, then get_counters.");
+            else if (warmingUp)
+                sb.AppendLine("WARNING: these recorders were created less than a second ago (profiler_start, or resumed after a domain reload such as entering Play Mode), " +
+                              "so no frame has completed for them and the Render counters can read 0. Call get_counters again in a moment.");
+
+            var keysToShow = new List<string>();
+            if (string.IsNullOrEmpty(names))
+            {
+                keysToShow.AddRange(recorders.Keys);
+            }
+            else
+            {
+                var rawNames = names.Split(',');
+                var wanted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var rawName in rawNames)
+                    wanted.Add(rawName.Trim());
+                foreach (var kv in recorders)
+                {
+                    var shortName = kv.Key.Substring(kv.Key.IndexOf('/') + 1);
+                    if (wanted.Contains(shortName))
+                        keysToShow.Add(kv.Key);
+                }
+
+                if (keysToShow.Count == 0)
+                {
+                    var available = new List<string>();
+                    foreach (var kv in recorders)
+                        available.Add(kv.Key.Substring(kv.Key.IndexOf('/') + 1));
+
+                    var hint = "Only the counters listed in available_names are recorded; omit 'names' to read them all.";
+                    if (oneShot)
+                        hint += " profiler_start was not called, so only the Memory counters can be read; call profiler_start for the Render counters.";
+
+                    return ToolResultFormatter.Error("UNKNOWN_COUNTERS",
+                        new { requested_names = wanted, available_names = available },
+                        hint);
+                }
+            }
+
+            foreach (var key in keysToShow)
+            {
+                var recorder = recorders[key];
+                sb.AppendLine($"{key}: last={recorder.LastValueAsDouble:F0}, current={recorder.CurrentValueAsDouble:F0}, unit={recorder.UnitType}");
+            }
+            return sb.ToString();
+        }
+
         private static void StartRecorders()
         {
             if (_recorders != null)
                 return; // already running, idempotent
 
-            _recorders = new Dictionary<string, ProfilerRecorder>();
+            _recorders = CreateRecorders();
+            _recordersStartedAt = EditorApplication.timeSinceStartup;
+        }
+
+        private static void ResumeSessionRecorders()
+        {
+            if (_recorders == null && SessionActive)
+            {
+                EnsureReloadHook();
+                StartRecorders();
+            }
+        }
+
+        private static Dictionary<string, ProfilerRecorder> CreateRecorders(bool memoryOnly = false)
+        {
+            var recorders = new Dictionary<string, ProfilerRecorder>();
             foreach (var (category, name) in DefaultCounters)
             {
+                if (memoryOnly && category != "Memory")
+                    continue;
+
                 var key = category + "/" + name;
                 try
                 {
-                    var recorder = new ProfilerRecorder(category, name, 15);
-                    _recorders[key] = recorder;
+                    var recorder = new ProfilerRecorder(category, name, 15, RecorderOptions);
+                    if (!recorder.Valid)
+                    {
+                        recorder.Dispose();
+                        Debug.LogWarning($"[KitWright.Profiler] Counter '{key}' does not exist in this Unity version; skipped.");
+                        continue;
+                    }
+                    recorders[key] = recorder;
                 }
                 catch (Exception ex)
                 {
                     Debug.LogWarning($"[KitWright.Profiler] Failed to start recorder '{key}': {ex.Message}");
                 }
             }
+            return recorders;
+        }
+
+        private static void DisposeRecorders(Dictionary<string, ProfilerRecorder> recorders)
+        {
+            foreach (var kv in recorders)
+                kv.Value.Dispose();
         }
 
         private static void StopRecorders()
@@ -234,8 +300,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (_recorders == null)
                 return;
 
-            foreach (var kv in _recorders)
-                kv.Value.Dispose();
+            DisposeRecorders(_recorders);
             _recorders = null;
         }
 
@@ -296,7 +361,7 @@ namespace KitWright.Editor.Tools.Builtins
 
                 return sb.ToString();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is AmbiguousTargetException))
             {
                 return ToolResultFormatter.Exception(ex);
             }
@@ -498,7 +563,7 @@ namespace KitWright.Editor.Tools.Builtins
                 };
 
                 var json = Newtonsoft.Json.JsonConvert.SerializeObject(data, Newtonsoft.Json.Formatting.Indented);
-                System.IO.File.WriteAllText(path, json);
+                AtomicFile.WriteAllText(path, json);
 
                 return $"Snapshot saved: {path}\nTotal Allocated: {ValueConverter.FormatBytes(data.totalAllocated)}, Mono Used: {ValueConverter.FormatBytes(data.monoUsed)}";
             }
@@ -597,7 +662,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             try
             {
-                using (var temp = new ProfilerRecorder(category, statName))
+                using (var temp = new ProfilerRecorder(category, statName, 1, RecorderOptions))
                 {
                     return temp.CurrentValue;
                 }

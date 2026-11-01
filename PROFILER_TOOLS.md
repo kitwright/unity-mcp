@@ -23,15 +23,15 @@ These 13 tools close that gap. They're intentionally built as small, focused, fl
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
 | `profiler_start` | *(none)* | Confirmation + recorder count | Enables `UnityEngine.Profiling.Profiler` and starts 9 persistent `ProfilerRecorder`s (5 Render-category, 4 Memory-category — see [Default counters](#default-counters)). Idempotent — safe to call again while already running. |
-| `profiler_stop` | *(none)* | Confirmation | Disposes all persistent recorders and disables `Profiler`. |
-| `profiler_status` | *(none)* | Multi-line status | Whether a session is running, active recorder count, and per-recorder `running`/`valid` flags. |
+| `profiler_stop` | *(none)* | Confirmation | Disposes all persistent recorders and disables `Profiler`, even if it was already on before `profiler_start`. With no `profiler_start` session it does nothing, so a recording started by hand is left alone. The session flag lives in `SessionState`, so it still works after a domain reload (entering Play Mode reloads by default). |
+| `profiler_status` | *(none)* | Multi-line status | Whether a session is running, active recorder count, and per-recorder `running`/`valid` flags. After a domain reload the recorders of a running session are created again. A counter that does not exist in this Unity version is skipped, not listed. |
 
 ### Frame timing & counters
 
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
 | `get_frame_timing` | `sample_frames` (int, optional, default 1, clamped 1–30) | Avg CPU/GPU frame time (ms) + approx FPS | Uses `UnityEngine.FrameTimingManager`. Does **not** require `profiler_start`. Falls back to `Time.unscaledDeltaTime` if no timing samples are available yet. |
-| `get_counters` | `names` (string, optional, comma-separated) | One line per counter: `last`, `current`, `unit` | Reads the persistent recorders started by `profiler_start`; auto-starts them (with a warning) if not already running. See [Known limitation](#known-limitations) re: Render counters. |
+| `get_counters` | `names` (string, optional, comma-separated) | One line per counter: `last`, `current`, `unit` | Reads the persistent recorders started by `profiler_start`. Without a session it reads only the Memory counters, once, from recorders disposed afterwards, and says so; a Render counter asked for by name then answers `UNKNOWN_COUNTERS`, because it needs `profiler_start` and a few frames. |
 
 #### Default counters
 
@@ -69,13 +69,13 @@ Memory/Gfx Used Memory, Memory/Total Used Memory
 
 Two non-obvious things worth flagging for reviewers, both found by testing against a live Editor rather than assumed from API docs:
 
-1. **`ProfilerRecorder` must stay alive across frames.** Constructing a `ProfilerRecorder`, reading it, and disposing it within a single synchronous call reads `0` — the recorder needs to have been running across at least one real frame boundary. `profiler_start` keeps a `Dictionary<string, ProfilerRecorder>` alive as a static field (disposed on `AssemblyReloadEvents.beforeAssemblyReload` to avoid leaking the native handle across domain reloads) rather than constructing recorders per-call.
+1. **`ProfilerRecorder` must stay alive across frames.** Constructing a `ProfilerRecorder`, reading it, and disposing it within a single synchronous call reads `0` for the Render counters — the recorder needs to have been running across at least one real frame boundary. Recorders are created with `ProfilerRecorderOptions.StartImmediately`; without it a recorder stays stopped and reads `0` forever. `profiler_start` keeps a `Dictionary<string, ProfilerRecorder>` alive as a static field (disposed on `AssemblyReloadEvents.beforeAssemblyReload` to avoid leaking the native handle across domain reloads) rather than constructing recorders per-call.
 
 2. **Enabling `FrameDebuggerUtility` alone does not drive capture.** `UnityEditorInternal.FrameDebuggerInternal.FrameDebuggerUtility` is a data container; the actual capture loop is driven by `UnityEditor.FrameDebuggerWindow`'s `Update()`/`OnGUI()`. `frame_debugger_enable` reflects `FrameDebuggerWindow.OpenWindow()` (public static) to get/create a window instance, then reflects the instance's `EnableFrameDebugger()` (non-public instance method) and calls `Repaint()`. `frame_debugger_disable` finds all open instances via `Resources.FindObjectsOfTypeAll` and calls `DisableFrameDebugger()` + `Close()` on each.
 
 ## Known limitations
 
-- **Render-category counters read `0` in the Unity Editor**, even during confirmed active rendering. This was verified by running `frame_debugger_get_events` at the same time as `get_counters` — the Frame Debugger showed 78–95 real render events in one test session while `Render/Draw Calls Count` etc. stayed at `0`. Toggling `ProfilerDriver.profileEditor = true` did not change this. Memory-category counters (`GC Used Memory`, `Gfx Used Memory`, `Total Used Memory`) are unaffected and read real values reliably. **Not verified** whether this limitation also applies to a Standalone Player build — if anyone testing this PR can check that, it'd be a useful data point.
+- **Render-category counters used to read `0` in the Unity Editor**; that was not an Editor limitation. The recorders were created without `StartImmediately`, so they never started. They now start with the session and read real values (for example `Draw Calls Count` and `Triangles Count` non-zero in a scene that renders). The test report below was taken before this fix and still shows `0`.
 - **`memory_take_snapshot` is not a real Unity Memory Profiler snapshot.** `com.unity.memoryprofiler`'s public scripting API is effectively empty (only 3 unrelated public types found via reflection across its assemblies), the legacy `UnityEngine.Profiling.Memory.Experimental.MemoryProfiler.TakeSnapshot` has been fully removed as of Unity 6, and `ProfilerDriver.RequestMemorySnapshot()` didn't reliably produce a file in testing — plus real snapshots in a mid-sized project can run into the multi-GB range, which isn't something an AI-agent-callable tool should trigger routinely. So this tool captures a small set of aggregate numbers as its own JSON format instead, stored separately from any real `.snap` files.
 - **`frame_debugger_disable` closes every open Frame Debugger window**, not just the one this tool opened — a caveat worth surfacing to an end user if they had one open manually.
 

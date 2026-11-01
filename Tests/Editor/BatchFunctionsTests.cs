@@ -34,6 +34,15 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(BatchFunctions.IsSuccess("not json", "not json"));
         }
 
+        [Test]
+        public void ExtractParams_LeavesAJsonNullOutInsteadOfPassingTheWordNull()
+        {
+            var extracted = BatchFunctions.ExtractParams(JToken.Parse("{\"a\":null,\"b\":\"text\",\"c\":2,\"d\":true}"));
+
+            CollectionAssert.AreEquivalent(new[] { "b", "c", "d" }, extracted.Keys);
+            Assert.AreEqual("text", extracted["b"]);
+        }
+
         // BatchExecute collapses every undo step it sees down to the group that was current when it
         // started. Run without this, it swallows the test runner's own group, and the runner's
         // Undo.RevertAllDownToGroup after the run then reverts into a group that no longer exists -
@@ -58,6 +67,18 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(2, envelope["data"]["total"].Value<int>());
             Assert.IsTrue(envelope["data"]["aborted"].Value<bool>());
             Assert.AreEqual(1, envelope["data"]["results"].Count(), "the step results survive the error envelope");
+        }
+
+        [UnityTest]
+        public IEnumerator BatchExecute_AnUnknownToolAnswersUnknownToolLikeADirectCall()
+        {
+            var batch = BatchFunctions.BatchExecute("[{\"name\":\"no_such_tool_for_tests\",\"params\":{}}]");
+
+            yield return WaitForTask(batch);
+
+            var result = JObject.Parse(JsonConvert.SerializeObject(batch.Result))["data"]["results"][0]["result"];
+            Assert.AreEqual("UNKNOWN_TOOL", result["code"].Value<string>());
+            Assert.AreEqual("no_such_tool_for_tests", result["data"]["tool"].Value<string>());
         }
 
         [UnityTest]

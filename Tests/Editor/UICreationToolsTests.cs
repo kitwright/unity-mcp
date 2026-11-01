@@ -4,6 +4,7 @@ using System.Linq;
 using KitWright.Editor.Tools;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using static KitWright.Editor.Tests.ToolCall;
 
 namespace KitWright.Editor.Tests
@@ -23,11 +24,16 @@ namespace KitWright.Editor.Tests
         private const string Label = "KwUiLabel";
         private const string Image = "KwUiImage";
 
+        private EventSystem _preexistingEventSystem;
+
         [SetUp]
         public void RequireTheUiTools()
         {
             if (ToolRegistry.GetMethod("create_canvas") == null)
                 Assert.Ignore("The uGUI tools are compiled out without the com.unity.ugui package.");
+
+            // The canvas tool adds one on demand; left behind, it stops every later test that needs a scene without one.
+            _preexistingEventSystem = Object.FindAnyObjectByType<EventSystem>();
         }
 
         [TearDown]
@@ -36,6 +42,10 @@ namespace KitWright.Editor.Tests
             var canvas = GameObject.Find(Canvas);
             if (canvas != null)
                 Object.DestroyImmediate(canvas);
+
+            var eventSystem = Object.FindAnyObjectByType<EventSystem>();
+            if (eventSystem != null && eventSystem != _preexistingEventSystem)
+                Object.DestroyImmediate(eventSystem.gameObject);
         }
 
         private static GameObject Find(string name)

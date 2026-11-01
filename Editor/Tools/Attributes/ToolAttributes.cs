@@ -46,9 +46,17 @@ namespace KitWright.Editor.Tools
         }
     }
 
-    /// Functions with this attribute do not modify the scene or project.
+    /// Functions with this attribute change no project data (scene, assets, settings). Editor-only state such as the
+    /// selection, the console or the plugin's own caches may change. The label is exported as readOnlyHint, which
+    /// clients use to skip an approval prompt, so a tool that can block the editor, reload the domain or delete data
+    /// must not carry it.
     [AttributeUsage(AttributeTargets.Method)]
     public class ReadOnlyToolAttribute : Attribute { }
+
+    /// Broker redelivery after a domain reload runs this tool again instead of answering "interrupted".
+    /// Not implied by [ReadOnlyTool]: input-simulation tools carry that one and would press the key twice.
+    [AttributeUsage(AttributeTargets.Method)]
+    public class ReplaySafeToolAttribute : Attribute { }
 
     /// Runs the tool on the request thread instead of queueing it for the editor loop.
     /// Only for tools that touch no Unity API, because the point is to still answer while a

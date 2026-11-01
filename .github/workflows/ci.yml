@@ -92,11 +92,18 @@ jobs:
             contents: read
             checks: write
         strategy:
-            # The minimum version package.json declares, plus the Unity 6 line we develop against, so a
-            # UNITY_6000_0_OR_NEWER branch cannot break unnoticed.
+            # The minimum version package.json declares, the Unity 6 line we develop against, so a
+            # UNITY_6000_0_OR_NEWER branch cannot break unnoticed, and the newest supported stream.
+            # inputSystem is the com.unity.inputsystem pin for that leg, empty where it stays out.
             fail-fast: false
             matrix:
-                unityVersion: [2022.3.0f1, 6000.0.75f1]
+                include:
+                    - unityVersion: 2022.3.0f1
+                      inputSystem: ""
+                    - unityVersion: 6000.0.75f1
+                      inputSystem: "1.18.0"
+                    - unityVersion: 6000.6.7f1
+                      inputSystem: "1.20.1"
 
         steps:
             - name: Checkout
@@ -132,21 +139,20 @@ jobs:
                   # com.unity.inputsystem is here for the same reason as the modules above: the input
                   # tools and their tests sit behind a versionDefine keyed to the package, so without
                   # it this job tested a surface ~20 tools smaller than any project that has it.
-                  # Pinned, not floating: the version decides which controls exist. 1.18.0 is the
-                  # newest that still declares unity 2022.3 - and it goes in on the 6000 leg only:
-                  # with the package present, 2022.3.0f1 dies in batchmode before it writes a
-                  # results file (docker exit 133), while the very same commit runs 767 tests green
-                  # on 6000.0.75f1. The tools themselves are editor-version-agnostic, so one leg
-                  # gates them; the old leg keeps gating everything else. A 6000.6 leg would have to
-                  # move to 1.20.0 or newer: 1.18.0's own PlayerInputEditor casts EntityId to int,
-                  # which 6.6 promotes to an error, so the package stops compiling before anything
-                  # in this one is reached.
+                  # Pinned per leg through the matrix, not floating: the version decides which controls exist.
+                  # 2022.3.0f1 gets none: with 1.18.0 present it dies in batchmode before it writes a results
+                  # file (docker exit 133; the log has error CS0117, BuildTarget.VisionOS, from the package's own
+                  # code), while the very same commit runs 767 tests green on 6000.0.75f1. The tools themselves
+                  # are editor-version-agnostic, so the 6000 legs gate them; the 2022.3 leg keeps gating everything
+                  # else. The 6000.6 leg needs 1.19.0 or newer: 1.18.0's PlayerInputEditor casts the instance id
+                  # to int, which 6.6 promotes to an error, so the package stops compiling before anything in
+                  # this one is reached.
                   # URP is deliberately absent. Since 2021.2 the SRP packages are editor-bundled -
                   # packages-lock reports source "builtin" and packages.unity.com serves nothing above
                   # 10.10.1 - so the version is whatever the editor image ships and any pinned one
                   # fails to resolve. The Volume tools' tests only run where URP is installed.
-                  INPUT_SYSTEM='"com.unity.inputsystem": "1.18.0",'
-                  if [ "${{ matrix.unityVersion }}" = "2022.3.0f1" ]; then INPUT_SYSTEM=''; fi
+                  INPUT_SYSTEM=''
+                  if [ -n "${{ matrix.inputSystem }}" ]; then INPUT_SYSTEM='"com.unity.inputsystem": "${{ matrix.inputSystem }}",'; fi
 
                   cat > UnityProject/Packages/manifest.json <<JSON
                   {

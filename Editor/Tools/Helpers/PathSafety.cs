@@ -76,7 +76,7 @@ namespace KitWright.Editor.Tools.Helpers
 
             for (var current = resolved;
                  !string.IsNullOrEmpty(current) && current.Length >= rootLength;
-                 current = Path.GetDirectoryName(current))
+                 current = ParentOf(current))
             {
                 if (!IsLink(current))
                     continue;
@@ -86,6 +86,15 @@ namespace KitWright.Editor.Tools.Helpers
                     "symlink. Where that link points is not checked, so the path is refused: pass a path " +
                     "that stays on the project's own filesystem.", nameof(requested));
             }
+        }
+
+        // Mono's GetDirectoryName answers its own argument for a segment like "a:\", which it reads as
+        // a drive root, so a path with ':' after the drive letter never reached the project root. On Unix
+        // it answers "" for a name with no separator, and asking it for the parent of "" throws.
+        internal static string ParentOf(string path)
+        {
+            var parent = Path.GetDirectoryName(path);
+            return !string.IsNullOrEmpty(parent) && parent.Length < path.Length ? parent : null;
         }
 
         private static bool IsLink(string path)
