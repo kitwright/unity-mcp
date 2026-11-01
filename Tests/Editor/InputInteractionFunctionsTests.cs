@@ -67,9 +67,13 @@ namespace KitWright.Editor.Tests
             int x = Screen.width / 2, y = Screen.height / 2;
 
             var answer = InputInteractionFunctions.SimulateMouseClick(x, y);
-            if (Application.isBatchMode && !answer.Contains("EventSystem: clicked on"))
-                Assert.Ignore("A batchmode run can have no screen for an overlay canvas to fill, so nothing " +
-                              "is under the point to click: " + answer);
+
+            // An overlay canvas only gets a depth for its graphics in a render pass, and GraphicRaycaster skips a
+            // graphic without one: a batchmode run, or an editor whose Game View is not repainting, has none, so
+            // the EventSystem sees nothing and the tool falls back to invoking the button directly.
+            if ((Application.isBatchMode || buttonGo.GetComponent<Image>().depth == -1) && !answer.Contains("EventSystem: clicked on"))
+                Assert.Ignore("The canvas has no render pass here (batchmode, or a Game View that is not repainting), " +
+                              "so its graphics have no depth for the EventSystem to raycast by: " + answer);
 
             StringAssert.Contains("clicked on 'KwClickButton'", answer);
             Assert.AreEqual(1, s_clicks, "A hit on the Button's own Image fires onClick once. " + answer);
