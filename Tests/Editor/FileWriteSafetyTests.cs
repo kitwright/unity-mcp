@@ -4,6 +4,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text.RegularExpressions;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Tools.Helpers;
@@ -90,6 +91,69 @@ namespace KitWright.Editor.Tests
             Assert.AreNotEqual(0, (int)(File.GetAttributes(link) & FileAttributes.ReparsePoint),
                 "the link was replaced by a regular file");
             Assert.AreEqual(2, Directory.GetFiles(_root).Length, "the swap left a sibling behind");
+        }
+
+        [Test]
+        public void WriteAllText_ToAHardLinkedFile_UpdatesTheOtherNameToo()
+        {
+            var first = Path.Combine(_root, "first.txt");
+            var second = Path.Combine(_root, "second.txt");
+            File.WriteAllText(first, "old content that is longer than the new one");
+            if (!TryHardLink(second, first))
+                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+
+            AtomicFile.WriteAllText(first, "new");
+
+            Assert.AreEqual("new", File.ReadAllText(second), "the swap left the other name with the old content");
+            Assert.AreEqual("new", File.ReadAllText(first));
+            Assert.AreEqual(2, Directory.GetFiles(_root).Length, "a temp file was left behind");
+        }
+
+        [Test]
+        public void WriteAllBytes_ToAHardLinkedFile_UpdatesTheOtherNameToo()
+        {
+            var first = Path.Combine(_root, "first.bin");
+            var second = Path.Combine(_root, "second.bin");
+            File.WriteAllBytes(first, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
+            if (!TryHardLink(second, first))
+                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+
+            AtomicFile.WriteAllBytes(second, new byte[] { 9, 8 });
+
+            CollectionAssert.AreEqual(new byte[] { 9, 8 }, File.ReadAllBytes(first));
+            CollectionAssert.AreEqual(new byte[] { 9, 8 }, File.ReadAllBytes(second));
+        }
+
+        [Test]
+        public void WriteAllText_ToAHardLinkedFile_KeepsTheBomTheFileHad()
+        {
+            var first = Path.Combine(_root, "first.txt");
+            var second = Path.Combine(_root, "second.txt");
+            File.WriteAllBytes(first, Bom.Concat(new[] { (byte)'a' }).ToArray());
+            if (!TryHardLink(second, first))
+                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+
+            AtomicFile.WriteAllText(second, "b");
+
+            var expected = Bom.Concat(new[] { (byte)'b' }).ToArray();
+            CollectionAssert.AreEqual(expected, File.ReadAllBytes(first));
+            CollectionAssert.AreEqual(expected, File.ReadAllBytes(second));
+        }
+
+        [Test]
+        public void HasMultipleHardLinks_CountsTheLinksAndTreatsAMissingFileAsOne()
+        {
+            var first = Path.Combine(_root, "first.txt");
+            var second = Path.Combine(_root, "second.txt");
+            File.WriteAllText(first, "x");
+
+            Assert.IsFalse(AtomicFile.HasMultipleHardLinks(first), "a file with one name has one link");
+            Assert.IsFalse(AtomicFile.HasMultipleHardLinks(Path.Combine(_root, "missing.txt")));
+            if (!TryHardLink(second, first))
+                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+
+            Assert.IsTrue(AtomicFile.HasMultipleHardLinks(first));
+            Assert.IsTrue(AtomicFile.HasMultipleHardLinks(second));
         }
 
         [Test]
@@ -184,6 +248,25 @@ namespace KitWright.Editor.Tests
 
                 Assert.IsFalse(Regex.IsMatch(File.ReadAllText(file), @"(?<!Atomic)File\.WriteAll(Text|Bytes)"),
                     relative + " writes directly instead of through AtomicFile.");
+            }
+        }
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        private static extern bool CreateHardLinkW(string newFileName, string existingFileName, IntPtr securityAttributes);
+
+        // Needs NTFS but no privilege. Not Windows: the writer detects no hard links there, so nothing to test.
+        private static bool TryHardLink(string link, string existing)
+        {
+            if (Path.DirectorySeparatorChar != '\\')
+                return false;
+
+            try
+            {
+                return CreateHardLinkW(link, existing, IntPtr.Zero) && File.Exists(link);
+            }
+            catch (Exception)
+            {
+                return false;
             }
         }
 

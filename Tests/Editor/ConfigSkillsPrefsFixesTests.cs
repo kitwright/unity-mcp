@@ -402,6 +402,53 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void GetEditorPref_AutoReportsAStoredZeroOrOneAsIntAndFlagsItBoolLike()
+        {
+            var key = "KwConfigSkillsPrefs_" + Guid.NewGuid().ToString("N");
+            try
+            {
+                foreach (var stored in new[] { 0, 1 })
+                {
+                    EditorPrefs.SetInt(key, stored);
+
+                    var auto = Ok("get_editor_pref", "key", key);
+                    Assert.AreEqual("int", (string)auto["data"]["type"], "an int written must read back as an int");
+                    Assert.AreEqual(stored, (int)auto["data"]["value"]);
+                    Assert.IsTrue((bool)auto["data"]["boolLike"]);
+
+                    var forced = Ok("get_editor_pref", "key", key, "type", "bool");
+                    Assert.AreEqual("bool", (string)forced["data"]["type"]);
+                    Assert.AreEqual(stored == 1, (bool)forced["data"]["value"]);
+                    Assert.IsNull(forced["data"]["boolLike"]);
+                }
+
+                EditorPrefs.SetInt(key, 7);
+                var seven = Ok("get_editor_pref", "key", key);
+                Assert.AreEqual("int", (string)seven["data"]["type"]);
+                Assert.IsNull(seven["data"]["boolLike"]);
+
+                EditorPrefs.SetFloat(key, 1.5f);
+                Assert.IsNull(Ok("get_editor_pref", "key", key)["data"]["boolLike"]);
+            }
+            finally
+            {
+                EditorPrefs.DeleteKey(key);
+            }
+        }
+
+        [Test]
+        public void IsBoolLike_OnlyForAnIntZeroOrOne()
+        {
+            Assert.IsTrue(PrefsFunctions.IsBoolLike("int", 0));
+            Assert.IsTrue(PrefsFunctions.IsBoolLike("int", 1));
+            Assert.IsFalse(PrefsFunctions.IsBoolLike("int", 2));
+            Assert.IsFalse(PrefsFunctions.IsBoolLike("int", -1));
+            Assert.IsFalse(PrefsFunctions.IsBoolLike("bool", 1));
+            Assert.IsFalse(PrefsFunctions.IsBoolLike("float", 1f));
+            Assert.IsFalse(PrefsFunctions.IsBoolLike("string", "1"));
+        }
+
+        [Test]
         public void SetPlayerPref_BoolIsStoredAsAnIntZeroOrOne()
         {
             var key = "KwConfigSkillsPrefs_" + Guid.NewGuid().ToString("N");

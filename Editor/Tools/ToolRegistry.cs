@@ -35,6 +35,41 @@ namespace KitWright.Editor.Tools
             "evaluate_expression",
         };
 
+        // These succeed in Play Mode, but the edit is thrown away when it ends; MCPExecutionBridge says so.
+        internal static readonly HashSet<string> SceneEditingTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "create_game_object",
+            "create_primitive",
+            "instantiate_prefab",
+            "delete_game_object",
+            "duplicate_game_object",
+            "set_transform",
+            "set_parent",
+            "set_active",
+            "rename_game_object",
+            "add_component",
+            "remove_component",
+            "set_component_properties",
+            "set_component_enabled",
+            "set_tag_and_layer",
+            "set_rect_transform",
+            "create_canvas",
+            "create_button",
+            "create_text",
+            "create_image",
+            "create_ui_element",
+            "add_audio_source",
+            "add_audio_listener",
+            "add_nav_mesh_agent",
+            "add_nav_mesh_obstacle",
+            "create_volume",
+            "add_volume_override",
+            "set_volume_override_property",
+            "remove_volume_override",
+            "set_camera_settings",
+            "set_camera_projection",
+        };
+
         /// <summary>
         /// Represents a manually registered tool function.
         /// </summary>

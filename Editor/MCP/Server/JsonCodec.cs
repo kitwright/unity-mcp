@@ -279,9 +279,34 @@ namespace KitWright.Editor.MCP.Server
             if (json == "null") return null;
             if (json == "true") return true;
             if (json == "false") return false;
+            if (TryParseInteger(json, out var integer))
+                return integer;
             if (double.TryParse(json, NumberStyles.Any, CultureInfo.InvariantCulture, out var number))
                 return number;
             return json;
+        }
+
+        // A double holds integers exactly only up to 2^53, so a 64-bit id read as one came back changed.
+        // A literal with a fraction or exponent, or too large for 64 bits, stays a double.
+        private static bool TryParseInteger(string text, out object value)
+        {
+            value = null;
+            var start = text.Length > 0 && text[0] == '-' ? 1 : 0;
+            if (start == text.Length)
+                return false;
+
+            for (var i = start; i < text.Length; i++)
+            {
+                if (text[i] < '0' || text[i] > '9')
+                    return false;
+            }
+
+            if (long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var signed))
+                value = signed;
+            else if (start == 0 && ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var unsigned))
+                value = unsigned;
+
+            return value != null;
         }
 
         private static Dictionary<string, object> DeserializeDictionary(string json, int depth)

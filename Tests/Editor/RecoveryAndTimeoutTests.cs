@@ -73,6 +73,57 @@ namespace KitWright.Editor.Tests
             StringAssert.DoesNotContain("SCRIPT_CHANGES_NOT_COMPILED", outcome.Summary);
         }
 
+        [Test]
+        public void InterruptedRecompile_WhileTheTrackerStillWaits_DoesNotKeepTheTransientNotCompiledRead()
+        {
+            var notCompiled = CompilationFunctions.DescribeRecoveredCompile("No compilation errors detected.", 3).Summary;
+            var withIssues = CompilationFunctions.DescribeRecoveredCompile("Assets/A.cs(1,1): error CS1002: ; expected", 3).Summary;
+            var clean = CompilationFunctions.DescribeRecoveredCompile("No compilation errors detected.", 0).Summary;
+
+            Assert.IsTrue(CompilationFunctions.IsNotCompiledOutcome(notCompiled));
+            Assert.IsFalse(CompilationFunctions.IsNotCompiledOutcome(withIssues));
+            Assert.IsFalse(CompilationFunctions.IsNotCompiledOutcome(clean));
+            Assert.IsFalse(CompilationFunctions.IsNotCompiledOutcome(null));
+
+            Assert.IsTrue(MCPServerService.IsTransientNotCompiled(true, notCompiled));
+            Assert.IsFalse(MCPServerService.IsTransientNotCompiled(false, notCompiled), "nothing else records the outcome then");
+            Assert.IsFalse(MCPServerService.IsTransientNotCompiled(true, withIssues));
+            Assert.IsFalse(MCPServerService.IsTransientNotCompiled(true, clean));
+        }
+
+        [Test]
+        public void ExternalSyncPending_AgesInUtcAndStillReadsTheOldLocalFormat()
+        {
+            var now = new DateTime(2026, 11, 1, 9, 0, 0, DateTimeKind.Utc);
+
+            Assert.IsTrue(CompilationFunctions.IsExternalSyncStillPending(now.AddSeconds(-110).ToString("O"), now));
+            Assert.IsFalse(CompilationFunctions.IsExternalSyncStillPending(now.AddSeconds(-130).ToString("O"), now));
+
+            var recentLocal = new DateTimeOffset(now.AddSeconds(-60)).ToOffset(TimeSpan.FromHours(7)).ToString("O");
+            var staleLocal = new DateTimeOffset(now.AddSeconds(-300)).ToOffset(TimeSpan.FromHours(-8)).ToString("O");
+            Assert.IsTrue(CompilationFunctions.IsExternalSyncStillPending(recentLocal, now), "a stamp an older domain wrote in local time");
+            Assert.IsFalse(CompilationFunctions.IsExternalSyncStillPending(staleLocal, now));
+
+            foreach (var unreadable in new[] { null, "", "not a date" })
+                Assert.IsFalse(CompilationFunctions.IsExternalSyncStillPending(unreadable, now), unreadable ?? "null");
+        }
+
+        [Test]
+        public void MarkExternalSyncPending_StampsUtc()
+        {
+            try
+            {
+                CompilationFunctions.MarkExternalSyncPending();
+
+                StringAssert.EndsWith("Z", SessionState.GetString(CompilationFunctions.ExternalSyncStartedAtKey, ""));
+                Assert.IsTrue(CompilationFunctions.HasPendingExternalSync());
+            }
+            finally
+            {
+                CompilationFunctions.ClearExternalSyncPending();
+            }
+        }
+
         private static DomainReloadHandler.RecoveryInfo RecordedAt(string toolName, DateTime utc) =>
             new DomainReloadHandler.RecoveryInfo { ToolName = toolName, TimestampUtc = utc, Timestamp = utc.ToLocalTime() };
 

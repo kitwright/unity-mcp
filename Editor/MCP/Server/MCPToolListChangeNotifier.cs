@@ -6,6 +6,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using KitWright.Editor.Settings;
+using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 
 namespace KitWright.Editor.MCP.Server
@@ -43,6 +44,7 @@ namespace KitWright.Editor.MCP.Server
         private static long _version;
         private static readonly ConcurrentDictionary<string, long> _seen =
             new ConcurrentDictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+        private static readonly SessionRecency _recency = new SessionRecency();
 
         private static volatile bool _persistedFlagDirty;
         private static bool _loaded;
@@ -99,7 +101,9 @@ namespace KitWright.Editor.MCP.Server
         /// </summary>
         public static void Observe(string sessionId)
         {
-            _seen[Key(sessionId)] = Interlocked.Read(ref _version);
+            var key = Key(sessionId);
+            _seen[key] = Interlocked.Read(ref _version);
+            Track(key);
             _persistedFlagDirty = true;
         }
 
@@ -113,6 +117,7 @@ namespace KitWright.Editor.MCP.Server
             var key = Key(sessionId);
             var current = Interlocked.Read(ref _version);
             var seen = _seen.GetOrAdd(key, 0L);
+            Track(key);
             if (seen >= current || !_seen.TryUpdate(key, current, seen))
                 return false;
 
@@ -123,7 +128,9 @@ namespace KitWright.Editor.MCP.Server
         /// <summary>Re-arm this session's notification when the piggybacked send failed before reaching the client. Thread-safe.</summary>
         public static void RestorePending(string sessionId = null)
         {
-            _seen[Key(sessionId)] = Unseen;
+            var key = Key(sessionId);
+            _seen[key] = Unseen;
+            Track(key);
             _persistedFlagDirty = true;
         }
 
@@ -139,6 +146,13 @@ namespace KitWright.Editor.MCP.Server
 
         private static string Key(string sessionId) => sessionId ?? string.Empty;
 
+        private static void Track(string key)
+        {
+            _recency.Touch(key);
+            if (_recency.Evict(_seen, SessionRecency.MaxSessions) > 0)
+                _persistedFlagDirty = true;
+        }
+
         private static void LoadPersistedState()
         {
             if (_loaded)
@@ -149,9 +163,12 @@ namespace KitWright.Editor.MCP.Server
             foreach (var line in SessionState.GetString(SeenKey, string.Empty).Split('\n'))
             {
                 var tab = line.IndexOf('\t');
-                if (tab >= 0 && long.TryParse(line.Substring(tab + 1), out var seen))
-                    _seen.TryAdd(line.Substring(0, tab), seen);
+                if (tab >= 0 && long.TryParse(line.Substring(tab + 1), out var seen) && _seen.TryAdd(line.Substring(0, tab), seen))
+                    _recency.Touch(line.Substring(0, tab));
             }
+
+            if (_recency.Evict(_seen, SessionRecency.MaxSessions) > 0)
+                _persistedFlagDirty = true;
         }
 
         /// <summary>Main-thread pump that mirrors the per-session marks into SessionState.</summary>

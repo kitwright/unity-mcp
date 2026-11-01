@@ -897,6 +897,9 @@ namespace KitWright.Editor.MCP.Server
                 if (IsSyncExternalChanges(interrupted))
                 {
                     var compilationSummary = BuildSyncExternalChangesRecoverySummary();
+                    if (IsTransientNotCompiled(ExternalSyncRecoveryTracker.IsWaiting, compilationSummary.Summary))
+                        return;
+
                     summary += "\n" + compilationSummary.Summary;
                     PublishRecoverySummary(interrupted, summary, compilationSummary.Status);
                     return;
@@ -914,6 +917,11 @@ namespace KitWright.Editor.MCP.Server
                 "request_recompile",
                 StringComparison.OrdinalIgnoreCase);
         }
+
+        // While the tracker still waits for the compile it records the real outcome itself; a "not compiled" read
+        // taken now is only the state before that compile and must not be stored or warned about.
+        internal static bool IsTransientNotCompiled(bool trackerWaiting, string recoveredSummary) =>
+            trackerWaiting && CompilationFunctions.IsNotCompiledOutcome(recoveredSummary);
 
         private (string Summary, MCPToolCallStatus Status) BuildSyncExternalChangesRecoverySummary()
         {

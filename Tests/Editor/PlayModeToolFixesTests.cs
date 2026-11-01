@@ -270,6 +270,69 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        private const string SuccessReply = "{\"success\":true,\"message\":\"Created 'Cube'.\",\"data\":{\"name\":\"2020-01-01T00:00:00Z\",\"size\":1.5}}";
+
+        [TestCase("create_game_object")]
+        [TestCase("set_transform")]
+        [TestCase("Set_Component_Properties")]
+        public void AppendPlayModeNote_AddsTheNoteToASuccessfulSceneEditInPlayMode(string tool)
+        {
+            var text = MCPExecutionBridge.AppendPlayModeNote(SuccessReply, tool, playing: true);
+            var reply = JObject.Parse(text);
+
+            Assert.AreEqual("Created 'Cube'. " + SceneFunctions.DiscardedWithPlayMode, (string)reply["message"]);
+            Assert.IsTrue((bool)reply["success"]);
+            StringAssert.Contains("\"data\":{\"name\":\"2020-01-01T00:00:00Z\",\"size\":1.5}", text);
+        }
+
+        [Test]
+        public void AppendPlayModeNote_NeverAddsTheNoteTwice()
+        {
+            var once = MCPExecutionBridge.AppendPlayModeNote(SuccessReply, "create_game_object", playing: true);
+
+            Assert.AreEqual(once, MCPExecutionBridge.AppendPlayModeNote(once, "create_game_object", playing: true));
+        }
+
+        [Test]
+        public void AppendPlayModeNote_LeavesAnyOtherCallAsItWas()
+        {
+            const string refused = "{\"success\":false,\"code\":\"NOT_FOUND\",\"error\":\"NOT_FOUND\"}";
+
+            Assert.AreEqual(SuccessReply, MCPExecutionBridge.AppendPlayModeNote(SuccessReply, "create_game_object", playing: false));
+            Assert.AreEqual(SuccessReply, MCPExecutionBridge.AppendPlayModeNote(SuccessReply, "get_hierarchy", playing: true));
+            Assert.AreEqual(refused, MCPExecutionBridge.AppendPlayModeNote(refused, "create_game_object", playing: true));
+            Assert.AreEqual("not json", MCPExecutionBridge.AppendPlayModeNote("not json", "create_game_object", playing: true));
+            Assert.AreEqual("data:image/png;base64,AAAA", MCPExecutionBridge.AppendPlayModeNote("data:image/png;base64,AAAA", "create_game_object", playing: true));
+            Assert.AreEqual("{\"success\":true}", MCPExecutionBridge.AppendPlayModeNote("{\"success\":true}", "create_game_object", playing: true));
+            Assert.AreEqual("{\"success\":\"true\",\"message\":\"m\"}", MCPExecutionBridge.AppendPlayModeNote("{\"success\":\"true\",\"message\":\"m\"}", "create_game_object", playing: true));
+            Assert.AreEqual("[1,2]", MCPExecutionBridge.AppendPlayModeNote("[1,2]", "create_game_object", playing: true));
+            Assert.IsNull(MCPExecutionBridge.AppendPlayModeNote(null, "create_game_object", playing: true));
+            Assert.AreEqual("", MCPExecutionBridge.AppendPlayModeNote("", "create_game_object", playing: true));
+        }
+
+        [Test]
+        public void SceneEditingTools_NamesRealToolsAndNeverAReadOnlyOne()
+        {
+            foreach (var name in new[]
+            {
+                "create_game_object", "create_primitive", "instantiate_prefab", "delete_game_object", "duplicate_game_object",
+                "set_transform", "set_parent", "set_active", "rename_game_object", "add_component", "remove_component",
+                "set_component_properties", "set_component_enabled", "set_tag_and_layer", "set_rect_transform", "create_canvas",
+                "create_button", "create_text", "create_image", "create_ui_element", "set_camera_settings", "set_camera_projection"
+            })
+            {
+                Assert.IsTrue(ToolRegistry.SceneEditingTools.Contains(name), name);
+                Assert.IsNotNull(ToolRegistry.GetMethod(name), name + " is not a tool");
+            }
+
+            foreach (var name in ToolRegistry.SceneEditingTools)
+            {
+                var method = ToolRegistry.GetMethod(name);
+                if (method != null)
+                    Assert.IsFalse(ToolRegistry.IsReadOnly(method), name + " is read-only, so it edits nothing");
+            }
+        }
+
 #if KITWRIGHT_ANIMATION
         private const string AnimatorFolder = "Assets/__KitWrightPlayModeFixTests";
         private const string AnimatorControllerPath = AnimatorFolder + "/KwPlayModeCtrl.controller";

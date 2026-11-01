@@ -10,8 +10,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Prefs")]
     internal static class PrefsFunctions
     {
-        [Description("Read an EditorPrefs value (editor-only, persists across sessions on this machine). Auto-detects type as string, int, float, or bool. " +
-                     "EditorPrefs cannot tell a bool from an int, so a stored 0 or 1 is reported as bool when type is auto; pass type to force the reading.")]
+        [Description("Read an EditorPrefs value (editor-only, persists across sessions on this machine). Auto-detects type as string, int, or float. " +
+                     "EditorPrefs cannot tell a bool from an int, so auto reports a stored integer as int and sets boolLike for 0 or 1; pass type=bool to read it as a bool.")]
         [ReadOnlyTool]
         public static object GetEditorPref(
             [ToolParam("Preference key")] string key,
@@ -27,7 +27,8 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("KEY_NOT_FOUND", new { key });
 
             var resolved = ResolvePrefType(type);
-            if (resolved == "auto")
+            var auto = resolved == "auto";
+            if (auto)
                 resolved = DetectEditorPrefType(key);
 
             object value = resolved switch
@@ -38,7 +39,10 @@ namespace KitWright.Editor.Tools.Builtins
                 _ => EditorPrefs.GetString(key)
             };
 
-            return Response.Success($"EditorPrefs['{key}'] = {value}", new { key, type = resolved, value });
+            var message = $"EditorPrefs['{key}'] = {value}";
+            return auto && IsBoolLike(resolved, value)
+                ? Response.Success(message, new { key, type = resolved, value, boolLike = true })
+                : Response.Success(message, new { key, type = resolved, value });
         }
 
         [Description("Write an EditorPrefs value (editor-only, persists across sessions on this machine).")]
@@ -150,23 +154,24 @@ namespace KitWright.Editor.Tools.Builtins
         /// default you pass when the key is not of that type - so asking twice with two different
         /// defaults answers it: two identical results mean the value came from the store.
         ///
-        /// Order matters. EditorPrefs stores a bool as an int, so bool is asked for first and only
-        /// accepted when the int is 0 or 1; anything else is a plain int. Without this, "auto" read
-        /// every key as a string, which is what the tool's own description promised it would not do.
+        /// Order matters. EditorPrefs stores a bool as an int and cannot tell the two apart, so every
+        /// stored integer is "int"; GetEditorPref flags a 0 or 1 as boolLike instead of guessing bool.
+        /// Without this, "auto" read every key as a string, which is what the tool's own description
+        /// promised it would not do.
         /// </summary>
         internal static string DetectEditorPrefType(string key)
         {
             if (EditorPrefs.GetInt(key, int.MinValue) == EditorPrefs.GetInt(key, int.MaxValue))
-            {
-                var stored = EditorPrefs.GetInt(key);
-                return stored == 0 || stored == 1 ? "bool" : "int";
-            }
+                return "int";
 
             if (EditorPrefs.GetFloat(key, float.MinValue) == EditorPrefs.GetFloat(key, float.MaxValue))
                 return "float";
 
             return "string";
         }
+
+        internal static bool IsBoolLike(string type, object value) =>
+            type == "int" && value is int stored && (stored == 0 || stored == 1);
 
         internal static string DetectPlayerPrefType(string key)
         {

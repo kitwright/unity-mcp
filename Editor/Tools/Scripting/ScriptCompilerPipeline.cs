@@ -239,6 +239,10 @@ namespace KitWright.Editor.Tools.Scripting
         private const int DefaultTimeoutMilliseconds = 15000;
         private const int OutputDrainMilliseconds = 5000;
 
+        // A compile that was killed (editor closed mid-run, domain reload) never reaches its own cleanup.
+        private static readonly TimeSpan StaleTempDirAge = TimeSpan.FromHours(1);
+        private static int _sweptStaleTempDirs;
+
         private readonly string _compilerHostPathOverride;
         private readonly string _cscPathOverride;
         private readonly string _monoLibRootOverride;
@@ -263,7 +267,11 @@ namespace KitWright.Editor.Tools.Scripting
             if (!TryResolveToolchain(out var compilerHostPath, out var cscPath, out var monoLibRoot, out var toolchainError))
                 return ScriptCompilationResult.Unavailable(Name, toolchainError);
 
-            var tempRoot = Path.Combine(Path.GetTempPath(), "KitWrightExecuteCode", Guid.NewGuid().ToString("N"));
+            var compileRoot = Path.Combine(Path.GetTempPath(), "KitWrightExecuteCode");
+            if (System.Threading.Interlocked.Exchange(ref _sweptStaleTempDirs, 1) == 0)
+                Helpers.Housekeeping.DeleteStaleDirectories(compileRoot, StaleTempDirAge);
+
+            var tempRoot = Path.Combine(compileRoot, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempRoot);
 
             try

@@ -11,6 +11,7 @@ using KitWright.Editor.State;
 using KitWright.Editor.Threading;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace KitWright.Editor.MCP.Server
@@ -118,6 +119,35 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
+        // Only a success is annotated: a refused edit changed nothing, so there is nothing to lose.
+        internal static string AppendPlayModeNote(string resultJson, string toolName, bool playing)
+        {
+            if (!playing || string.IsNullOrEmpty(resultJson) || !ToolRegistry.SceneEditingTools.Contains(toolName))
+                return resultJson;
+
+            try
+            {
+                var envelope = JsonParse.Object(resultJson);
+                var success = envelope["success"];
+                var message = envelope["message"];
+                if (success == null || success.Type != JTokenType.Boolean || !success.Value<bool>() ||
+                    message == null || message.Type != JTokenType.String)
+                    return resultJson;
+
+                var text = message.Value<string>();
+                var note = KitWright.Editor.Tools.Builtins.SceneFunctions.DiscardedWithPlayMode;
+                if (text.Contains(note))
+                    return resultJson;
+
+                envelope["message"] = text.Length == 0 ? note : text + " " + note;
+                return envelope.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch (Exception)
+            {
+                return resultJson;
+            }
+        }
+
         // Read-only calls run beside a mutating one, which owns the single pending marker: a read
         // that finished would clear it, and a reload would then find nothing interrupted.
         internal static bool MarksPendingFunction(MethodInfo method) =>
@@ -167,7 +197,8 @@ namespace KitWright.Editor.MCP.Server
                     if (marksPending)
                         DomainReloadHandler.CompletePendingFunction(_stateController);
 
-                    var resultText = result ?? "Completed successfully";
+                    var resultText = AppendPlayModeNote(
+                        result ?? "Completed successfully", toolName, UnityEditor.EditorApplication.isPlaying);
                     _interactionLog?.Add(toolName,
                         ToolResultFormatter.IsError(resultText) ? MCPToolCallStatus.Error : MCPToolCallStatus.Success,
                         resultText);

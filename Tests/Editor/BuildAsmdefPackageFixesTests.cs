@@ -98,6 +98,28 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void ModifyBuildScenes_DescriptionKeepsItsFirstSentenceAndSaysThereIsNoUndo()
+        {
+            var description = ((System.ComponentModel.DescriptionAttribute)typeof(BuildFunctions)
+                .GetMethod(nameof(BuildFunctions.ModifyBuildScenes))
+                .GetCustomAttributes(typeof(System.ComponentModel.DescriptionAttribute), false)[0]).Description;
+
+            StringAssert.StartsWith("Add, remove, or set the enabled/disabled state of a scene in the Build Settings scene list. ", description);
+            StringAssert.Contains("no Undo", description);
+        }
+
+        [Test]
+        public void ModifyBuildScenes_SuccessSaysTheChangeCannotBeUndone()
+        {
+            var listed = EditorBuildSettings.scenes.FirstOrDefault(s => !string.IsNullOrEmpty(s.path));
+            Assume.That(listed, Is.Not.Null, "needs a scene already in the build list to re-apply its own state");
+
+            var reply = Ok("modify_build_scenes", "action", listed.enabled ? "enable" : "disable", "scene_path", listed.path);
+
+            Assert.IsFalse((bool)reply["data"]["undoable"]);
+        }
+
+        [Test]
         public void ClassifySwitch_OnlyCallsItSwitchedWhenTheActiveTargetIsTheRequestedOne()
         {
             Assert.AreEqual(BuildFunctions.SwitchOutcome.Switched,

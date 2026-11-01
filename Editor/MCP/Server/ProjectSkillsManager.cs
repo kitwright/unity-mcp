@@ -4,6 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -21,6 +23,9 @@ namespace KitWright.Editor.MCP.Server
         // block is the user's and is never modified. ManagedMarker doubles as the begin marker so
         // IsManagedFile / version-status detection keep working unchanged.
         internal const string ManagedEndMarker = "<!-- /KitWright Unity managed project skills -->";
+
+        // The block is committed, so it must read the same on every checkout: no absolute path.
+        private const string ProjectRootLine = "- Project root: the folder that contains `Assets/` and `ProjectSettings/`.";
 
         private const string ManifestDirectory = ".kitwright/skills";
         private const string ManifestFileName = "manifest.json";
@@ -198,16 +203,45 @@ namespace KitWright.Editor.MCP.Server
         {
             var manifest = new ProjectSkillsManifest
             {
-                platforms = selectedPlatforms?.Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>()
+                platforms = selectedPlatforms?.Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>(),
+                managedFiles = LoadManifest(projectRoot).managedFiles
             };
 
+            ValidateInstructionFiles(projectRoot, NormalizeManifest(manifest));
             SaveManifest(projectRoot, manifest);
 
             var normalized = LoadManifest(projectRoot);
-            SyncCodex(projectRoot, normalized);
-            SyncClaude(projectRoot, normalized);
-            SyncCursor(projectRoot, normalized);
-            SyncAgents(projectRoot, normalized);
+            try
+            {
+                SyncCodex(projectRoot, normalized);
+                SyncClaude(projectRoot, normalized);
+                SyncCursor(projectRoot, normalized);
+                SyncAgents(projectRoot, normalized);
+            }
+            finally
+            {
+                SaveManifest(projectRoot, normalized);
+            }
+        }
+
+        // Every refusal an instructions file can raise happens here, before the manifest or any file is
+        // written, so a refused configuration leaves the project as it was.
+        private static void ValidateInstructionFiles(string projectRoot, ProjectSkillsManifest manifest)
+        {
+            var codexPath = GetCodexAgentsPath(projectRoot);
+            var claudePath = GetClaudeInstructionsPath(projectRoot);
+            var codexLegacy = BuildLegacyCodexAgentsContent(projectRoot, manifest);
+            var claudeLegacy = BuildLegacyClaudeInstructionsContent(projectRoot, manifest);
+
+            if (manifest.platforms.Contains("codex", StringComparer.OrdinalIgnoreCase))
+                WriteManagedBlock(codexPath, "# AGENTS.md", BuildCodexManagedBlock(projectRoot, manifest), codexLegacy, true);
+            else
+                RemoveManagedBlock(codexPath, "# AGENTS.md", codexLegacy, true);
+
+            if (manifest.platforms.Contains("claude", StringComparer.OrdinalIgnoreCase))
+                WriteManagedBlock(claudePath, "# CLAUDE.md", BuildClaudeManagedBlock(projectRoot, manifest), claudeLegacy, true);
+            else
+                RemoveManagedBlock(claudePath, "# CLAUDE.md", claudeLegacy, true);
         }
 
         // Every skill the installed packages ship is installed. A per-skill opt-in existed here and
@@ -247,7 +281,7 @@ namespace KitWright.Editor.MCP.Server
         {
             try
             {
-                return File.Exists(path) && File.ReadAllText(path).Contains(ManagedMarker, StringComparison.Ordinal);
+                return File.Exists(path) && ManagedBlockText.HasManagedHeader(File.ReadAllText(path));
             }
             catch
             {
@@ -334,7 +368,7 @@ namespace KitWright.Editor.MCP.Server
             if (!enabled)
             {
                 RemoveManagedBlock(agentsPath, "# AGENTS.md", BuildLegacyCodexAgentsContent(projectRoot, manifest));
-                DeleteManagedSkillDirectories(skillsRoot);
+                DeleteManagedSkillDirectories(projectRoot, skillsRoot, manifest);
                 return;
             }
 
@@ -348,7 +382,7 @@ namespace KitWright.Editor.MCP.Server
                 BuildCodexManagedBlock(projectRoot, manifest),
                 BuildLegacyCodexAgentsContent(projectRoot, manifest));
 
-            WriteManagedSkillDirectories(skillsRoot, manifest, SkillPlatform.Codex);
+            WriteManagedSkillDirectories(projectRoot, skillsRoot, manifest, SkillPlatform.Codex, GetInstalledSkills());
         }
 
         private static void SyncClaude(string projectRoot, ProjectSkillsManifest manifest)
@@ -360,7 +394,7 @@ namespace KitWright.Editor.MCP.Server
             if (!enabled)
             {
                 RemoveManagedBlock(claudePath, "# CLAUDE.md", BuildLegacyClaudeInstructionsContent(projectRoot, manifest));
-                DeleteManagedSkillDirectories(skillsRoot);
+                DeleteManagedSkillDirectories(projectRoot, skillsRoot, manifest);
                 return;
             }
 
@@ -374,7 +408,7 @@ namespace KitWright.Editor.MCP.Server
                 BuildClaudeManagedBlock(projectRoot, manifest),
                 BuildLegacyClaudeInstructionsContent(projectRoot, manifest));
 
-            WriteManagedSkillDirectories(skillsRoot, manifest, SkillPlatform.Claude);
+            WriteManagedSkillDirectories(projectRoot, skillsRoot, manifest, SkillPlatform.Claude, GetInstalledSkills());
         }
 
         private static void SyncCursor(string projectRoot, ProjectSkillsManifest manifest)
@@ -399,59 +433,246 @@ namespace KitWright.Editor.MCP.Server
 
             if (!enabled)
             {
-                DeleteManagedSkillDirectories(skillsRoot);
+                DeleteManagedSkillDirectories(projectRoot, skillsRoot, manifest);
                 return;
             }
 
             Directory.CreateDirectory(skillsRoot);
-            WriteManagedSkillDirectories(skillsRoot, manifest, SkillPlatform.Agents);
+            WriteManagedSkillDirectories(projectRoot, skillsRoot, manifest, SkillPlatform.Agents, GetInstalledSkills());
         }
 
-        private static void WriteManagedSkillDirectories(string skillsRoot, ProjectSkillsManifest manifest, SkillPlatform platform)
+        // Files are written over the old ones and only then are stale ones removed, so a rewrite can keep
+        // each file's BOM and line endings. manifest.managedFiles is the record of what this wrote.
+        internal static void WriteManagedSkillDirectories(
+            string projectRoot,
+            string skillsRoot,
+            ProjectSkillsManifest manifest,
+            SkillPlatform platform,
+            IEnumerable<SkillDefinition> skills)
         {
-            DeleteManagedSkillDirectories(skillsRoot);
+            var rootRelative = RelativeTo(projectRoot, skillsRoot);
+            var previous = new HashSet<string>(manifest.managedFiles, StringComparer.Ordinal);
+            var current = new HashSet<string>(StringComparer.Ordinal);
 
-            foreach (var skill in GetInstalledSkills())
+            foreach (var skill in skills)
             {
                 var directory = Path.Combine(skillsRoot, skill.Id);
+                var relativeDirectory = rootRelative + "/" + skill.Id;
                 Directory.CreateDirectory(directory);
-                File.WriteAllText(Path.Combine(directory, "SKILL.md"), BuildSkillDocument(skill, platform));
+                ManagedTextFile.WriteGenerated(Path.Combine(directory, "SKILL.md"), BuildSkillDocument(skill, platform));
+                current.Add(relativeDirectory + "/SKILL.md");
+
+                foreach (var copied in CopySiblingFiles(skill, directory, relativeDirectory, previous))
+                    current.Add(copied);
             }
+
+            DeleteManagedSkillDirectories(projectRoot, skillsRoot, manifest, current);
+
+            foreach (var relative in current)
+            {
+                if (!manifest.managedFiles.Contains(relative))
+                    manifest.managedFiles.Add(relative);
+            }
+
+            manifest.managedFiles.Sort(StringComparer.Ordinal);
+        }
+
+        private static List<string> CopySiblingFiles(
+            SkillDefinition skill,
+            string directory,
+            string relativeDirectory,
+            ISet<string> previous)
+        {
+            var copied = new List<string>();
+            if (string.IsNullOrEmpty(skill.SourceDirectory))
+                return copied;
+
+            var plan = PlanSiblingFiles(PackageSkillCatalog.RelativeFiles(skill.SourceDirectory), directory, out var refused);
+            foreach (var path in refused)
+                Debug.LogWarning($"[KitWright] Skill '{skill.Id}': '{path}' would leave the skill folder, so it was not copied.");
+
+            foreach (var relative in plan)
+            {
+                var source = ResolveInside(skill.SourceDirectory, relative);
+                var target = ResolveInside(directory, relative);
+                if (source == null || target == null)
+                    continue;
+
+                var recorded = relativeDirectory + "/" + relative;
+                var bytes = File.ReadAllBytes(source);
+                if (File.Exists(target) && !previous.Contains(recorded) && !bytes.SequenceEqual(File.ReadAllBytes(target)))
+                {
+                    Debug.LogWarning($"[KitWright] Skill '{skill.Id}': '{target}' already exists and was not written by KitWright, so it was left as it is.");
+                    continue;
+                }
+
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
+                File.WriteAllBytes(target, bytes);
+                copied.Add(recorded);
+            }
+
+            return copied;
+        }
+
+        // Skill.md and the rest of a package skill's folder, as paths relative to it. A `.meta` file is the
+        // AssetDatabase's, not the skill's. A path that would leave the destination is refused, not copied.
+        internal static List<string> PlanSiblingFiles(
+            IEnumerable<string> sourceRelativePaths,
+            string destinationDirectory,
+            out List<string> refused)
+        {
+            var plan = new List<string>();
+            refused = new List<string>();
+
+            foreach (var raw in sourceRelativePaths ?? Enumerable.Empty<string>())
+            {
+                var relative = (raw ?? string.Empty).Replace('\\', '/').Trim();
+                if (relative.Length == 0 ||
+                    relative.EndsWith(".meta", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(relative, "SKILL.md", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (relative.Split('/').Contains("..") || ResolveInside(destinationDirectory, relative) == null)
+                {
+                    refused.Add(raw);
+                    continue;
+                }
+
+                if (!plan.Contains(relative, StringComparer.OrdinalIgnoreCase))
+                    plan.Add(relative);
+            }
+
+            plan.Sort(StringComparer.Ordinal);
+            return plan;
+        }
+
+        // Null when `relative` is empty, rooted, or resolves outside `root`.
+        internal static string ResolveInside(string root, string relative)
+        {
+            if (string.IsNullOrEmpty(root) || string.IsNullOrEmpty(relative) || Path.IsPathRooted(relative))
+                return null;
+
+            try
+            {
+                var rootFull = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) +
+                               Path.DirectorySeparatorChar;
+                var full = Path.GetFullPath(Path.Combine(root, relative));
+                var comparison = Path.DirectorySeparatorChar == '\\' ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+                return full.Length > rootFull.Length && full.StartsWith(rootFull, comparison) ? full : null;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        private static string RelativeTo(string root, string path)
+        {
+            var relative = path.StartsWith(root, StringComparison.OrdinalIgnoreCase) ? path.Substring(root.Length) : path;
+            return relative.TrimStart(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Replace('\\', '/');
         }
 
         private static void WriteManagedCursorRules(string rulesRoot, ProjectSkillsManifest manifest)
         {
-            DeleteManagedCursorRules(rulesRoot);
+            var written = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var skill in GetInstalledSkills())
             {
-                var path = Path.Combine(rulesRoot, $"kitwright-{skill.Id}.mdc");
-                File.WriteAllText(path, BuildCursorRuleContent(skill));
+                var name = $"kitwright-{skill.Id}.mdc";
+                ManagedTextFile.WriteGenerated(Path.Combine(rulesRoot, name), BuildCursorRuleContent(skill));
+                written.Add(name);
             }
+
+            DeleteManagedCursorRules(rulesRoot, written);
         }
 
-        private static void DeleteManagedSkillDirectories(string skillsRoot)
+        // Only what the manifest lists is removed, and only a SKILL.md that still carries the managed marker
+        // in its header: a folder is never deleted wholesale, because it may hold the user's own files.
+        // `keep` holds the files a sync just wrote.
+        private static void DeleteManagedSkillDirectories(
+            string projectRoot,
+            string skillsRoot,
+            ProjectSkillsManifest manifest,
+            ISet<string> keep = null)
         {
+            var prefix = RelativeTo(projectRoot, skillsRoot) + "/";
+
+            var listedFolders = manifest.managedFiles
+                .Where(relative => relative.StartsWith(prefix, StringComparison.Ordinal) && relative.IndexOf('/', prefix.Length) > 0)
+                .GroupBy(relative => relative.Substring(prefix.Length, relative.IndexOf('/', prefix.Length) - prefix.Length))
+                .ToList();
+
+            foreach (var folder in listedFolders)
+            {
+                var folderPath = Path.Combine(skillsRoot, folder.Key);
+                var skillPath = Path.Combine(folderPath, "SKILL.md");
+                var userTookOver = File.Exists(skillPath) && !IsManagedFile(skillPath);
+
+                foreach (var relative in folder.ToList())
+                {
+                    if (keep != null && keep.Contains(relative))
+                        continue;
+
+                    manifest.managedFiles.Remove(relative);
+                    var full = userTookOver ? null : ResolveInside(skillsRoot, relative.Substring(prefix.Length));
+                    if (full != null && File.Exists(full))
+                        File.Delete(full);
+                }
+
+                PruneEmptyDirectories(folderPath);
+            }
+
             if (!Directory.Exists(skillsRoot))
                 return;
 
-            // Any folder whose SKILL.md carries the marker is ours, including the legacy
-            // `kitwright-<id>` folders an earlier version wrote.
+            // Folders an earlier version wrote carry no record: the skill's own name, or the legacy
+            // `kitwright-<id>` form of it, stands in for the listing.
             foreach (var directory in Directory.GetDirectories(skillsRoot))
             {
+                var name = Path.GetFileName(directory);
                 var skillPath = Path.Combine(directory, "SKILL.md");
-                if (IsManagedFile(skillPath))
-                    Directory.Delete(directory, true);
+                if (!IsManagedFile(skillPath) || !IsListedSkillFolder(name, manifest))
+                    continue;
+
+                if (keep != null && keep.Contains(prefix + name + "/SKILL.md", StringComparer.OrdinalIgnoreCase))
+                    continue;
+
+                File.Delete(skillPath);
+                PruneEmptyDirectories(directory);
             }
         }
 
-        private static void DeleteManagedCursorRules(string rulesRoot)
+        private static bool IsListedSkillFolder(string name, ProjectSkillsManifest manifest)
+        {
+            return manifest.skillVersions.Any(entry =>
+                string.Equals(name, entry.id, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(name, "kitwright-" + entry.id, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static void PruneEmptyDirectories(string directory)
+        {
+            if (!Directory.Exists(directory))
+                return;
+
+            foreach (var child in Directory.GetDirectories(directory))
+                PruneEmptyDirectories(child);
+
+            if (Directory.GetFileSystemEntries(directory).Length == 0)
+                Directory.Delete(directory);
+        }
+
+        private static void DeleteManagedCursorRules(string rulesRoot, ISet<string> keep = null)
         {
             if (!Directory.Exists(rulesRoot))
                 return;
 
             foreach (var file in Directory.GetFiles(rulesRoot, "kitwright-*.mdc", SearchOption.TopDirectoryOnly))
             {
+                if (keep != null && keep.Contains(Path.GetFileName(file)))
+                    continue;
+
                 if (IsManagedFile(file))
                     File.Delete(file);
             }
@@ -462,155 +683,55 @@ namespace KitWright.Editor.MCP.Server
         // user content outside it:
         //   - file absent/empty        -> create `defaultTitle` + block
         //   - complete begin..end block -> replace just the block region in place
+        //   - complete GameWright block -> same, a block an earlier release wrote
         //   - begin marker, no end      -> migrate an exact legacy generated file; otherwise stop
         //                                  with a manual-migration error rather than clobber content
         //   - no begin marker           -> append the block below the existing user content
-        private static void WriteManagedBlock(string path, string defaultTitle, string block, string legacyContent)
+        // A marker counts only when it is a line of its own, so prose that mentions one is left alone.
+        private static void WriteManagedBlock(string path, string defaultTitle, string block, string legacyContent, bool dryRun = false)
         {
-            if (!File.Exists(path))
-            {
-                File.WriteAllText(path, defaultTitle + "\n\n" + block + "\n");
-                return;
-            }
+            var content = string.Empty;
+            var bom = false;
+            var newline = "\n";
+            if (File.Exists(path) && !ManagedTextFile.TryRead(path, out content, out bom, out newline))
+                throw new InvalidOperationException(ManagedTextFile.NotUtf8(path));
 
-            var content = File.ReadAllText(path);
-            var markers = ScanManagedMarkers(content);
+            var updated = ManagedBlockText.Upsert(content, block, defaultTitle, legacyContent, newline, out var refusal);
+            if (refusal != null)
+                throw new InvalidOperationException($"'{path}' {refusal}");
 
-            if (markers.IsWellFormed)
-            {
-                var prefix = content.Substring(0, markers.Begin);
-                var suffix = content.Substring(markers.End + ManagedEndMarker.Length);
-                File.WriteAllText(path, prefix + block + suffix);
-                return;
-            }
-
-            var beginCount = markers.BeginCount;
-            var endCount = markers.EndCount;
-
-            if (beginCount == 1 && endCount == 0)
-            {
-                if (ManagedTextEquals(content, legacyContent))
-                {
-                    File.WriteAllText(path, defaultTitle + "\n\n" + block + "\n");
-                    return;
-                }
-
-                throw new InvalidOperationException(
-                    $"'{path}' contains a legacy KitWright begin marker without an end marker and no longer exactly matches the known generated file. No content was changed. Preserve any hand-authored text, then either remove the legacy begin marker so KitWright can append a new block, or add '{ManagedEndMarker}' immediately after the KitWright-managed section.");
-            }
-
-            if (beginCount != 0 || endCount != 0)
-                throw new InvalidOperationException(
-                    $"'{path}' contains duplicate, unmatched, or out-of-order KitWright managed markers. No content was changed. Keep exactly one '{ManagedMarker}' followed by one '{ManagedEndMarker}'.");
-
-            var trimmed = content.TrimEnd('\n', '\r', ' ', '\t');
-            var userContent = trimmed.Length == 0 ? defaultTitle : trimmed;
-            File.WriteAllText(path, userContent + "\n\n" + block + "\n");
+            if (!dryRun)
+                ManagedTextFile.Write(path, updated, bom);
         }
 
         // Inverse of WriteManagedBlock, used when a platform is disabled: strip ONLY the managed
         // block and keep the user's content. If nothing but a bare title (or whitespace) remains,
         // the file was KitWright-only, so delete it. Exact legacy generated files can also be safely
         // deleted; edited legacy files are left untouched and reported for manual cleanup.
-        private static void RemoveManagedBlock(string path, string defaultTitle, string legacyContent)
+        private static void RemoveManagedBlock(string path, string defaultTitle, string legacyContent, bool dryRun = false)
         {
             if (!File.Exists(path))
                 return;
 
-            var content = File.ReadAllText(path);
-            var markers = ScanManagedMarkers(content);
-            var beginCount = markers.BeginCount;
-            var endCount = markers.EndCount;
-
-            if (beginCount == 0 && endCount == 0)
-                return;
-
-            if (beginCount == 1 && endCount == 0)
+            if (!ManagedTextFile.TryRead(path, out var content, out var bom, out var newline))
             {
-                if (ManagedTextEquals(content, legacyContent))
-                {
-                    File.Delete(path);
-                    return;
-                }
+                if (ManagedBlockText.MentionsMarkers(File.ReadAllText(path)))
+                    throw new InvalidOperationException(ManagedTextFile.NotUtf8(path));
 
-                throw new InvalidOperationException(
-                    $"'{path}' contains an edited legacy KitWright file with no end marker. It was left untouched while disabling Project Skills. Preserve any hand-authored text and remove the stale KitWright section manually.");
+                return;
             }
 
-            if (!markers.IsWellFormed)
-                throw new InvalidOperationException(
-                    $"'{path}' contains duplicate, unmatched, or out-of-order KitWright managed markers. It was left untouched while disabling Project Skills.");
+            var updated = ManagedBlockText.Strip(content, defaultTitle, legacyContent, newline, out var refusal);
+            if (refusal != null)
+                throw new InvalidOperationException($"'{path}' {refusal}");
 
-            var prefix = content.Substring(0, markers.Begin);
-            var suffix = content.Substring(markers.End + ManagedEndMarker.Length);
-            var remaining = (prefix + suffix).Trim();
+            if (dryRun)
+                return;
 
-            if (remaining.Length == 0 || remaining == defaultTitle.Trim())
-            {
+            if (updated == null)
                 File.Delete(path);
-                return;
-            }
-
-            File.WriteAllText(path, prefix.TrimEnd() + "\n" + suffix.TrimStart('\n', '\r'));
-        }
-
-        private static ManagedMarkers ScanManagedMarkers(string content)
-        {
-            var begin = content.IndexOf(ManagedMarker, StringComparison.Ordinal);
-            return new ManagedMarkers(
-                CountOccurrences(content, ManagedMarker),
-                CountOccurrences(content, ManagedEndMarker),
-                begin,
-                begin >= 0
-                    ? content.IndexOf(ManagedEndMarker, begin + ManagedMarker.Length, StringComparison.Ordinal)
-                    : -1);
-        }
-
-        private readonly struct ManagedMarkers
-        {
-            public ManagedMarkers(int beginCount, int endCount, int begin, int end)
-            {
-                BeginCount = beginCount;
-                EndCount = endCount;
-                Begin = begin;
-                End = end;
-            }
-
-            public int BeginCount { get; }
-            public int EndCount { get; }
-            public int Begin { get; }
-            public int End { get; }
-
-            /// Exactly one begin followed by exactly one end: the only shape safe to rewrite in place.
-            public bool IsWellFormed => BeginCount == 1 && EndCount == 1 && End > Begin;
-        }
-
-        private static int CountOccurrences(string content, string marker)
-        {
-            if (string.IsNullOrEmpty(content) || string.IsNullOrEmpty(marker))
-                return 0;
-
-            var count = 0;
-            var index = 0;
-            while ((index = content.IndexOf(marker, index, StringComparison.Ordinal)) >= 0)
-            {
-                count++;
-                index += marker.Length;
-            }
-            return count;
-        }
-
-        private static bool ManagedTextEquals(string left, string right)
-        {
-            return string.Equals(NormalizeManagedText(left), NormalizeManagedText(right), StringComparison.Ordinal);
-        }
-
-        private static string NormalizeManagedText(string value)
-        {
-            return (value ?? string.Empty)
-                .Replace("\r\n", "\n")
-                .Replace('\r', '\n')
-                .TrimEnd('\n', ' ', '\t');
+            else if (!string.Equals(updated, content, StringComparison.Ordinal))
+                ManagedTextFile.Write(path, updated, bom);
         }
 
         private static List<SkillVersionEntry> BuildCurrentSkillVersionEntries(ProjectSkillsManifest manifest)
@@ -745,7 +866,9 @@ namespace KitWright.Editor.MCP.Server
                     true);
             }
 
-            var managed = content.Contains(ManagedMarker, StringComparison.Ordinal);
+            var managed = expected.SkillId == "project"
+                ? ManagedBlockText.HasBlockMarker(content)
+                : ManagedBlockText.HasManagedHeader(content);
             if (!managed)
             {
                 return new SkillFileVersionStatus(
@@ -760,8 +883,8 @@ namespace KitWright.Editor.MCP.Server
 
             if (expected.SkillId == "project")
             {
-                var markers = ScanManagedMarkers(content);
-                if (!markers.IsWellFormed)
+                var markers = ManagedBlockText.Scan(content, ManagedMarker, ManagedEndMarker);
+                if (!markers.IsWellFormed && !markers.IsEmpty)
                 {
                     return new SkillFileVersionStatus(
                         expected.Path,
@@ -871,7 +994,7 @@ $@"{ManagedMarker}
 
 ## Project
 
-- Project root: `{projectRoot}`
+{ProjectRootLine}
 - Product name: `{Application.productName}`
 
 ## Notes
@@ -920,7 +1043,7 @@ $@"{ManagedMarker}
 
 ## Project
 
-- Project root: `{projectRoot}`
+{ProjectRootLine}
 - Product name: `{Application.productName}`
 {ManagedEndMarker}";
         }
@@ -928,14 +1051,16 @@ $@"{ManagedMarker}
         private static string BuildLegacyCodexAgentsContent(string projectRoot, ProjectSkillsManifest manifest)
         {
             var block = RemoveManagedEndMarker(BuildCodexManagedBlock(projectRoot, manifest))
-                .Replace(CodexManagedNotice, "This file is managed by KitWright MCP for Unity.");
+                .Replace(CodexManagedNotice, "This file is managed by KitWright MCP for Unity.")
+                .Replace(ProjectRootLine, $"- Project root: `{projectRoot}`");
             return "# AGENTS.md\n" + block + "\n";
         }
 
         private static string BuildLegacyClaudeInstructionsContent(string projectRoot, ProjectSkillsManifest manifest)
         {
             var block = RemoveManagedEndMarker(BuildClaudeManagedBlock(projectRoot, manifest))
-                .Replace(ClaudeManagedNotice, "This file is managed by KitWright MCP for Unity for Claude Code.");
+                .Replace(ClaudeManagedNotice, "This file is managed by KitWright MCP for Unity for Claude Code.")
+                .Replace(ProjectRootLine, $"- Project root: `{projectRoot}`");
             return "# CLAUDE.md\n" + block + "\n";
         }
 
@@ -1332,6 +1457,15 @@ $@"
             manifest ??= CreateDefaultManifest();
             manifest.platforms ??= new List<string>();
             manifest.skillVersions ??= new List<SkillVersionEntry>();
+            manifest.managedFiles ??= new List<string>();
+
+            manifest.managedFiles = manifest.managedFiles
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim().Replace('\\', '/'))
+                .Where(value => !Path.IsPathRooted(value) && !value.Split('/').Contains(".."))
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(value => value, StringComparer.Ordinal)
+                .ToList();
 
             manifest.platforms = manifest.platforms
                 .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -1374,6 +1508,9 @@ $@"
         {
             public List<string> platforms = new List<string>();
             public List<SkillVersionEntry> skillVersions = new List<SkillVersionEntry>();
+
+            // Every file a sync wrote under a skills folder, relative to the project root.
+            public List<string> managedFiles = new List<string>();
         }
 
         [Serializable]
@@ -1385,7 +1522,7 @@ $@"
 
         internal sealed class SkillDefinition
         {
-            public SkillDefinition(string id, string version, string title, string description, bool isBuiltIn, string whenToUse, IReadOnlyList<string> rules, string body = null, string extraFrontMatter = null)
+            public SkillDefinition(string id, string version, string title, string description, bool isBuiltIn, string whenToUse, IReadOnlyList<string> rules, string body = null, string extraFrontMatter = null, string sourceDirectory = null)
             {
                 Id = id;
                 Version = version;
@@ -1396,6 +1533,7 @@ $@"
                 Rules = rules ?? Array.Empty<string>();
                 Body = body;
                 ExtraFrontMatter = extraFrontMatter;
+                SourceDirectory = sourceDirectory;
             }
 
             public string Id { get; }
@@ -1413,6 +1551,9 @@ $@"
             /// <summary>Front matter lines the skill's author wrote beyond name, description, version and
             /// platform, copied into the installed SKILL.md as they were.</summary>
             public string ExtraFrontMatter { get; }
+
+            /// <summary>The folder a package skill was read from; its files beside SKILL.md are installed with it.</summary>
+            public string SourceDirectory { get; }
         }
 
         private sealed class ExpectedSkillVersionFile
@@ -1470,6 +1611,301 @@ $@"
             public bool Missing { get; }
             public bool Unmanaged { get; }
             public bool RequiresUpgrade { get; }
+        }
+    }
+
+    internal static class ManagedBlockText
+    {
+        internal const string LegacyBeginMarker = "<!-- GameWright Unity managed project skills -->";
+        internal const string LegacyEndMarker = "<!-- /GameWright Unity managed project skills -->";
+
+        internal readonly struct Markers
+        {
+            public Markers(int beginCount, int endCount, int start, int end)
+            {
+                BeginCount = beginCount;
+                EndCount = endCount;
+                Start = start;
+                End = end;
+            }
+
+            public int BeginCount { get; }
+            public int EndCount { get; }
+
+            /// Offset of the begin line, and of the end of the end line: the region to replace.
+            public int Start { get; }
+            public int End { get; }
+
+            /// Exactly one begin line followed by exactly one end line: the only shape safe to rewrite in place.
+            public bool IsWellFormed => Start >= 0;
+            public bool IsEmpty => BeginCount == 0 && EndCount == 0;
+        }
+
+        // A marker is a line of its own (indentation allowed); inside a sentence or a code span it is text.
+        internal static Markers Scan(string content, string begin, string end)
+        {
+            var begins = WholeLines(content, begin);
+            var ends = WholeLines(content, end);
+            var ordered = begins.Count == 1 && ends.Count == 1 && ends[0].Index > begins[0].Index;
+            return new Markers(
+                begins.Count,
+                ends.Count,
+                ordered ? begins[0].Index : -1,
+                ordered ? ends[0].Index + ends[0].Length : -1);
+        }
+
+        private static MatchCollection WholeLines(string content, string marker)
+        {
+            return Regex.Matches(
+                content ?? string.Empty,
+                "^[ \\t]*" + Regex.Escape(marker) + "[ \\t]*(?=\\r?$)",
+                RegexOptions.Multiline);
+        }
+
+        internal static bool HasBlockMarker(string content)
+        {
+            return Scan(content, ProjectSkillsManager.ManagedMarker, ProjectSkillsManager.ManagedEndMarker).BeginCount > 0 ||
+                   Scan(content, LegacyBeginMarker, LegacyEndMarker).BeginCount > 0;
+        }
+
+        internal static bool MentionsMarkers(string content)
+        {
+            return content != null &&
+                   (content.Contains(ProjectSkillsManager.ManagedMarker, StringComparison.Ordinal) ||
+                    content.Contains(ProjectSkillsManager.ManagedEndMarker, StringComparison.Ordinal) ||
+                    content.Contains(LegacyBeginMarker, StringComparison.Ordinal) ||
+                    content.Contains(LegacyEndMarker, StringComparison.Ordinal));
+        }
+
+        // A generated skill file or rule opens with the marker, after its front matter if it has any.
+        internal static bool HasManagedHeader(string content)
+        {
+            var lines = (content ?? string.Empty).TrimStart('\uFEFF').Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+            var index = 0;
+            if (lines[0].Trim() == "---")
+            {
+                index = 1;
+                while (index < lines.Length && lines[index].Trim() != "---")
+                    index++;
+
+                index++;
+            }
+
+            for (; index < lines.Length; index++)
+            {
+                var line = lines[index].Trim();
+                if (line.Length == 0)
+                    continue;
+
+                return line == ProjectSkillsManager.ManagedMarker || line == LegacyBeginMarker;
+            }
+
+            return false;
+        }
+
+        // The file's new text, or null with `refusal` set (written for "'<path>' <refusal>") when its markers
+        // are duplicated, unmatched or out of order. `content` is empty for a file that does not exist yet.
+        internal static string Upsert(
+            string content,
+            string block,
+            string defaultTitle,
+            string legacyContent,
+            string newline,
+            out string refusal)
+        {
+            refusal = null;
+            content = content ?? string.Empty;
+            block = ManagedTextFile.ToNewline(block, newline);
+
+            var kit = Scan(content, ProjectSkillsManager.ManagedMarker, ProjectSkillsManager.ManagedEndMarker);
+            var old = Scan(content, LegacyBeginMarker, LegacyEndMarker);
+
+            if (kit.BeginCount == 1 && kit.EndCount == 0 && old.IsEmpty)
+            {
+                if (ManagedTextEquals(content, legacyContent))
+                    return defaultTitle + newline + newline + block + newline;
+
+                refusal =
+                    $"contains a legacy KitWright begin marker without an end marker and no longer exactly matches the known generated file. No content was changed. Preserve any hand-authored text, then either remove the legacy begin marker so KitWright can append a new block, or add '{ProjectSkillsManager.ManagedEndMarker}' immediately after the KitWright-managed section.";
+                return null;
+            }
+
+            if (!IsConsistent(kit) || !IsConsistent(old) || Overlap(kit, old))
+            {
+                refusal = $"contains duplicate, unmatched, or out-of-order KitWright managed markers. No content was changed. Keep exactly one '{ProjectSkillsManager.ManagedMarker}' line followed by one '{ProjectSkillsManager.ManagedEndMarker}' line.";
+                return null;
+            }
+
+            if (kit.IsWellFormed && old.IsWellFormed)
+            {
+                content = RemoveRegion(content, old.Start, old.End);
+                kit = Scan(content, ProjectSkillsManager.ManagedMarker, ProjectSkillsManager.ManagedEndMarker);
+            }
+
+            var target = kit.IsWellFormed ? kit : old;
+            if (target.IsWellFormed)
+                return content.Substring(0, target.Start) + block + content.Substring(target.End);
+
+            var trimmed = content.TrimEnd('\n', '\r', ' ', '\t');
+            var userContent = trimmed.Length == 0 ? defaultTitle : trimmed;
+            return userContent + newline + newline + block + newline;
+        }
+
+        // The text without the managed block(s), null when nothing but a bare title would remain (delete the
+        // file), or null with `refusal` set. The input itself comes back when there is nothing to remove.
+        internal static string Strip(string content, string defaultTitle, string legacyContent, string newline, out string refusal)
+        {
+            refusal = null;
+            content = content ?? string.Empty;
+
+            var kit = Scan(content, ProjectSkillsManager.ManagedMarker, ProjectSkillsManager.ManagedEndMarker);
+            var old = Scan(content, LegacyBeginMarker, LegacyEndMarker);
+
+            if (kit.IsEmpty && old.IsEmpty)
+                return content;
+
+            if (kit.BeginCount == 1 && kit.EndCount == 0 && old.IsEmpty)
+            {
+                if (ManagedTextEquals(content, legacyContent))
+                    return null;
+
+                refusal = "contains an edited legacy KitWright file with no end marker. It was left untouched while disabling Project Skills. Preserve any hand-authored text and remove the stale KitWright section manually.";
+                return null;
+            }
+
+            if (!IsConsistent(kit) || !IsConsistent(old) || Overlap(kit, old))
+            {
+                refusal = "contains duplicate, unmatched, or out-of-order KitWright managed markers. It was left untouched while disabling Project Skills.";
+                return null;
+            }
+
+            var result = content;
+            foreach (var region in new[] { kit, old }.Where(found => found.IsWellFormed).OrderByDescending(found => found.Start))
+                result = result.Substring(0, region.Start).TrimEnd() + newline + result.Substring(region.End).TrimStart('\n', '\r');
+
+            var remaining = result.Trim();
+            return remaining.Length == 0 || remaining == defaultTitle.Trim() ? null : result;
+        }
+
+        private static bool IsConsistent(Markers markers) => markers.IsWellFormed || markers.IsEmpty;
+
+        private static bool Overlap(Markers first, Markers second)
+        {
+            return first.IsWellFormed && second.IsWellFormed && first.Start < second.End && second.Start < first.End;
+        }
+
+        private static string RemoveRegion(string content, int start, int end)
+        {
+            if (end < content.Length && content[end] == '\r')
+                end++;
+            if (end < content.Length && content[end] == '\n')
+                end++;
+
+            return content.Remove(start, end - start);
+        }
+
+        internal static bool ManagedTextEquals(string left, string right)
+        {
+            return string.Equals(NormalizeManagedText(left), NormalizeManagedText(right), StringComparison.Ordinal);
+        }
+
+        private static string NormalizeManagedText(string value)
+        {
+            return (value ?? string.Empty)
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .TrimEnd('\n', ' ', '\t');
+        }
+    }
+
+    // CLAUDE.md, AGENTS.md and skill files belong to the user's repo: a rewrite keeps a file's BOM and its
+    // dominant line ending, and a file that is not UTF-8 is refused rather than decoded lossily and corrupted.
+    internal static class ManagedTextFile
+    {
+        private static readonly UTF8Encoding Strict = new UTF8Encoding(false, true);
+
+        internal static string Decode(byte[] bytes, out bool bom, out string newline)
+        {
+            bom = bytes.Length >= 3 && bytes[0] == 0xEF && bytes[1] == 0xBB && bytes[2] == 0xBF;
+            var skip = bom ? 3 : 0;
+            var text = Strict.GetString(bytes, skip, bytes.Length - skip);
+            newline = DominantNewline(text);
+            return text;
+        }
+
+        internal static string DominantNewline(string text)
+        {
+            var crlf = 0;
+            var lf = 0;
+            for (var i = 0; i < text.Length; i++)
+            {
+                if (text[i] != '\n')
+                    continue;
+
+                if (i > 0 && text[i - 1] == '\r')
+                    crlf++;
+                else
+                    lf++;
+            }
+
+            return crlf > lf ? "\r\n" : "\n";
+        }
+
+        internal static bool TryRead(string path, out string text, out bool bom, out string newline)
+        {
+            try
+            {
+                text = Decode(File.ReadAllBytes(path), out bom, out newline);
+                return true;
+            }
+            catch (DecoderFallbackException)
+            {
+                text = null;
+                bom = false;
+                newline = "\n";
+                return false;
+            }
+        }
+
+        internal static string NotUtf8(string path)
+        {
+            return $"'{path}' is not valid UTF-8, so KitWright did not touch it. Convert the file to UTF-8, then configure again.";
+        }
+
+        internal static string ToNewline(string text, string newline)
+        {
+            var normalized = (text ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n');
+            return newline == "\n" ? normalized : normalized.Replace("\n", newline);
+        }
+
+        internal static byte[] Encode(string text, bool bom)
+        {
+            var body = new UTF8Encoding(false).GetBytes(text);
+            if (!bom)
+                return body;
+
+            var bytes = new byte[body.Length + 3];
+            bytes[0] = 0xEF;
+            bytes[1] = 0xBB;
+            bytes[2] = 0xBF;
+            Buffer.BlockCopy(body, 0, bytes, 3, body.Length);
+            return bytes;
+        }
+
+        internal static void Write(string path, string text, bool bom)
+        {
+            File.WriteAllBytes(path, Encode(text, bom));
+        }
+
+        // A generated file takes the BOM and line ending of the file it replaces; a new one is LF without BOM.
+        internal static void WriteGenerated(string path, string text)
+        {
+            var bom = false;
+            var newline = "\n";
+            if (File.Exists(path))
+                TryRead(path, out _, out bom, out newline);
+
+            Write(path, ToNewline(text, newline), bom);
         }
     }
 }

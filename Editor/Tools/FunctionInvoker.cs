@@ -566,13 +566,43 @@ namespace KitWright.Editor.Tools
             if (targetType == typeof(Color))
                 return ParseColor(value);
             if (IsListType(targetType))
-                return JsonParse.Array(value).ToObject(targetType);
+            {
+                var array = JsonParse.Array(value);
+                var element = targetType.IsArray ? targetType.GetElementType() : targetType.GetGenericArguments()[0];
+                if (IsIntegralType(element))
+                    RequireIntegerElements(array);
+                return array.ToObject(targetType);
+            }
 
             return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
         }
 
         private static bool IsListType(Type type) =>
             type.IsArray || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>));
+
+        private static bool IsIntegralType(Type type) =>
+            type == typeof(byte) || type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) ||
+            type == typeof(int) || type == typeof(uint) || type == typeof(long) || type == typeof(ulong);
+
+        // ToObject rounds 1.5 to 2 and reads "3" as 3. A float token with no fractional part (3.0) is still an integer.
+        private static void RequireIntegerElements(JArray array)
+        {
+            for (var i = 0; i < array.Count; i++)
+            {
+                var item = array[i];
+                if (item.Type == JTokenType.Integer)
+                    continue;
+
+                if (item.Type == JTokenType.Float)
+                {
+                    var number = (double)item;
+                    if (!double.IsInfinity(number) && number == Math.Floor(number))
+                        continue;
+                }
+
+                throw new FormatException($"element {i} ({item.ToString(Formatting.None)}) is not an integer");
+            }
+        }
 
         private static bool IsFlagsEnum(Type type) => type.IsDefined(typeof(FlagsAttribute), false);
 

@@ -19,7 +19,7 @@ namespace KitWright.Editor.Tools.Builtins
     internal static class CompilationFunctions
     {
         private const string ExternalSyncPendingKey = "KitWright_ExternalSync_Pending";
-        private const string ExternalSyncStartedAtKey = "KitWright_ExternalSync_StartedAt";
+        internal const string ExternalSyncStartedAtKey = "KitWright_ExternalSync_StartedAt";
         private const double ExternalSyncRecoveryMaxAgeSeconds = 120;
         private const int PlayModeErrorCount = 10;
         internal const string PlayModeErrorsKey = "KitWright_ExternalSync_PlayModeErrors";
@@ -219,6 +219,11 @@ namespace KitWright.Editor.Tools.Builtins
             return state.OutOfDateSourceCount + state.UnknownProjectScriptCount;
         }
 
+        internal const string NotCompiledCode = "SCRIPT_CHANGES_NOT_COMPILED";
+
+        internal static bool IsNotCompiledOutcome(string summary) =>
+            summary != null && summary.StartsWith(NotCompiledCode, StringComparison.Ordinal);
+
         // Written after a domain reload, when the error list is empty whether or not a compile ran:
         // leaving Play Mode reloads before RecompileAsync starts, and that is not a finished compile.
         internal static (string Summary, MCPToolCallStatus Status) DescribeRecoveredCompile(string issues, int pendingScriptFiles)
@@ -231,7 +236,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (pendingScriptFiles > 0)
             {
-                return ("SCRIPT_CHANGES_NOT_COMPILED: the call was cut short by a domain reload before the recompile ran, " +
+                return (NotCompiledCode + ": the call was cut short by a domain reload before the recompile ran, " +
                         $"and {pendingScriptFiles} script file(s) on disk are still newer than the last compilation. " +
                         "Call request_recompile again.", MCPToolCallStatus.Error);
             }
@@ -337,7 +342,7 @@ namespace KitWright.Editor.Tools.Builtins
         internal static void MarkExternalSyncPending()
         {
             SessionState.SetBool(ExternalSyncPendingKey, true);
-            SessionState.SetString(ExternalSyncStartedAtKey, DateTime.Now.ToString("O"));
+            SessionState.SetString(ExternalSyncStartedAtKey, DateTime.UtcNow.ToString("O"));
         }
 
         internal static void ClearExternalSyncPending()
@@ -351,16 +356,17 @@ namespace KitWright.Editor.Tools.Builtins
             if (!SessionState.GetBool(ExternalSyncPendingKey, false))
                 return false;
 
-            var startedAtStr = SessionState.GetString(ExternalSyncStartedAtKey, "");
-            if (!DateTime.TryParse(startedAtStr, null, System.Globalization.DateTimeStyles.RoundtripKind, out var startedAt))
-                return true;
-
-            if ((DateTime.Now - startedAt).TotalSeconds <= ExternalSyncRecoveryMaxAgeSeconds)
+            if (IsExternalSyncStillPending(SessionState.GetString(ExternalSyncStartedAtKey, ""), DateTime.UtcNow))
                 return true;
 
             ClearExternalSyncPending();
             return false;
         }
+
+        // An unreadable stamp counts as expired: it used to read as pending for good, and nothing ever cleared it.
+        internal static bool IsExternalSyncStillPending(string startedAtText, DateTime nowUtc) =>
+            DomainReloadHandler.TryParseUtc(startedAtText, out var startedAt) &&
+            (nowUtc - startedAt).TotalSeconds <= ExternalSyncRecoveryMaxAgeSeconds;
     }
 
     [InitializeOnLoad]
@@ -375,6 +381,8 @@ namespace KitWright.Editor.Tools.Builtins
         private static int _pendingScriptFiles;
         private static bool _compileSeen;
         private static bool _waiting;
+
+        internal static bool IsWaiting => _waiting;
 
         static ExternalSyncRecoveryTracker()
         {

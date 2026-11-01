@@ -114,7 +114,8 @@ namespace KitWright.Editor.Tools.Builtins
                 .ToArray();
         }
 
-        [Description("Add, remove, or set the enabled/disabled state of a scene in the Build Settings scene list.")]
+        [Description("Add, remove, or set the enabled/disabled state of a scene in the Build Settings scene list. " +
+                     "Build Settings has no Undo, so reverse a change by calling this tool again with the opposite action.")]
         public static object ModifyBuildScenes(
             [ToolParam("Action: 'add', 'remove', 'enable', 'disable'")] string action,
             [ToolParam("Scene asset path, e.g. 'Assets/Scenes/Main.unity'")] string scene_path)
@@ -150,7 +151,8 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Build scene list updated ({action}: {scene_path}).", new
             {
                 sceneCount = list.Count,
-                enabledSceneCount = list.Count(s => s.enabled)
+                enabledSceneCount = list.Count(s => s.enabled),
+                undoable = false
             });
         }
 

@@ -47,7 +47,7 @@ namespace KitWright.Editor.MCP.Server
 
                     try
                     {
-                        found.Add(Parse(id, File.ReadAllText(file)));
+                        found.Add(Parse(id, File.ReadAllText(file), directory));
                     }
                     catch (Exception ex)
                     {
@@ -87,7 +87,7 @@ namespace KitWright.Editor.MCP.Server
                 yield return Path.Combine(directory, "Skills~");
         }
 
-        internal static ProjectSkillsManager.SkillDefinition Parse(string id, string markdown)
+        internal static ProjectSkillsManager.SkillDefinition Parse(string id, string markdown, string sourceDirectory = null)
         {
             var body = StripFrontMatter(markdown).Trim();
             if (body.Length == 0)
@@ -96,14 +96,30 @@ namespace KitWright.Editor.MCP.Server
             var description = FrontMatterValue(markdown, "description");
             return new ProjectSkillsManager.SkillDefinition(
                 id,
-                ContentVersion(markdown),
+                ContentVersion(markdown, sourceDirectory),
                 Title(id),
                 string.IsNullOrEmpty(description) ? id : description,
                 false,
                 null,
                 null,
                 body,
-                FrontMatterExtras(markdown));
+                FrontMatterExtras(markdown),
+                sourceDirectory);
+        }
+
+        // Every file under a skill's folder, as a path relative to it. A skill file beside SKILL.md (scripts/,
+        // references/...) is installed with it.
+        internal static List<string> RelativeFiles(string directory)
+        {
+            var files = new List<string>();
+            if (string.IsNullOrEmpty(directory) || !Directory.Exists(directory))
+                return files;
+
+            var prefix = directory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar).Length + 1;
+            foreach (var file in Directory.GetFiles(directory, "*", SearchOption.AllDirectories))
+                files.Add(file.Substring(prefix));
+
+            return files;
         }
 
         // Bump when the rendered skill document or Cursor rule changes (front matter, quoting, body): the version
@@ -111,12 +127,29 @@ namespace KitWright.Editor.MCP.Server
         internal const int RendererVersion = 2;
 
         // The skill file is the source of truth, so its content hash is the version: an edited
-        // SKILL.md reports an available update with no version field to remember to bump.
-        private static string ContentVersion(string markdown)
+        // SKILL.md, or an edited file beside it, reports an available update with no version field to
+        // remember to bump. A skill with nothing beside SKILL.md hashes as it always did.
+        private static string ContentVersion(string markdown, string sourceDirectory)
         {
+            var input = new List<byte>(Encoding.UTF8.GetBytes(RendererVersion + "\n" + (markdown ?? string.Empty)));
+            try
+            {
+                foreach (var relative in ProjectSkillsManager.PlanSiblingFiles(RelativeFiles(sourceDirectory), sourceDirectory, out _))
+                {
+                    input.AddRange(Encoding.UTF8.GetBytes("\n" + relative + "\n"));
+                    input.AddRange(File.ReadAllBytes(Path.Combine(sourceDirectory, relative)));
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+
             using (var sha = System.Security.Cryptography.SHA1.Create())
             {
-                var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(RendererVersion + "\n" + (markdown ?? string.Empty)));
+                var bytes = sha.ComputeHash(input.ToArray());
                 return string.Concat(bytes.Take(5).Select(b => b.ToString("x2")));
             }
         }

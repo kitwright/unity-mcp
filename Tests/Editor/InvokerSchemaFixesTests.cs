@@ -154,6 +154,46 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void IntegralArrayElements_AreRefusedUnlessTheyAreJsonIntegers()
+        {
+            foreach (var bad in new[] { "[1.5]", "[1,2.25]", "[\"3\"]", "[\"a\"]", "[true]", "[null]", "[[1]]" })
+            {
+                Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue(bad, typeof(int[])), bad);
+                Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue(bad, typeof(List<long>)), bad);
+            }
+
+            Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue("[1.5]", typeof(byte[])));
+            Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue("[1.5]", typeof(ulong[])));
+            Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue("[0.5]", typeof(short[])));
+        }
+
+        [Test]
+        public void IntegralArrayRefusal_NamesTheElementAndItsValue()
+        {
+            var message = Assert.Throws<FormatException>(() => FunctionInvoker.ConvertValue("[1,2.5]", typeof(int[]))).Message;
+
+            StringAssert.Contains("element 1", message);
+            StringAssert.Contains("2.5", message);
+        }
+
+        [Test]
+        public void IntegralArrayElements_TakeIntegersAndAFloatWithoutAFractionalPart()
+        {
+            CollectionAssert.AreEqual(new[] { 3, 4, -5 }, (int[])FunctionInvoker.ConvertValue("[3.0, 4, -5]", typeof(int[])));
+            CollectionAssert.AreEqual(new long[] { 9007199254740993, 2 },
+                (long[])FunctionInvoker.ConvertValue("[9007199254740993, 2.0]", typeof(long[])));
+            Assert.IsEmpty((int[])FunctionInvoker.ConvertValue("[]", typeof(int[])));
+        }
+
+        [Test]
+        public void NonIntegralElementTypesKeepTheirReading()
+        {
+            CollectionAssert.AreEqual(new[] { 1.5, 2.0 }, (double[])FunctionInvoker.ConvertValue("[1.5, 2]", typeof(double[])));
+            CollectionAssert.AreEqual(new List<float> { 0.5f }, (List<float>)FunctionInvoker.ConvertValue("[0.5]", typeof(List<float>)));
+            CollectionAssert.AreEqual(new[] { "3" }, (string[])FunctionInvoker.ConvertValue("[\"3\"]", typeof(string[])));
+        }
+
+        [Test]
         public void Vector4AndQuaternionReadFourNumbers()
         {
             Assert.AreEqual(new Vector4(1f, 2f, 3f, 4f), FunctionInvoker.ConvertValue("1,2,3,4", typeof(Vector4)));
