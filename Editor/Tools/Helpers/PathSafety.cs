@@ -89,11 +89,12 @@ namespace KitWright.Editor.Tools.Helpers
         }
 
         // Mono's GetDirectoryName answers its own argument for a segment like "a:\", which it reads as
-        // a drive root, so a path with ':' after the drive letter never reached the project root.
+        // a drive root, so a path with ':' after the drive letter never reached the project root. On Unix
+        // it answers "" for a name with no separator, and asking it for the parent of "" throws.
         internal static string ParentOf(string path)
         {
             var parent = Path.GetDirectoryName(path);
-            return parent != null && parent.Length < path.Length ? parent : null;
+            return !string.IsNullOrEmpty(parent) && parent.Length < path.Length ? parent : null;
         }
 
         private static bool IsLink(string path)

@@ -237,7 +237,8 @@ namespace KitWright.Editor.Tests
         [Test]
         public void CaptureWithUI_PutsAnOverlayCanvasBackExactlyAsItFoundIt()
         {
-            Assume.That(SystemInfo.graphicsDeviceType, Is.Not.EqualTo(UnityEngine.Rendering.GraphicsDeviceType.Null));
+            Assume.That(SystemInfo.graphicsDeviceType, Is.Not.EqualTo(UnityEngine.Rendering.GraphicsDeviceType.Null),
+                "No graphics device, so the overlay canvas cannot be rendered.");
 
             var cameraObject = new GameObject(Unique("KwCaptureCamera"));
             var otherCameraObject = new GameObject(Unique("KwCaptureOtherCamera"));
