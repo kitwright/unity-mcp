@@ -315,30 +315,29 @@ The legacy template (`public static string Run()`) is still supported — useful
 
 ## Comparison With Coplay
 
-The table below compares this repository with the publicly documented behavior of Coplay's open-source `unity-mcp` repository on GitHub (checked against v10.0.0 and the public docs site).
+The table below compares this repository with the publicly documented behavior of Coplay's open-source `unity-mcp` repository on GitHub (checked against v10.3.0, released 2026-10-04, and the public docs site).
 
 | Area | KitWright MCP for Unity | Coplay `unity-mcp` |
 |------|--------------------------|--------------------|
 | Unity-side architecture | Embedded Unity Editor package with built-in HTTP MCP server | Unity bridge plus a Python MCP server, run locally or remote-hosted with API-key auth |
 | Extra local prerequisites | Unity package only for core workflows | Unity + Python 3.10+ + `uv` according to the public quick start |
-| Tool surface | Fine-grained tools across 57 modules, chained by `instanceId` | ~51 wide `manage_*` entrypoints with an `action` enum per tool (README states "47 focused entrypoints") |
+| Tool surface | Fine-grained tools across 57 modules, chained by `instanceId` | About 50 wide `manage_*` entrypoints with an `action` enum per tool (Coplay's tool reference, 2026-10) |
 | Primary workflow style | `execute_code` first, then focused helper tools | `manage_*` families first; `execute_code` is available in the `scripting_ext` group |
 | Default tool exposure | Compact `core` profile with optional `full` expansion | Tool groups toggled per session via `manage_tools` |
 | Asset generation | Not built-in (compose external APIs via `execute_code`) | `generate_image` / `generate_audio` / `generate_model` via fal.ai, Tripo, Meshy, plus Sketchfab import |
 | UI Toolkit and ProBuilder | Not built-in (uGUI creation tools only) | `manage_ui` for UXML/USS/UIDocument and `manage_probuilder` for in-editor modeling |
-| Built-in context model | Project resources, resource templates, workflow prompts, interaction history | Public README emphasizes tool families and bridge/server workflow |
-| Play mode validation | Built-in play mode control, screenshots, logs, and input simulation in the package | Public README emphasizes broad Unity management and automation tools |
-| C# API introspection | `reflect_api` — declared members, full signatures per member, extension methods, obsolete members, interfaces, and `search` by substring scoped to `unity` / `packages` / `project` / `all`. Adds candidate suggestions when a type or member name does not resolve, case-insensitive member matching, and `include_non_public` for private and internal members | `unity_reflect` — `get_type` / `get_member` / `search` with a comparable scope filter, extension-method resolution, and interface and obsolete-member listings |
+| C# API introspection | `reflect_api` — declared members, full signatures per member, extension methods, obsolete members, interfaces, and `search` by substring scoped to `unity` / `packages` / `project` / `all`. Adds candidate suggestions when a type or member name does not resolve, case-insensitive member matching, and `include_non_public` for private and internal members | `unity_reflect` — `get_type` / `get_member` / `search` with a scope filter |
 | Documentation | `README.md` plus [TOOLS.md](TOOLS.md), both generated from the `[ToolProvider]` sources | Auto-generated docs site with a detail page per tool covering parameters, actions, and examples |
 | Tool exposure switching | `set_tool_profile` switches `minimal` / `core` / `extended` / `full` from the client and pushes `tools/list_changed` | `manage_tools` enables and disables tool groups per session |
 | Tool annotations | `annotations.readOnlyHint` on read-only tools | `readOnlyHint` and `destructiveHint` on annotated tools |
-| Positioning | Lightweight, direct, MIT-licensed Unity MCP server for AI-driven editor control | Full-featured Unity bridge maintained by Coplay with Python-backed server setup |
 
 Source for Coplay column: [CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) and its [tool reference](https://coplaydev.github.io/unity-mcp/reference/tools)
 
+Not affiliated with Coplay or Unity. Product details change: the columns above reflect the linked pages on the dates given. If something here is out of date, please open an issue.
+
 ## Comparison With Unity AI Assistant
 
-The table below compares this repository with Unity Technologies' official `com.unity.ai.assistant` package (v2.7.0-pre.2 as of 2026-05).
+The table below compares this repository with Unity Technologies' official `com.unity.ai.assistant` package (2.18.0-pre.2, released 2026-08-18).
 
 | Area | KitWright MCP for Unity | Unity AI Assistant |
 |------|--------------------------|--------------------|
@@ -346,14 +345,21 @@ The table below compares this repository with Unity Technologies' official `com.
 | License | MIT, open source | Unity Terms of Service, proprietary |
 | Deployment | Local HTTP MCP server in Editor, no cloud | Editor + native Relay subprocess + Unity Cloud backend |
 | Billing | Free, user brings their own AI client | Credits-based (Unity Dashboard) |
-| Tool exposure | Tools across 57 modules, `core` / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
-| Generic escape hatch | `execute_code` — Roslyn-first in-memory compile, `IKitWrightCommand` + Undo, no sandbox (client-side approval) | `RunCommand` — namespace blacklist sandbox |
-| Play mode validation | Full loop: enter / simulate input / capture / read logs / exit | Enter/Exit only; no input simulation |
-| Asset generators | Not built-in (compose external APIs via `execute_code`) | Native Image / Mesh / PBR / Sound / Animation generators |
-| Primary client model | BYO any MCP client (Claude Code / Cursor / LM Studio / Codex / VS Code) | Built-in chat window + ACP for Claude/Gemini via Gateway |
-| Offline-capable | Yes for tool calls (inference depends on chosen client) | No (inference requires Unity Cloud) |
+| Primary client model | BYO any MCP client (Claude Code / Cursor / LM Studio / Codex / VS Code) | Built-in chat window (the package changelog also lists ACP support) |
 
-For a long-form comparison of the two approaches see [KitWright MCP for Unity vs Unity AI Assistant detailed comparison](https://blog.csdn.net/m0_62670368/article/details/161039766) (Chinese).
+Unity's documentation deprecates the AI Assistant's in-Editor MCP server in favour of the Unity CLI: [Replace the Unity MCP server with the Unity CLI](https://docs.unity.com/en-us/unity-cli/replace-mcp-server-unity-cli).
+
+## Comparison With Unity CLI
+
+Unity announced the Unity CLI and the experimental `com.unity.pipeline` package in July 2026; its `unity mcp` command serves MCP. The facts below come from Unity's pages: [Meet the Unity CLI](https://unity.com/blog/meet-the-unity-cli) (2026-07-20) and the [technical walkthrough](https://unity.com/resources/unity-pipeline-cli-technical-walkthrough).
+
+| Area | KitWright MCP for Unity | Unity CLI / `com.unity.pipeline` |
+|------|--------------------------|----------------------------------|
+| Minimum Unity version | 2022.3 | 6.0 LTS and later |
+| Cost | Free | Free |
+| Form | UPM package | Described by Unity as beta / experimental |
+| Network scope | Loopback only (127.0.0.1) | Localhost only |
+
 
 ## MCP Capabilities
 

@@ -317,30 +317,29 @@ public class CommandScript : IKitWrightCommand
 
 ## 与 Coplay 的对比
 
-下表基于 Coplay 官方公开 GitHub 仓库（v10.0.0）与文档站所描述的能力与安装方式进行对比。
+下表基于 Coplay 官方公开 GitHub 仓库（v10.3.0，2026-10-04 发布）与文档站所描述的能力与安装方式进行对比。
 
 | 维度 | KitWright MCP for Unity | Coplay `unity-mcp` |
 |------|-------------------------|--------------------|
 | Unity 侧架构 | Unity 包内置 HTTP MCP server | Unity bridge + Python MCP server，可本地运行或部署为带 API Key 鉴权的远程服务 |
 | 额外本地依赖 | `core` 工作流下只需要 Unity 包本身 | 官方 quick start 要求 Python 3.10+ 与 `uv` |
-| 工具面 | 细粒度工具、57 个模块，靠 `instanceId` 链式调用 | 约 51 个大粒度 `manage_*` 入口，每个工具内部再用 `action` 枚举分派（README 表述为 47 个入口）|
+| 工具面 | 细粒度工具、57 个模块，靠 `instanceId` 链式调用 | 约 50 个大粒度 `manage_*` 入口，每个工具内部再用 `action` 枚举分派（据 Coplay 工具文档，2026-10）|
 | 主要交互模型 | 以 `execute_code` 为主，再配合少量高频辅助工具 | 以 `manage_*` 工具族为主；`execute_code` 位于 `scripting_ext` 工具组 |
 | 默认工具暴露 | 默认 `core` 精简工具集，可切 `full` | 通过 `manage_tools` 按会话开关工具组 |
 | 资产生成 | 不内置（可用 `execute_code` 组合外部 API）| `generate_image` / `generate_audio` / `generate_model`，接入 fal.ai、Tripo、Meshy，并支持 Sketchfab 导入 |
 | UI Toolkit 与 ProBuilder | 不内置（只有 uGUI 创建工具）| `manage_ui` 处理 UXML/USS/UIDocument，`manage_probuilder` 提供编辑器内建模 |
-| 上下文能力 | 内建项目资源、资源模板、工作流 prompts、交互历史 | 公开 README 主要强调 bridge/server 与工具族 |
-| Play Mode 验证 | 包内置运行模式控制、截图、日志、输入模拟 | 公开 README 强调广泛 Unity 管理与自动化能力 |
-| C# API 反射查询 | `reflect_api`：声明成员、单成员完整签名、扩展方法、过时成员、接口，以及按子串搜索类型（范围 `unity` / `packages` / `project` / `all`）；另有解析失败时的候选名、忽略大小写的成员匹配，以及 `include_non_public` 查看私有与内部成员 | `unity_reflect`：`get_type` / `get_member` / `search`，同样支持范围过滤、扩展方法解析、接口与过时成员清单 |
+| C# API 反射查询 | `reflect_api`：声明成员、单成员完整签名、扩展方法、过时成员、接口，以及按子串搜索类型（范围 `unity` / `packages` / `project` / `all`）；另有解析失败时的候选名、忽略大小写的成员匹配，以及 `include_non_public` 查看私有与内部成员 | `unity_reflect`：`get_type` / `get_member` / `search`，带范围过滤 |
 | 文档 | `README.md` 与 [TOOLS.md](TOOLS.md)，均由 `[ToolProvider]` 源码生成 | 自动生成的文档站，每个工具一页，含参数、action 与示例 |
 | 客户端切换工具集 | `set_tool_profile` 可从客户端切换 `minimal` / `core` / `extended` / `full`，并推送 `tools/list_changed` | `manage_tools` 按会话启用/停用工具组 |
 | 工具注解 | 只读工具输出 `annotations.readOnlyHint` | 已注解工具输出 `readOnlyHint` 与 `destructiveHint` |
-| 定位 | 轻量、直接、MIT 协议的 Unity MCP 服务器 | Coplay 维护的全功能 Unity bridge 方案 |
 
 Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-mcp) 及其[工具文档](https://coplaydev.github.io/unity-mcp/reference/tools)
 
+与 Coplay、Unity 均无关联。产品信息会变化：上表反映的是所链接页面在所示日期的内容。如有过时之处，欢迎提 issue 指正。
+
 ## 与 Unity AI Assistant 的对比
 
-下表对比本仓库与 Unity Technologies 官方包 `com.unity.ai.assistant`（2026-05 时点 v2.7.0-pre.2）。
+下表对比本仓库与 Unity Technologies 官方包 `com.unity.ai.assistant`（2.18.0-pre.2，2026-08-18 发布）。
 
 | 维度 | KitWright MCP for Unity | Unity AI Assistant |
 |------|-------------------------|--------------------|
@@ -348,14 +347,21 @@ Coplay 信息来源：[CoplayDev/unity-mcp](https://github.com/CoplayDev/unity-m
 | 协议 / License | MIT 开源 | Unity Terms of Service，私有 |
 | 部署 | Editor 内嵌 HTTP MCP server，纯本地 | Editor + 原生 Relay 子进程 + Unity Cloud 后端 |
 | 计费 | 免费，用户自带 AI 客户端 | Credits 点数制（Unity Dashboard）|
-| 工具暴露 | 57 模块，`core` / `full` profile | ~15 个 MCP 工具（多数为 `Manage*` 大粒度族）|
-| 通用逃生口 | `execute_code` — Roslyn 优先内存编译、`IKitWrightCommand` + Undo、无沙箱（客户端层审批）| `RunCommand` — 命名空间黑名单沙箱 |
-| Play Mode 验证 | 完整闭环：进入 / 模拟输入 / 截图 / 读日志 / 退出 | 仅进入/退出，无输入模拟 |
-| 资产生成器 | 不内建（通过 `execute_code` 组合外部 API）| 内建 Image / Mesh / PBR / Sound / Animation 五类生成器 |
-| 主要客户端模型 | BYO 任意 MCP 客户端（Claude Code / Cursor / LM Studio / Codex / VS Code）| 自带对话窗口 + ACP 经 Gateway 接 Claude/Gemini |
-| 离线可用 | ✅ 工具调用本身全本地（推理依赖所选客户端）| ❌ 推理必须连 Unity Cloud |
+| 主要客户端模型 | BYO 任意 MCP 客户端（Claude Code / Cursor / LM Studio / Codex / VS Code）| 自带对话窗口（包的更新日志另提到 ACP 支持） |
 
-长文对比见 [KitWright Unity MCP 与 Unity AI Assistant 详细对比](https://blog.csdn.net/m0_62670368/article/details/161039766)。
+Unity 官方文档表示 AI Assistant 内的 MCP server 已弃用，改用 Unity CLI：[Replace the Unity MCP server with the Unity CLI](https://docs.unity.com/en-us/unity-cli/replace-mcp-server-unity-cli)。
+
+## 与 Unity CLI 的对比
+
+Unity 在 2026 年 7 月发布了 Unity CLI 与实验性的 `com.unity.pipeline` 包，其 `unity mcp` 命令提供 MCP 服务。下表内容来自 Unity 官方页面：[Meet the Unity CLI](https://unity.com/blog/meet-the-unity-cli)（2026-07-20）与[技术说明](https://unity.com/resources/unity-pipeline-cli-technical-walkthrough)。
+
+| 维度 | KitWright MCP for Unity | Unity CLI / `com.unity.pipeline` |
+|------|-------------------------|----------------------------------|
+| 最低 Unity 版本 | 2022.3 | 6.0 LTS 及以上 |
+| 费用 | 免费 | 免费 |
+| 形态 | UPM 包 | Unity 称其为 beta / 实验性 |
+| 网络范围 | 仅环回（127.0.0.1）| 仅 localhost |
+
 
 ## MCP 能力结构
 
