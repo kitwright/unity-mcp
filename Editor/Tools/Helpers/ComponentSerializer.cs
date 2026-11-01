@@ -203,7 +203,11 @@ namespace KitWright.Editor.Tools.Helpers
                     if (serializedProperty == null)
                     {
                         // Reflection fallback for non-serialized public properties (e.g. Renderer.material, Time.timeScale-style)
-                        if (TryWriteViaReflection(component, prop.Name, prop.Value, out var reflectionError))
+                        var reflected = TryWriteViaReflection(component, prop.Name, prop.Value, out var reflectionError);
+                        // The write bypassed the SerializedObject, whose stale copy the next
+                        // ApplyModifiedProperties would otherwise write back over it.
+                        so.Update();
+                        if (reflected)
                         {
                             fr.Success = true;
                         }
@@ -297,9 +301,9 @@ namespace KitWright.Editor.Tools.Helpers
                         // A double field is also SerializedPropertyType.Float, and floatValue rounds
                         // it on the way in: 16777217 was stored as 16777216 and reported as written.
                         if (p.numericType == SerializedPropertyNumericType.Double)
-                            p.doubleValue = value.ToObject<double>();
+                            p.doubleValue = ToFiniteDouble(value);
                         else
-                            p.floatValue = value.ToObject<float>();
+                            p.floatValue = ToFiniteFloat(value);
                         return true;
                     case SerializedPropertyType.String:
                         p.stringValue = value.ToObject<string>() ?? string.Empty; return true;
@@ -323,14 +327,14 @@ namespace KitWright.Editor.Tools.Helpers
                             if (qo.ContainsKey("w"))
                             {
                                 p.quaternionValue = new Quaternion(
-                                    qo.Value<float>("x"), qo.Value<float>("y"),
-                                    qo.Value<float>("z"), qo.Value<float>("w"));
+                                    FiniteMember(qo, "x"), FiniteMember(qo, "y"),
+                                    FiniteMember(qo, "z"), FiniteMember(qo, "w"));
                             }
                             else
                             {
                                 // Treat as Euler
                                 p.quaternionValue = Quaternion.Euler(
-                                    qo.Value<float>("x"), qo.Value<float>("y"), qo.Value<float>("z"));
+                                    FiniteMember(qo, "x"), FiniteMember(qo, "y"), FiniteMember(qo, "z"));
                             }
                             return true;
                         }
@@ -338,17 +342,17 @@ namespace KitWright.Editor.Tools.Helpers
                     case SerializedPropertyType.Color:
                         if (value is JObject co)
                         {
-                            float a = co.ContainsKey("a") ? co.Value<float>("a") : 1f;
-                            p.colorValue = new Color(co.Value<float>("r"), co.Value<float>("g"),
-                                                     co.Value<float>("b"), a);
+                            float a = co.ContainsKey("a") ? FiniteMember(co, "a") : 1f;
+                            p.colorValue = new Color(FiniteMember(co, "r"), FiniteMember(co, "g"),
+                                                     FiniteMember(co, "b"), a);
                             return true;
                         }
                         break;
                     case SerializedPropertyType.Rect:
                         if (value is JObject ro)
                         {
-                            p.rectValue = new Rect(ro.Value<float>("x"), ro.Value<float>("y"),
-                                                   ro.Value<float>("width"), ro.Value<float>("height"));
+                            p.rectValue = new Rect(FiniteMember(ro, "x"), FiniteMember(ro, "y"),
+                                                   FiniteMember(ro, "width"), FiniteMember(ro, "height"));
                             return true;
                         }
                         break;
@@ -422,6 +426,7 @@ namespace KitWright.Editor.Tools.Helpers
 
             string instanceId = null;
             string assetPath = null;
+            string subAsset = null;
 
             if (value.Type == JTokenType.Integer)
             {
@@ -432,17 +437,25 @@ namespace KitWright.Editor.Tools.Helpers
                 if (obj.TryGetValue("fileID", out var fid)) instanceId = fid.ToString();
                 else if (obj.TryGetValue("instanceId", out var iid)) instanceId = iid.ToString();
                 if (obj.TryGetValue("assetPath", out var ap)) assetPath = ap.ToObject<string>();
+                if (obj.TryGetValue("subAsset", out var sub)) subAsset = sub.ToObject<string>();
             }
             else if (value.Type == JTokenType.String)
             {
                 assetPath = value.ToObject<string>();
             }
 
+            // p.type looks like "PPtr<$Rigidbody>".
+            var wanted = ExtractPPtrTypeName(p.type);
             UnityEngine.Object resolved = null;
             if (!string.IsNullOrWhiteSpace(instanceId))
                 resolved = ObjectIdCodec.ToObject(instanceId);
             if (resolved == null && !string.IsNullOrEmpty(assetPath))
-                resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+            {
+                if (string.IsNullOrEmpty(subAsset))
+                    resolved = AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(assetPath);
+                else if (!TryPickSubAsset(assetPath, subAsset, a => string.IsNullOrEmpty(wanted) || IsA(a.GetType(), wanted), false, out resolved, out error))
+                    return false;
+            }
 
             if (resolved == null)
             {
@@ -453,8 +466,7 @@ namespace KitWright.Editor.Tools.Helpers
             }
 
             // Editor drag-drop auto-extracts a component when a GameObject is dropped on a
-            // component-typed field. p.type looks like "PPtr<$Rigidbody>".
-            var wanted = ExtractPPtrTypeName(p.type);
+            // component-typed field.
             if (resolved is GameObject droppedGo)
             {
                 if (!string.IsNullOrEmpty(wanted) && wanted != "GameObject")
@@ -467,7 +479,9 @@ namespace KitWright.Editor.Tools.Helpers
             else if (!string.IsNullOrEmpty(assetPath) && !string.IsNullOrEmpty(wanted) && !IsA(resolved.GetType(), wanted))
             {
                 // A .png's main asset is its Texture2D; a Sprite field takes the Sprite under it.
-                resolved = AssetDatabase.LoadAllAssetsAtPath(assetPath).FirstOrDefault(a => a != null && IsA(a.GetType(), wanted)) ?? resolved;
+                if (!TryPickSubAsset(assetPath, subAsset, a => IsA(a.GetType(), wanted), wanted == "Sprite", out var picked, out error))
+                    return false;
+                resolved = picked ?? resolved;
             }
 
             // Unity writes a reference of the wrong type as null without a word.
@@ -485,6 +499,35 @@ namespace KitWright.Editor.Tools.Helpers
             for (; type != null; type = type.BaseType)
                 if (type.Name == name) return true;
             return false;
+        }
+
+        // A sliced sprite sheet holds many Sprites under one path; taking the first wrote an arbitrary
+        // frame and reported success. picked stays null when nothing matches and no name was asked for.
+        internal static bool TryPickSubAsset(string assetPath, string subAsset, Func<UnityEngine.Object, bool> matches,
+            bool refuseAmbiguous, out UnityEngine.Object picked, out string error)
+        {
+            picked = null;
+            error = null;
+            var candidates = AssetDatabase.LoadAllAssetsAtPath(assetPath).Where(a => a != null && matches(a)).ToArray();
+            var names = string.Join(", ", candidates.Select(a => a.name).Take(30));
+
+            if (!string.IsNullOrEmpty(subAsset))
+            {
+                picked = candidates.FirstOrDefault(a => a.name == subAsset);
+                if (picked == null)
+                    error = $"'{assetPath}' has no matching sub-asset named '{subAsset}'. Available: {names}.";
+                return picked != null;
+            }
+
+            if (refuseAmbiguous && candidates.Length > 1)
+            {
+                error = $"'{assetPath}' holds {candidates.Length} matching sub-assets ({names}); " +
+                        "name one with {\"assetPath\": \"...\", \"subAsset\": \"<name>\"}.";
+                return false;
+            }
+
+            picked = candidates.FirstOrDefault();
+            return true;
         }
 
         internal static string ExtractPPtrTypeName(string propType)
@@ -524,7 +567,7 @@ namespace KitWright.Editor.Tools.Helpers
             {
                 components = new float[dims];
                 for (int i = 0; i < dims; i++)
-                    components[i] = arr[i].ToObject<float>();
+                    components[i] = ToFiniteFloat(arr[i]);
                 return true;
             }
             if (value is JObject obj)
@@ -535,12 +578,40 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     if (!obj.ContainsKey(keys[i]))
                         return false;
-                    components[i] = obj.Value<float>(keys[i]);
+                    components[i] = ToFiniteFloat(obj[keys[i]]);
                 }
                 return true;
             }
             return false;
         }
+
+        // NaN and Infinity arrive as JSON literals or as the strings "NaN"/"Infinity", and ToObject<float>
+        // takes all of them. Unity stores them without complaint and a transform or light is then
+        // poisoned, so every float/double read in the write paths goes through here.
+        private static float ToFiniteFloat(JToken token)
+        {
+            var value = token.ToObject<float>();
+            if (float.IsNaN(value) || float.IsInfinity(value))
+                throw NonFinite(token);
+            return value;
+        }
+
+        private static double ToFiniteDouble(JToken token)
+        {
+            var value = token.ToObject<double>();
+            if (double.IsNaN(value) || double.IsInfinity(value))
+                throw NonFinite(token);
+            return value;
+        }
+
+        private static float FiniteMember(JObject obj, string key) =>
+            obj.TryGetValue(key, out var member) ? ToFiniteFloat(member) : 0f;
+
+        private static bool IsFinite(params float[] values) =>
+            values.All(v => !float.IsNaN(v) && !float.IsInfinity(v));
+
+        private static ArgumentException NonFinite(JToken token) =>
+            new ArgumentException($"'{token}' is not a finite number: NaN, Infinity and values beyond the field's range are refused.");
 
         // ---------- Reflection fallback ----------
 
@@ -555,6 +626,11 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     var converted = ConvertJTokenToType(value, prop.PropertyType);
                     prop.SetValue(component, converted);
+                    if (component is Transform transform && prop.Name == "parent" && transform.parent != converted as Transform)
+                    {
+                        error = "Unity refused the change and left the hierarchy as it was (for example a non-root object of a prefab instance cannot change parent); use set_parent.";
+                        return false;
+                    }
                     return true;
                 }
                 catch (Exception ex) { error = ex.Message; return false; }
@@ -579,8 +655,8 @@ namespace KitWright.Editor.Tools.Helpers
             if (targetType == typeof(string)) return token.ToObject<string>();
             if (targetType == typeof(int)) return token.ToObject<int>();
             if (targetType == typeof(long)) return token.ToObject<long>();
-            if (targetType == typeof(float)) return token.ToObject<float>();
-            if (targetType == typeof(double)) return token.ToObject<double>();
+            if (targetType == typeof(float)) return ToFiniteFloat(token);
+            if (targetType == typeof(double)) return ToFiniteDouble(token);
             if (targetType == typeof(bool)) return token.ToObject<bool>();
             if (targetType.IsEnum) return Enum.Parse(targetType, token.ToObject<string>(), ignoreCase: true);
             if (targetType == typeof(Vector2) && TryParseVector(token, 2, out var v2)) return new Vector2(v2[0], v2[1]);
@@ -594,9 +670,30 @@ namespace KitWright.Editor.Tools.Helpers
                 if (!string.IsNullOrWhiteSpace(id)) return ObjectIdCodec.ToObject(id);
                 var path = token.Type == JTokenType.String ? token.ToObject<string>() : (token as JObject)?["assetPath"]?.ToObject<string>();
                 if (!string.IsNullOrEmpty(path))
-                    return AssetDatabase.LoadAssetAtPath(path, targetType) ?? throw new ArgumentException($"No {targetType.Name} at '{path}'.");
+                {
+                    // Same reasoning as the SerializedProperty path above: a .png's main asset is its
+                    // Texture2D, so a Sprite-typed field needs the sub-asset search, not a typed load.
+                    var subAsset = (token as JObject)?["subAsset"]?.ToObject<string>();
+                    UnityEngine.Object loaded;
+                    if (!string.IsNullOrEmpty(subAsset) || targetType == typeof(Sprite))
+                    {
+                        if (!TryPickSubAsset(path, subAsset, a => targetType.IsInstanceOfType(a), targetType == typeof(Sprite), out loaded, out var pickError))
+                            throw new ArgumentException(pickError);
+                    }
+                    else
+                    {
+                        loaded = AssetDatabase.LoadAssetAtPath(path, targetType)
+                            ?? AssetDatabase.LoadAllAssetsAtPath(path).FirstOrDefault(a => a != null && targetType.IsInstanceOfType(a));
+                    }
+                    return loaded ?? throw new ArgumentException($"No {targetType.Name} at '{path}'.");
+                }
             }
-            return token.ToObject(targetType);
+            var converted = token.ToObject(targetType);
+            if ((converted is Color c && !IsFinite(c.r, c.g, c.b, c.a)) ||
+                (converted is Quaternion q && !IsFinite(q.x, q.y, q.z, q.w)) ||
+                (converted is Rect r && !IsFinite(r.x, r.y, r.width, r.height)))
+                throw NonFinite(token);
+            return converted;
         }
     }
 }

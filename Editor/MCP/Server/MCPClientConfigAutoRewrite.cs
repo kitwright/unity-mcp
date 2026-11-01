@@ -4,8 +4,8 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text.RegularExpressions;
 using KitWright.Editor.Services;
+using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
 using UnityEngine;
 
@@ -81,9 +81,11 @@ namespace KitWright.Editor.MCP.Server
             if (token.Length == 0)
                 return;
 
+            // The .bak Configure leaves next to a config holds the URL it replaced, token included.
             var carriers = ClientConfigPanel.GetAllTargets()
                 .Select(target => target.ProjectConfigPath)
                 .Where(path => !string.IsNullOrEmpty(path))
+                .SelectMany(path => new[] { path, path + ".bak" })
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .Where(path => Carries(path, token))
                 .ToList();
@@ -92,7 +94,7 @@ namespace KitWright.Editor.MCP.Server
                 System.Threading.Tasks.Task.Run(() => carriers.ForEach(ServerToken.WarnIfGitWouldCommit));
         }
 
-        private static bool Carries(string path, string token)
+        internal static bool Carries(string path, string token)
         {
             try
             {
@@ -109,8 +111,11 @@ namespace KitWright.Editor.MCP.Server
             string configPath, string targetRootKey, string serverName, string serverUrl,
             bool leaveOtherProjectsAlone = false)
         {
-            var json = File.ReadAllText(configPath);
-            if (!(JsonCodec.Deserialize(json) is Dictionary<string, object> root))
+            var json = ClientConfigPanel.ReadExistingConfig(configPath);
+            if (json == null)
+                return false;
+
+            if (!(JsonCodec.Deserialize(JsonCodec.StripComments(json)) is Dictionary<string, object> root))
                 return false;
 
             var rootKey = string.IsNullOrEmpty(targetRootKey) ? "mcpServers" : targetRootKey;
@@ -121,8 +126,8 @@ namespace KitWright.Editor.MCP.Server
 
             // Clients diverge on the URL property name ("url" / "serverUrl" / "httpUrl");
             // update whichever the entry actually uses.
-            var changed = false;
-            foreach (var key in new[] { "url", "serverUrl", "httpUrl" })
+            var stale = new List<string>();
+            foreach (var key in ClientConfigPanel.UrlProperties)
             {
                 if (entry.TryGetValue(key, out var value) &&
                     value is string existing &&
@@ -134,46 +139,73 @@ namespace KitWright.Editor.MCP.Server
                         continue;
                     }
 
-                    entry[key] = serverUrl;
-                    changed = true;
+                    stale.Add(existing);
                 }
             }
 
-            if (changed)
-                File.WriteAllText(configPath, JsonCodec.Serialize(root));
-
-            return changed;
-        }
-
-        private static bool RewriteToml(
-            string path, string serverName, string serverUrl, bool leaveOtherProjectsAlone = false)
-        {
-            var content = File.ReadAllText(path);
-            var header = "[mcp_servers." + serverName + "]";
-            var start = content.IndexOf(header, StringComparison.Ordinal);
-            if (start < 0)
+            if (stale.Count == 0)
                 return false;
 
-            var end = content.IndexOf("\n[", start + header.Length, StringComparison.Ordinal);
-            if (end < 0)
-                end = content.Length;
+            // The text is edited, not the parsed tree written back: the codec reads no comments or
+            // trailing commas, so serializing what it did parse dropped every key after one. Only the
+            // entry's own URL literals change: the same URL in another entry or in a comment is not ours.
+            var urlSpans = JsonCodec.FindStringValues(json, rootKey, serverName)
+                .Where(span => ClientConfigPanel.UrlProperties.Contains(span.Key))
+                .Select(span => (Start: span.Start, Length: span.Length, Text: json.Substring(span.Start, span.Length)))
+                .ToList();
+
+            var staleLiterals = stale.Distinct().Select(staleUrl => Newtonsoft.Json.JsonConvert.ToString(staleUrl)).ToList();
+            if (staleLiterals.Any(literal => !urlSpans.Any(span => span.Text == literal)))
+            {
+                Debug.LogWarning($"[KitWright MCP Server] Config auto-rewrite left {configPath} alone: its URL is written in a form this rewrite cannot replace in place.");
+                return false;
+            }
+
+            var replacement = Newtonsoft.Json.JsonConvert.ToString(serverUrl);
+            var updated = json;
+            foreach (var target in urlSpans.Where(span => staleLiterals.Contains(span.Text)).OrderByDescending(span => span.Start))
+                updated = updated.Substring(0, target.Start) + replacement + updated.Substring(target.Start + target.Length);
+
+            return WriteIfUnchanged(configPath, json, updated);
+        }
+
+        internal static bool RewriteToml(
+            string path, string serverName, string serverUrl, bool leaveOtherProjectsAlone = false)
+        {
+            var content = ClientConfigPanel.ReadExistingConfig(path);
+            if (content == null || !ClientConfigPanel.TryFindMcpServerTable(content, serverName, out var start, out var end))
+                return false;
 
             var section = content.Substring(start, end - start);
             if (leaveOtherProjectsAlone)
             {
-                var current = Regex.Match(section, "url\\s*=\\s*\"([^\"]*)\"");
-                if (current.Success && TargetsAnotherProject(current.Groups[1].Value))
+                var current = ClientConfigPanel.TomlUrlValue(section);
+                if (current != null && TargetsAnotherProject(current))
                 {
-                    WarnLeftAlone(path, current.Groups[1].Value);
+                    WarnLeftAlone(path, current);
                     return false;
                 }
             }
 
-            var updated = Regex.Replace(section, "url\\s*=\\s*\"[^\"]*\"", "url = \"" + serverUrl + "\"");
+            var updated = ClientConfigPanel.SetTomlUrl(section, serverUrl);
             if (updated == section)
                 return false;
 
-            File.WriteAllText(path, content.Substring(0, start) + updated + content.Substring(end));
+            return WriteIfUnchanged(path, content, content.Substring(0, start) + updated + content.Substring(end));
+        }
+
+        // ~/.claude.json is rewritten by its own client all the time and parsing it takes a while, so
+        // the file can change between the read and this write; a blind write would drop that change.
+        // A skipped file is repaired by the next sweep.
+        internal static bool WriteIfUnchanged(string path, string original, string updated)
+        {
+            if (ClientConfigPanel.ReadExistingConfig(path) != original)
+            {
+                Debug.LogWarning($"[KitWright MCP Server] Config auto-rewrite left {path} alone: it changed while it was being edited. The next server start tries again.");
+                return false;
+            }
+
+            AtomicFile.WriteAllText(path, updated);
             return true;
         }
 

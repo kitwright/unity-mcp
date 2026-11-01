@@ -64,6 +64,25 @@ namespace KitWright.Editor.Tests
                 "the swap wrote through a file that was never ours");
         }
 
+        [Test]
+        public void WriteAllText_KeepsABomTheFileHadAndAddsNoneToANewFile()
+        {
+            var bom = new byte[] { 0xEF, 0xBB, 0xBF };
+            var withBom = Path.Combine(_root, "WithBom.cs");
+            File.WriteAllBytes(withBom, bom);
+
+            AtomicFile.WriteAllText(withBom, "// two\n");
+
+            var written = File.ReadAllBytes(withBom);
+            CollectionAssert.AreEqual(bom, new[] { written[0], written[1], written[2] });
+            Assert.AreEqual("// two\n", File.ReadAllText(withBom));
+
+            var fresh = Path.Combine(_root, "Fresh.cs");
+            AtomicFile.WriteAllText(fresh, "// one\n");
+
+            Assert.AreEqual((byte)'/', File.ReadAllBytes(fresh)[0]);
+        }
+
         private static void AssertNoSiblings(string path)
         {
             Assert.AreEqual(new[] { path }, Directory.GetFiles(Path.GetDirectoryName(path)),

@@ -23,6 +23,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Get high-level editor runtime state: which project this editor has open, play mode, paused, compiling, updating, time-since-startup, time scale. " +
                      "Call this first when several editors may be running to confirm which project the server is attached to.")]
         [ReadOnlyTool]
+        [ReplaySafeTool]
         public static object GetEditorState()
         {
             // Name alone does not identify an editor -- two clones of the same project share it,
@@ -68,10 +69,13 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Replace the current selection. Pass either a comma-separated list of instance ids, names, or paths. " +
-                     "Use find_method to control how each token is resolved (by_id, by_name, by_path).")]
+                     "Use find_method to control how each token is resolved (by_id, by_name, by_path). " +
+                     "Duplicate tokens count once; tokens that match nothing are listed in notFound. " +
+                     "If no token resolves the call fails and the current selection is left untouched; an empty targets clears the selection. " +
+                     "An inactive object is not found by name: give its hierarchy path or instance id.")]
         public static object SetSelection(
             [ToolParam("Comma-separated instance ids, names, or paths")] string targets,
-            [ToolParam("How to resolve each token (by_id, by_name, by_path, by_id_or_name_or_path)", Required = false)] string find_method = null)
+            [ToolParam("How to resolve each token: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrWhiteSpace(targets))
             {
@@ -88,13 +92,19 @@ namespace KitWright.Editor.Tools.Builtins
                 var token = raw.Trim();
                 if (string.IsNullOrEmpty(token)) continue;
                 var go = ObjectsHelper.FindObject(token, find_method);
-                if (go != null) picked.Add(go);
-                else missing.Add(token);
+                if (go == null)
+                {
+                    if (!missing.Contains(token)) missing.Add(token);
+                }
+                else if (!picked.Contains(go)) picked.Add(go);
             }
 
+            if (picked.Count == 0)
+                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method, notFound = missing },
+                    "Nothing matched, so the current selection was left as it was.");
+
             Selection.objects = picked.Cast<UnityEngine.Object>().ToArray();
-            if (picked.Count > 0)
-                Selection.activeGameObject = picked[0];
+            Selection.activeGameObject = picked[0];
 
             return Response.Success(
                 $"Selected {picked.Count} object(s){(missing.Count > 0 ? $", {missing.Count} not found" : string.Empty)}.",
@@ -145,9 +155,13 @@ namespace KitWright.Editor.Tools.Builtins
         public static object SetActiveTool(
             [ToolParam("Tool name: View, Move, Rotate, Scale, Rect, Transform, None")] string tool)
         {
-            if (!Enum.TryParse<UnityEditor.Tool>(tool, ignoreCase: true, out var parsed))
+            if (!ValueConverter.TryParseEnum<UnityEditor.Tool>(tool, out var parsed) || parsed == UnityEditor.Tool.Custom)
                 return Response.Error("INVALID_TOOL",
-                    new { tool, accepted = Enum.GetNames(typeof(UnityEditor.Tool)) });
+                    new
+                    {
+                        tool,
+                        accepted = Enum.GetNames(typeof(UnityEditor.Tool)).Where(n => n != nameof(UnityEditor.Tool.Custom)).ToArray()
+                    });
 
             UnityEditor.Tools.current = parsed;
             return Response.Success($"Active tool set to {parsed}.");
@@ -190,6 +204,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(tag))
                 return Response.Error("INVALID_TAG", new { message = "Tag name cannot be empty." });
+            tag = tag.Trim();
 
             if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
                 return Response.Success($"Tag '{tag}' already exists.");
@@ -199,6 +214,7 @@ namespace KitWright.Editor.Tools.Builtins
             tagsProp.InsertArrayElementAtIndex(tagsProp.arraySize);
             tagsProp.GetArrayElementAtIndex(tagsProp.arraySize - 1).stringValue = tag;
             tagManager.ApplyModifiedProperties();
+            FlushTagManager();
             return Response.Success($"Added tag '{tag}'.");
         }
 
@@ -208,6 +224,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(tag))
                 return Response.Error("INVALID_TAG", new { message = "Tag name cannot be empty." });
+            tag = tag.Trim();
 
             var tagManager = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
             var tagsProp = tagManager.FindProperty("tags");
@@ -217,10 +234,23 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     tagsProp.DeleteArrayElementAtIndex(i);
                     tagManager.ApplyModifiedProperties();
+                    FlushTagManager();
                     return Response.Success($"Removed tag '{tag}'.");
                 }
             }
+
+            // get_tags lists the built-in tags but TagManager holds only the custom ones, so a built-in
+            // tag is not "not found": it exists and cannot be removed.
+            if (UnityEditorInternal.InternalEditorUtility.tags.Contains(tag))
+                return Response.Error("CANNOT_REMOVE_BUILTIN_TAG", new { tag }, "Built-in tags cannot be removed.");
             return Response.Error("TAG_NOT_FOUND", new { tag });
+        }
+
+        // ApplyModifiedProperties only marks TagManager dirty; without a save the change sits in
+        // memory and a batch run that never saves loses it. The same flush the sorting layers do.
+        private static void FlushTagManager()
+        {
+            AssetDatabase.SaveAssets();
         }
 
         // ----- Layers -----
@@ -238,12 +268,13 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success("Layer table.", layers);
         }
 
-        [Description("Add a new layer to the first empty user slot (8-31). Errors if no slot is free.")]
+        [Description("Add a new layer to the first empty user slot (8-31). Errors if no slot is free; a no-op success if the layer already exists.")]
         public static object AddLayer(
             [ToolParam("Layer name to add")] string layer)
         {
             if (string.IsNullOrWhiteSpace(layer))
                 return Response.Error("INVALID_LAYER", new { message = "Layer name cannot be empty." });
+            layer = layer.Trim();
 
             if (LayerMask.NameToLayer(layer) != -1)
                 return Response.Success($"Layer '{layer}' already exists at index {LayerMask.NameToLayer(layer)}.");
@@ -257,6 +288,7 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     slot.stringValue = layer;
                     tagManager.ApplyModifiedProperties();
+                    FlushTagManager();
                     return Response.Success($"Added layer '{layer}' at index {i}.");
                 }
             }
@@ -269,6 +301,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (string.IsNullOrWhiteSpace(layer))
                 return Response.Error("INVALID_LAYER", new { message = "Layer name cannot be empty." });
+            layer = layer.Trim();
 
             int idx = LayerMask.NameToLayer(layer);
             if (idx == -1)
@@ -280,7 +313,9 @@ namespace KitWright.Editor.Tools.Builtins
             var layersProp = tagManager.FindProperty("layers");
             layersProp.GetArrayElementAtIndex(idx).stringValue = string.Empty;
             tagManager.ApplyModifiedProperties();
-            return Response.Success($"Removed layer '{layer}' (was index {idx}).");
+            FlushTagManager();
+            return Response.Success($"Removed layer '{layer}' (was index {idx}).",
+                hint: "GameObjects on this layer, camera culling masks and the collision matrix keep slot " + idx + "; they are not cleaned up.");
         }
 
         // ----- Sorting Layers -----
@@ -298,12 +333,17 @@ namespace KitWright.Editor.Tools.Builtins
             for (int i = 0; i < layersProp.arraySize; i++)
             {
                 var element = layersProp.GetArrayElementAtIndex(i);
-                layers.Add(new
+                var name = element.FindPropertyRelative("name").stringValue;
+                var uniqueId = element.FindPropertyRelative("uniqueID").uintValue;
+                var layer = new Dictionary<string, object>
                 {
-                    name = element.FindPropertyRelative("name").stringValue,
-                    id = element.FindPropertyRelative("uniqueID").intValue,
-                    value = i
-                });
+                    ["name"] = name,
+                    ["id"] = unchecked((int)uniqueId),
+                    ["value"] = i
+                };
+                if (uniqueId == 0 && name != "Default")
+                    layer["warning"] = "id 0 belongs to Default, so Unity treats this layer as Default. Remove it and add it again to give it its own id.";
+                layers.Add(layer);
             }
 
             return Response.Success($"{layers.Count} sorting layer(s).", layers);
@@ -317,6 +357,9 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static bool HasSortingLayer(string name)
         {
+            if (name == "Default")
+                return true;
+
             var layersProp = SortingLayersProperty(out _);
             for (int i = 0; i < layersProp.arraySize; i++)
             {
@@ -338,14 +381,29 @@ namespace KitWright.Editor.Tools.Builtins
 
             var layersProp = SortingLayersProperty(out var tagManager);
             int idx = layersProp.arraySize;
+            var usedIds = new HashSet<uint>();
+            for (int i = 0; i < idx; i++)
+                usedIds.Add(layersProp.GetArrayElementAtIndex(i).FindPropertyRelative("uniqueID").uintValue);
+
+            var id = NextSortingLayerId(name, usedIds);
             layersProp.InsertArrayElementAtIndex(idx);
             var element = layersProp.GetArrayElementAtIndex(idx);
             element.FindPropertyRelative("name").stringValue = name;
-            element.FindPropertyRelative("uniqueID").intValue = name.GetHashCode();
+            element.FindPropertyRelative("uniqueID").uintValue = id;
             tagManager.ApplyModifiedProperties();
             FlushSortingLayers();
 
-            return Response.Success($"Added sorting layer '{name}'.", new { name, index = idx });
+            return Response.Success($"Added sorting layer '{name}'.", new { name, index = idx, id = unchecked((int)id) });
+        }
+
+        // uniqueID is unsigned and 0 belongs to Default, so a raw (possibly negative) string hash
+        // is no id. Stays within int.MaxValue so a signed reader sees the same number.
+        internal static uint NextSortingLayerId(string name, ICollection<uint> usedIds)
+        {
+            var id = (uint)(name.GetHashCode() & int.MaxValue);
+            while (id == 0 || usedIds.Contains(id))
+                id = id % int.MaxValue + 1;
+            return id;
         }
 
         // ApplyModifiedProperties marks the settings object dirty; nothing writes it out until Unity
@@ -356,7 +414,7 @@ namespace KitWright.Editor.Tools.Builtins
             AssetDatabase.SaveAssets();
         }
 
-        [Description("Rename an existing sorting layer. The built-in 'Default' layer cannot be renamed.")]
+        [Description("Rename an existing sorting layer. The built-in 'Default' layer cannot be renamed, and the new name must not already be a sorting layer.")]
         public static object RenameSortingLayer(
             [ToolParam("Current sorting layer name")] string old_name,
             [ToolParam("New name")] string new_name)
@@ -366,20 +424,26 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrWhiteSpace(new_name))
                 return Response.Error("INVALID_NAME", new { message = "New name cannot be empty." });
 
-            var tagManager = new SerializedObject(AssetDatabase.LoadAllAssetsAtPath("ProjectSettings/TagManager.asset")[0]);
-            var layersProp = tagManager.FindProperty("m_SortingLayers");
-            for (int i = 0; i < layersProp.arraySize; i++)
+            var layersProp = SortingLayersProperty(out var tagManager);
+            SerializedProperty oldNameProp = null;
+            for (int i = 0; i < layersProp.arraySize && oldNameProp == null; i++)
             {
                 var nameProp = layersProp.GetArrayElementAtIndex(i).FindPropertyRelative("name");
                 if (nameProp.stringValue == old_name)
-                {
-                    nameProp.stringValue = new_name;
-                    tagManager.ApplyModifiedProperties();
-                    FlushSortingLayers();
-                    return Response.Success($"Renamed sorting layer '{old_name}' to '{new_name}'.");
-                }
+                    oldNameProp = nameProp;
             }
-            return Response.Error("SORTING_LAYER_NOT_FOUND", new { old_name });
+
+            if (oldNameProp == null)
+                return Response.Error("SORTING_LAYER_NOT_FOUND", new { old_name });
+            if (old_name == new_name)
+                return Response.Success($"Sorting layer '{old_name}' already has that name; nothing changed.");
+            if (HasSortingLayer(new_name))
+                return Response.Error("SORTING_LAYER_EXISTS", new { name = new_name });
+
+            oldNameProp.stringValue = new_name;
+            tagManager.ApplyModifiedProperties();
+            FlushSortingLayers();
+            return Response.Success($"Renamed sorting layer '{old_name}' to '{new_name}'.");
         }
 
         [Description("Remove a sorting layer by name. The built-in 'Default' layer cannot be removed.")]

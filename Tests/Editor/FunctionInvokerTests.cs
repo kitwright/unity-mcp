@@ -67,6 +67,28 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void Invoke_UnknownLimitParameterSuggestsCount()
+        {
+            var result = new FunctionInvoker().Invoke(new FunctionCall
+            {
+                FunctionName = "get_console_logs",
+                Parameters = new Dictionary<string, string> { ["limit"] = "50" }
+            });
+
+            StringAssert.Contains("\"code\":\"UNKNOWN_PARAM\"", result);
+            StringAssert.Contains("Did you mean 'limit' -> 'count'", result);
+        }
+
+        [Test]
+        public void SuggestParameter_MatchesTyposAndIgnoresUnrelatedNames()
+        {
+            var accepted = new[] { "depth", "include_inactive" };
+
+            Assert.AreEqual("depth", FunctionInvoker.SuggestParameter("dpeth", accepted));
+            Assert.IsNull(FunctionInvoker.SuggestParameter("zzzzzz", accepted));
+        }
+
+        [Test]
         public void FindGameObjects_AmbiguousComponentNameIsReportedNotReturnedAsNoMatches()
         {
             var result = new FunctionInvoker().Invoke(new FunctionCall

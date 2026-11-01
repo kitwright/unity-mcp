@@ -12,15 +12,18 @@ namespace KitWright.Editor.Tools.Builtins
     internal static partial class ScreenshotFunctions
     {
         [Description("Capture a screenshot of the Game View (what the main camera sees). Returns a base64-encoded PNG image, " +
-                     "or a saved file path when save_to_file=true.")]
+                     "or a saved file path when save_to_file=true. The image keeps the game's aspect ratio. With no width or height its " +
+                     "longest side is the 'Screenshot default size' setting (512 unless changed); with either, it is the size asked for, " +
+                     "within 64-4096 (width and height together are a box the image fits inside).")]
         [ReadOnlyTool]
         public static string CaptureGameView(
-            [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
-            [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
+            [ToolParam("Width of the screenshot in pixels (64-4096). Without width and height the longest side is the default size setting.", Required = false)] int width = 0,
+            [ToolParam("Height of the screenshot in pixels (64-4096). Without width and height the longest side is the default size setting.", Required = false)] int height = 0,
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
             [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
         {
             var autoCap = ResolveDefaultScreenshotSize();
+            var sizeAsked = width > 0 || height > 0;
             if (!TryResolveGameViewSize(ref width, ref height, autoCap))
             {
                 width = Mathf.Clamp(width > 0 ? width : autoCap, 64, 4096);
@@ -28,7 +31,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             var maxSide = Mathf.Max(width, height);
-            if (maxSide > autoCap)
+            if (!sizeAsked && maxSide > autoCap)
             {
                 var scale = autoCap / (float)maxSide;
                 width = Mathf.Max(64, Mathf.RoundToInt(width * scale));
@@ -194,13 +197,13 @@ namespace KitWright.Editor.Tools.Builtins
         /// Captures the game view including ScreenSpaceOverlay UI by temporarily
         /// switching overlay canvases to ScreenSpaceCamera during render.
         /// </summary>
-        private static byte[] CaptureWithUIPngBytes(Camera camera, int width, int height)
+        internal static byte[] CaptureWithUIPngBytes(Camera camera, int width, int height)
         {
             RenderTexture renderTexture = null;
             RenderTexture previousTarget = null;
             RenderTexture previousActive = null;
             Texture2D screenshot = null;
-            var overlayCanvases = new List<Canvas>();
+            var overlayCanvases = new List<(Canvas Canvas, Camera WorldCamera, float PlaneDistance)>();
 
             RequireAGraphicsDevice();
 
@@ -215,7 +218,7 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     if (canvas.renderMode == RenderMode.ScreenSpaceOverlay && canvas.gameObject.activeInHierarchy)
                     {
-                        overlayCanvases.Add(canvas);
+                        overlayCanvases.Add((canvas, canvas.worldCamera, canvas.planeDistance));
                         canvas.renderMode = RenderMode.ScreenSpaceCamera;
                         canvas.worldCamera = camera;
                         canvas.planeDistance = camera.nearClipPlane + 0.1f;
@@ -236,11 +239,12 @@ namespace KitWright.Editor.Tools.Builtins
             finally
             {
                 // Restore overlay canvases
-                foreach (var canvas in overlayCanvases)
+                foreach (var (canvas, worldCamera, planeDistance) in overlayCanvases)
                 {
                     if (canvas != null)
                     {
-                        canvas.worldCamera = null;
+                        canvas.worldCamera = worldCamera;
+                        canvas.planeDistance = planeDistance;
                         canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                     }
                 }

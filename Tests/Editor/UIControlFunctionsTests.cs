@@ -23,7 +23,7 @@ namespace KitWright.Editor.Tests
             // whatever scene the suite happens to run in.
             _preexistingEventSystem = Object.FindAnyObjectByType<EventSystem>();
 
-            _parent = new GameObject("__KwTestUiParent", typeof(RectTransform));
+            _parent = new GameObject("__KwTestUiParent", typeof(Canvas));
             _created.Add(_parent);
         }
 

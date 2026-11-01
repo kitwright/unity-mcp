@@ -249,7 +249,12 @@ public class CommandSyntax : IKitWrightCommand
         {
             return ExecuteCodeAndAssert(
                 "public class Nuke { public static string Run() { System.IO.File.Delete(\"x\"); return \"no\"; } }",
-                result => AssertError(result, "SAFETY_CHECK_BLOCKED"),
+                result =>
+                {
+                    AssertError(result, "SAFETY_CHECK_BLOCKED");
+                    var data = GetProperty<object>(result, "data");
+                    StringAssert.Contains("delete_asset", GetProperty<string>(data, "alternative"));
+                },
                 safetyChecks: null);
         }
 
@@ -386,14 +391,65 @@ public class CommandSyntax : IKitWrightCommand
             Assert.AreEqual(7, result[0].line);
         }
 
+        // Mono loads BCL assemblies lazily, and building the list can itself load one, so the second
+        // call may legitimately rebuild; the cache is broken only if it never settles.
         [Test]
         public void LoadedPaths_AreCachedAndDeduplicatedBySimpleName()
         {
-            var first = ScriptCompilerReferences.GetLoadedPaths();
-            Assert.AreSame(first, ScriptCompilerReferences.GetLoadedPaths());
+            string[] first;
+            string[] second;
+            var attempt = 0;
+            do
+            {
+                first = ScriptCompilerReferences.GetLoadedPaths();
+                second = ScriptCompilerReferences.GetLoadedPaths();
+            }
+            while (!ReferenceEquals(first, second) && ++attempt < 5);
+
+            Assert.AreSame(first, second);
             CollectionAssert.IsNotEmpty(first);
             CollectionAssert.AllItemsAreUnique(
                 first.Select(path => System.IO.Path.GetFileNameWithoutExtension(path).ToLowerInvariant()).ToArray());
+        }
+
+        [Test]
+        public void ReferencePaths_AddTheProfileAssembliesNothingHasLoadedYet()
+        {
+            var root = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "KwProfileRefs" + Guid.NewGuid().ToString("N"));
+            System.IO.Directory.CreateDirectory(root);
+            try
+            {
+                var zip = System.IO.Path.Combine(root, "System.IO.Compression.FileSystem.dll");
+                var shadowed = System.IO.Path.Combine(root, "System.Xml.dll");
+                System.IO.File.WriteAllText(zip, string.Empty);
+                System.IO.File.WriteAllText(shadowed, string.Empty);
+                var loaded = new[] { Lib("System.Xml.dll") };
+
+                var references = RoslynCscScriptCompiler.GetReferencePaths(loaded, root);
+
+                CollectionAssert.Contains(references, zip);
+                CollectionAssert.Contains(references, Lib("System.Xml.dll"));
+                CollectionAssert.DoesNotContain(references, shadowed, "an assembly that is already loaded must win");
+                CollectionAssert.AreEqual(loaded, RoslynCscScriptCompiler.GetReferencePaths(loaded, null));
+            }
+            finally
+            {
+                System.IO.Directory.Delete(root, true);
+            }
+        }
+
+        [Test]
+        public void CodeDom_CompilesASnippetNamingZipFile()
+        {
+            const string snippet =
+                "public static class CodeDomZipNameProbe { public static string Run() { return typeof(System.IO.Compression.ZipFile).Name; } }";
+
+            var result = new CodeDomScriptCompiler().Compile(snippet);
+
+            Assume.That(result.Status, Is.Not.EqualTo(ScriptCompilationStatus.Unavailable), result.Message);
+            Assert.AreEqual(ScriptCompilationStatus.Success, result.Status,
+                string.Join("; ", (result.Errors ?? new System.Collections.Generic.List<ScriptCompilationError>())
+                    .Select(error => error.code + " " + error.text)));
         }
 
         // A bare body sits under the usings and the wrapper class, so the compiler's line numbers

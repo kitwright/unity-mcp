@@ -346,8 +346,8 @@ namespace KitWright.Editor.MCP.Server.SSE
             }
         }
 
-        // JsonCodec reads every number back as a double.
-        private static int? AsLevel(object value) => value is double d ? (int?)(int)d : null;
+        // JsonCodec reads an integer back as a long and any other number as a double.
+        private static int? AsLevel(object value) => value is long l ? (int?)l : value is double d ? (int?)(int)d : null;
 
         public void CleanupExpiredSessions()
         {

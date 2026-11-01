@@ -87,14 +87,18 @@ namespace KitWright.Editor.Tools
                 // Add enum values for enum types
                 if (param.ParameterType.IsEnum)
                 {
-                    propDef.@enum = new List<string>(Enum.GetNames(param.ParameterType));
+                    // An enum constraint would forbid the comma-separated list a [Flags] value takes.
+                    if (param.ParameterType.IsDefined(typeof(FlagsAttribute), false))
+                        propDef.description += $" (one or a comma-separated list of: {string.Join(", ", Enum.GetNames(param.ParameterType))})";
+                    else
+                        propDef.@enum = new List<string>(Enum.GetNames(param.ParameterType));
                 }
 
                 var snakeName = ToolRegistry.ToSnakeCase(param.Name);
                 schema.properties[snakeName] = propDef;
 
-                // Determine if required
-                bool isRequired = toolParamAttr?.Required ?? !param.HasDefaultValue;
+                // The invoker applies a C# default before it looks at Required, so a defaulted parameter is never mandatory.
+                bool isRequired = !param.HasDefaultValue && (toolParamAttr?.Required ?? true);
                 if (isRequired)
                 {
                     schema.required.Add(snakeName);

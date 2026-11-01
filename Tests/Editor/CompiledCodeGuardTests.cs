@@ -50,6 +50,38 @@ public class Reflected
     }
 }";
 
+        private const string AliasedTrash = @"
+using AD = UnityEditor.AssetDatabase;
+
+public class AliasedTrashCan
+{
+    public static string Run()
+    {
+        AD.MoveAssetToTrash(""Assets/missing.txt"");
+        return ""done"";
+    }
+}";
+
+        private const string PluralTrash = @"
+public class PluralTrashCan
+{
+    public static string Run()
+    {
+        UnityEditor.AssetDatabase.MoveAssetsToTrash(new[] { ""Assets/missing.txt"" }, new System.Collections.Generic.List<string>());
+        return ""done"";
+    }
+}";
+
+        private const string ReplacedDirectory = @"
+public class DirectoryReplacer
+{
+    public static string Run()
+    {
+        UnityEditor.FileUtil.ReplaceDirectory(""Assets/missing_a"", ""Assets/missing_b"");
+        return ""done"";
+    }
+}";
+
         private const string ModalDialog = @"
 using UnityEditor;
 
@@ -265,6 +297,27 @@ public class EarlyBird
             Assert.AreEqual(expected, reference);
         }
 
+        [TestCase(AliasedTrash, "UnityEditor.AssetDatabase.MoveAssetToTrash")]
+        [TestCase(PluralTrash, "UnityEditor.AssetDatabase.MoveAssetsToTrash")]
+        public void Guard_BlocksMovingAnAssetToTheTrashEvenThroughAnAlias(string snippet, string expected)
+        {
+            var compilation = ScriptCompilerPipeline.Compile(snippet);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
+            Assert.AreEqual(expected, reference);
+        }
+
+        [Test]
+        public void Guard_BlocksReplacingADirectoryThroughFileUtil()
+        {
+            var compilation = ScriptCompilerPipeline.Compile(ReplacedDirectory);
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out var reference, out _));
+            Assert.AreEqual("UnityEditor.FileUtil.ReplaceDirectory", reference);
+        }
+
         [Test]
         public void Guard_RefusesASnippetLongerThanTheScanReads()
         {
@@ -291,6 +344,11 @@ public class EarlyBird
             Assert.IsFalse(ModuleInitializerSentinel.Fired, "the safety scan ran the module initializer before judging it");
 
             compilation.Assembly.GetType("EarlyBird").GetMethod("Run").Invoke(null, null);
+            System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor(compilation.Assembly.ManifestModule.ModuleHandle);
+#if UNITY_6000_6_OR_NEWER
+            if (!ModuleInitializerSentinel.Fired)
+                Assert.Ignore("Mono in this Unity does not run module initializers, even when asked to, so there was nothing for the scan to get ahead of.");
+#endif
             Assert.IsTrue(ModuleInitializerSentinel.Fired, "the initializer never ran at all, so this test proved nothing");
         }
 
@@ -331,6 +389,20 @@ public class EarlyBird
             Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, true, out var reference, out _));
             Assert.AreEqual("System.IO.File.WriteAllText", reference);
 
+            Assert.IsFalse(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out _, out _));
+        }
+
+        [TestCase("System.Net.Http.HttpClient")]
+        [TestCase("System.Net.Http.HttpClientHandler")]
+        [TestCase("System.Net.Http.HttpMessageInvoker")]
+        public void Guard_BlocksEveryHttpSenderWhenStrict(string typeName)
+        {
+            var compilation = ScriptCompilerPipeline.Compile(
+                "public static class HttpNameProbe { public static string Run() { return typeof(" + typeName + ").Name; } }");
+            Assert.AreEqual(ScriptCompilationStatus.Success, compilation.Status, compilation.Message);
+
+            Assert.IsTrue(CompiledCodeGuard.TryFindViolation(compilation.Assembly, true, out var reference, out _));
+            Assert.AreEqual(typeName, reference);
             Assert.IsFalse(CompiledCodeGuard.TryFindViolation(compilation.Assembly, false, out _, out _));
         }
 

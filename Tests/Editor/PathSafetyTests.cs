@@ -26,11 +26,26 @@ namespace KitWright.Editor.Tests
 
         [TestCase("Assets/Foo/Bar.cs", "Assets/Foo/Bar.cs")]
         [TestCase("Assets/A/../B.cs", "Assets/B.cs")]
+        [TestCase("Assets/a:/b.txt", "Assets/a:/b.txt")]
+        [TestCase("ProjectSettings/ProjectVersion.txt::$DATA", "ProjectSettings/ProjectVersion.txt::$DATA")]
         public void ResolveProjectPath_InsideProject_Resolves(string requested, string expectedRelative)
         {
             Assert.AreEqual(
                 Path.GetFullPath(Path.Combine(ApplicationPaths.ProjectRoot, expectedRelative)),
                 PathSafety.ResolveProjectPath(requested));
+        }
+
+        [TestCase(@"C:\proj\Assets\a:\b.txt")]
+        [TestCase(@"C:\proj\ProjectSettings\ProjectVersion.txt::$DATA")]
+        [TestCase("/proj/Assets/a:/b.txt")]
+        public void ParentOf_AlwaysShortensThePathUntilItEnds(string path)
+        {
+            var current = path;
+            for (var steps = 0; current != null; steps++)
+            {
+                Assert.Less(steps, 20, "the walk to the root never ended at " + current);
+                current = PathSafety.ParentOf(current);
+            }
         }
 
         // Every one of these starts with "Assets/", which is all the write tools used to check.

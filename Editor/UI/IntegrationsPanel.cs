@@ -71,7 +71,7 @@ namespace KitWright.Editor.MCP.Server
             new Integration
             {
                 Name = "Timeline",
-                PackageId = "com.unity.timeline",
+                PackageId = "com.unity.modules.director",
                 Description = "Scrub a PlayableDirector's timeline to any time in the editor.",
                 Url = "https://docs.unity3d.com/Packages/com.unity.timeline@latest",
                 Icon = "d_UnityEditor.Timeline.TimelineWindow",

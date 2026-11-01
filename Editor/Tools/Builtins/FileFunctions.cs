@@ -14,19 +14,38 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Read the contents of a file. Returns the content plus the sha256 of the file as it was read; " +
                      "pass that sha256 back to write_file or edit_script so a rewrite is rejected if someone changed " +
-                     "the file in between. A file longer than the read cap comes back truncated AND WITHOUT a sha256, " +
+                     "the file in between. A file longer than the read cap comes back truncated AND WITHOUT a sha256 (pass offset to read on), " +
                      "because rewriting a whole file from a truncated copy would delete the tail — patch it with " +
                      "patch_script or edit_script_members instead.")]
         [ReadOnlyTool]
         public static object ReadFile(
-            [ToolParam("Path to the file, inside the project (relative to project root, or absolute); a path outside it is refused")] string path)
+            [ToolParam("Path to the file, inside the project (relative to project root, or absolute); a path outside it is refused")] string path,
+            [ToolParam("UTF-16 code unit (what .NET and JavaScript call a character) to start reading at, for a file longer than the read cap. Pass the next_offset a previous call reported (null means the end of the file). 0 starts at the beginning.", Required = false)] int offset = 0)
         {
             var fullPath = PathSafety.ResolveProjectPath(path);
+            if (Directory.Exists(fullPath))
+                return Response.Error("PATH_IS_DIRECTORY", new { path }, "That is a folder; list_directory shows what is in it.");
+
             if (!File.Exists(fullPath))
                 return Response.Error("FILE_NOT_FOUND", new { path });
 
             var content = File.ReadAllText(fullPath);
-            var truncated = content.Length > MaxReadChars;
+
+            // A NUL does not occur in text; reading a texture or a prefab binary as text answered
+            // with a screenful of replacement characters and a sha256 that looked like a usable one.
+            if (content.IndexOf('\0') >= 0)
+                return Response.Error("BINARY_FILE", new { path, bytes = new FileInfo(fullPath).Length },
+                    "This is not a text file, so read_file cannot show it.");
+
+            if (offset < 0 || offset > content.Length)
+                return Response.Error("INVALID_PARAM", new { param = "offset", provided = offset, length = content.Length },
+                    $"offset must be between 0 and {content.Length}.");
+
+            if (offset > 0 && offset < content.Length && char.IsLowSurrogate(content[offset]) && char.IsHighSurrogate(content[offset - 1]))
+                return Response.Error("INVALID_PARAM", new { param = "offset", provided = offset, length = content.Length },
+                    $"offset {offset} falls inside a surrogate pair (one emoji or other character above U+FFFF); use {offset - 1}.");
+
+            var truncated = offset > 0 || content.Length > MaxReadChars;
 
             if (!truncated)
             {
@@ -39,16 +58,24 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            return Response.Success($"Read {path} (truncated).", new
+            var end = offset + System.Math.Min(MaxReadChars, content.Length - offset);
+            if (end < content.Length && end > offset + 1 && char.IsHighSurrogate(content[end - 1]))
+                end--;
+            var chunk = content.Substring(offset, end - offset);
+            int? nextOffset = end < content.Length ? end : (int?)null;
+
+            return Response.Success($"Read {path} (truncated: chars {offset}-{end} of {content.Length}).", new
             {
                 path,
                 length = content.Length,
                 truncated = true,
-                content = content.Substring(0, MaxReadChars)
+                offset,
+                next_offset = nextOffset,
+                content = chunk
             },
-            $"Only the first {MaxReadChars} of {content.Length} chars are shown, so no sha256 is issued and " +
-            "write_file/edit_script will refuse a whole-file rewrite. Use patch_script or edit_script_members " +
-            "to change part of it.");
+            (nextOffset.HasValue ? $"Pass offset={nextOffset} for the next part. " : "That is the end of the file. ") +
+            "No sha256 is issued for a partial read, so write_file/edit_script will refuse a whole-file rewrite. " +
+            "Use patch_script or edit_script_members to change part of it.");
         }
 
         [Description("Write content to a file, creating it or overwriting it whole. " +

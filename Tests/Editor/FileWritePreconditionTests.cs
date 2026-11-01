@@ -79,6 +79,46 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void ReadFile_ReadsALongFileInPartsAndSaysWhyItCannotShowAFolderOrABinary()
+        {
+            var longPath = _folder + "/Long_" + Guid.NewGuid().ToString("N") + ".txt";
+            FileFunctions.WriteFile(longPath, new string('a', 10000) + new string('b', 500));
+
+            var first = Newtonsoft.Json.Linq.JObject.Parse(Json(FileFunctions.ReadFile(longPath)))["data"];
+            Assert.AreEqual(10000, (int)first["next_offset"]);
+
+            var rest = Newtonsoft.Json.Linq.JObject.Parse(Json(FileFunctions.ReadFile(longPath, 10000)))["data"];
+            Assert.AreEqual(new string('b', 500), (string)rest["content"]);
+            Assert.IsTrue(rest["next_offset"] == null || rest["next_offset"].Type == Newtonsoft.Json.Linq.JTokenType.Null, "null means there is no more");
+            Assert.IsNull(rest["sha256"], "a part of a file must not issue a sha");
+
+            StringAssert.Contains("PATH_IS_DIRECTORY", Json(FileFunctions.ReadFile(_folder)));
+
+            var binaryPath = _folder + "/Binary_" + Guid.NewGuid().ToString("N") + ".bin";
+            File.WriteAllBytes(ProjectPath(binaryPath), new byte[] { 0x89, 0x50, 0x00, 0x0D, 0x41 });
+            StringAssert.Contains("BINARY_FILE", Json(FileFunctions.ReadFile(binaryPath)));
+        }
+
+        [Test]
+        public void ReadFile_NeverSplitsASurrogatePairAcrossParts_AndRefusesAnOffsetOutsideTheFile()
+        {
+            var path = _folder + "/Emoji_" + Guid.NewGuid().ToString("N") + ".txt";
+            var text = new string('a', 9999) + "\U0001F600" + new string('b', 20);
+            FileFunctions.WriteFile(path, text);
+
+            var first = Newtonsoft.Json.Linq.JObject.Parse(Json(FileFunctions.ReadFile(path)))["data"];
+            var next = (int)first["next_offset"];
+            Assert.AreEqual(9999, next, "the emoji starts at 9999 and must move whole to the next part");
+
+            var second = Newtonsoft.Json.Linq.JObject.Parse(Json(FileFunctions.ReadFile(path, next)))["data"];
+            Assert.AreEqual((string)first["content"] + (string)second["content"], text);
+
+            StringAssert.Contains("INVALID_PARAM", Json(FileFunctions.ReadFile(path, 10000)));
+            StringAssert.Contains("INVALID_PARAM", Json(FileFunctions.ReadFile(path, -5)));
+            StringAssert.Contains("INVALID_PARAM", Json(FileFunctions.ReadFile(path, text.Length + 1)));
+        }
+
+        [Test]
         public void EditScript_RequiresTheShaBeforeItWillReplaceAFile()
         {
             // Deliberately not a .cs file: dropping one under Assets/ triggers a script

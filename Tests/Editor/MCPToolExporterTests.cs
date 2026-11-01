@@ -156,7 +156,6 @@ namespace KitWright.Editor.Tests
             "memory_compare_snapshots",
             "memory_list_full_snapshots",
             "memory_list_snapshots",
-            "memory_open_snapshot_in_profiler",
             "memory_query_references",
             "memory_query_top_objects",
             "physics2d_overlap_point",
@@ -179,8 +178,7 @@ namespace KitWright.Editor.Tests
             "simulate_mouse_drag",
             "simulate_touch",
             "simulate_touch_drag",
-            "validate_script",
-            "wait_for_compilation"
+            "validate_script"
         };
 
         [Test]

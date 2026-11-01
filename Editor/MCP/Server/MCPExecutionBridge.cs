@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.Settings;
@@ -10,6 +11,7 @@ using KitWright.Editor.State;
 using KitWright.Editor.Threading;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Helpers;
+using Newtonsoft.Json.Linq;
 using UnityEngine;
 
 namespace KitWright.Editor.MCP.Server
@@ -28,6 +30,29 @@ namespace KitWright.Editor.MCP.Server
         private readonly StateController _stateController;
         private readonly FunctionInvoker _invoker;
         private readonly MCPInteractionLog _interactionLog;
+
+        internal static string NotExposedHint(SettingsController settings) =>
+            MCPToolExportPolicy.IsToolAllowed("set_tool_profile", settings, out _)
+                ? "set_tool_profile 'full' exposes it. A profile only shortens the tool list; it does not restrict access."
+                : null;
+
+        private string WithheldToolError(string toolName, string profileKey) =>
+            WithheldToolError(toolName, profileKey, ToolPackageGate.MissingPackageFor(toolName), NotExposedHint(_settings));
+
+        // A tool whose package is missing is withheld under every profile, including full, so telling
+        // the caller to switch profile sends it round in a circle: name the package instead.
+        internal static string WithheldToolError(
+            string toolName, string profileKey, string missingPackage, string notExposedHint)
+        {
+            if (string.IsNullOrEmpty(missingPackage))
+                return ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey }, notExposedHint);
+
+            return ToolResultFormatter.Error("PACKAGE_NOT_INSTALLED", new { tool = toolName, package = missingPackage },
+                $"This tool needs the package '{missingPackage}', which is not installed. " +
+                $"Install it with install_package (package_id '{missingPackage}') or Window > Package Manager, then retry. " +
+                "install_package is not listed under the minimal and core profiles; the extended and full profiles list it. " +
+                "A profile alone does not make this tool appear.");
+        }
 
         public MCPExecutionBridge(
             EditorThreadHelper threadHelper,
@@ -58,11 +83,14 @@ namespace KitWright.Editor.MCP.Server
                 // No interaction log: it writes SessionState, which is main-thread only.
                 return isAllowed
                     ? await InvokeOffEditorThreadAsync(toolName, arguments)
-                    : ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = toolName, profile = profileKey });
+                    : WithheldToolError(toolName, profileKey);
             }
 
+            // A refused or unknown call changes nothing, so it must not queue behind a running
+            // mutating one just to be told no.
             var method = ToolRegistry.GetMethod(toolName);
-            if (method != null && ToolRegistry.IsReadOnly(method))
+            var answersWithoutRunning = !isAllowed || (method == null && !ToolRegistry.IsManualTool(toolName));
+            if (answersWithoutRunning || (method != null && ToolRegistry.IsReadOnly(method)))
                 return await InvokeOnEditorThreadAsync(toolName, arguments, isAllowed, profileKey, ct);
 
             // Calls run side by side in both transports, and a tool that awaits lets another one run
@@ -91,21 +119,54 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
+        // Only a success is annotated: a refused edit changed nothing, so there is nothing to lose.
+        internal static string AppendPlayModeNote(string resultJson, string toolName, bool playing)
+        {
+            if (!playing || string.IsNullOrEmpty(resultJson) || !ToolRegistry.SceneEditingTools.Contains(toolName))
+                return resultJson;
+
+            try
+            {
+                var envelope = JsonParse.Object(resultJson);
+                var success = envelope["success"];
+                var message = envelope["message"];
+                if (success == null || success.Type != JTokenType.Boolean || !success.Value<bool>() ||
+                    message == null || message.Type != JTokenType.String)
+                    return resultJson;
+
+                var text = message.Value<string>();
+                var note = KitWright.Editor.Tools.Builtins.SceneFunctions.DiscardedWithPlayMode;
+                if (text.Contains(note))
+                    return resultJson;
+
+                envelope["message"] = text.Length == 0 ? note : text + " " + note;
+                return envelope.ToString(Newtonsoft.Json.Formatting.None);
+            }
+            catch (Exception)
+            {
+                return resultJson;
+            }
+        }
+
+        // Read-only calls run beside a mutating one, which owns the single pending marker: a read
+        // that finished would clear it, and a reload would then find nothing interrupted.
+        internal static bool MarksPendingFunction(MethodInfo method) =>
+            method == null || !ToolRegistry.IsReadOnly(method);
+
         private Task<string> InvokeOnEditorThreadAsync(string toolName, Dictionary<string, object> arguments,
             bool isAllowed, string profileKey, CancellationToken ct)
         {
             return _threadHelper.ExecuteAsyncOnEditorThreadAsync(async () =>
             {
+                var marksPending = false;
                 try
                 {
                     ct.ThrowIfCancellationRequested();
                     var functionCall = new FunctionCall
                     {
-                        FunctionName = toolName
+                        FunctionName = toolName,
+                        Parameters = ToParameters(arguments)
                     };
-
-                    foreach (var kvp in arguments)
-                        functionCall.Parameters[kvp.Key] = ConvertArgumentToString(kvp.Value);
 
                     ToolRegistry.ManualTools.TryGetValue(toolName, out var manualTool);
                     var method = ToolRegistry.GetMethod(toolName);
@@ -118,24 +179,26 @@ namespace KitWright.Editor.MCP.Server
 
                     if (!isAllowed)
                     {
-                        var error = ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new
-                        {
-                            tool = toolName,
-                            profile = profileKey
-                        });
+                        var error = WithheldToolError(toolName, profileKey);
                         _interactionLog?.Add(toolName, MCPToolCallStatus.Error, error);
                         return error;
                     }
 
                     DomainReloadHandler.ResetResumeCounter();
-                    _stateController.SetState(KitWrightState.ExecutingFunction);
-                    DomainReloadHandler.SavePendingFunction(functionCall);
+                    marksPending = MarksPendingFunction(method);
+                    if (marksPending)
+                    {
+                        _stateController.SetState(KitWrightState.ExecutingFunction);
+                        DomainReloadHandler.SavePendingFunction(functionCall);
+                    }
 
                     PluginDebugLogger.Log($"[KitWright MCP Server] Executing tool: {toolName}");
                     var result = await _invoker.InvokeAsync(functionCall);
-                    DomainReloadHandler.CompletePendingFunction(_stateController);
+                    if (marksPending)
+                        DomainReloadHandler.CompletePendingFunction(_stateController);
 
-                    var resultText = result ?? "Completed successfully";
+                    var resultText = AppendPlayModeNote(
+                        result ?? "Completed successfully", toolName, UnityEditor.EditorApplication.isPlaying);
                     _interactionLog?.Add(toolName,
                         ToolResultFormatter.IsError(resultText) ? MCPToolCallStatus.Error : MCPToolCallStatus.Success,
                         resultText);
@@ -143,8 +206,11 @@ namespace KitWright.Editor.MCP.Server
                 }
                 catch (Exception ex)
                 {
-                    DomainReloadHandler.ClearPendingFunction();
-                    _stateController.ClearState();
+                    if (marksPending)
+                    {
+                        DomainReloadHandler.ClearPendingFunction();
+                        _stateController.ClearState();
+                    }
                     var exError = ToolResultFormatter.Error("TOOL_EXCEPTION",
                         new { tool = toolName, message = ex.Message });
                     Debug.LogError($"[KitWright MCP Server] Error executing tool '{toolName}': {ex.Message}\n{ex.StackTrace}");
@@ -162,7 +228,7 @@ namespace KitWright.Editor.MCP.Server
             var functionCall = new FunctionCall
             {
                 FunctionName = toolName,
-                Parameters = System.Linq.Enumerable.ToDictionary(arguments, kvp => kvp.Key, kvp => ConvertArgumentToString(kvp.Value))
+                Parameters = ToParameters(arguments)
             };
 
             try
@@ -173,6 +239,20 @@ namespace KitWright.Editor.MCP.Server
             {
                 return ToolResultFormatter.Error("TOOL_EXCEPTION", new { tool = toolName, message = ex.Message });
             }
+        }
+
+        // A JSON null is an argument left out, so the parameter's default applies; as "" it reached a
+        // string parameter as an empty string and a path parameter as the project root.
+        internal static Dictionary<string, string> ToParameters(Dictionary<string, object> arguments)
+        {
+            var parameters = new Dictionary<string, string>();
+            foreach (var kvp in arguments)
+            {
+                if (kvp.Value != null)
+                    parameters[kvp.Key] = ConvertArgumentToString(kvp.Value);
+            }
+
+            return parameters;
         }
 
         internal static string ConvertArgumentToString(object value)

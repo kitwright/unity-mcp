@@ -44,6 +44,8 @@ namespace KitWright.Editor.Tools
             {
                 try
                 {
+                    RejectUnknownManualParameters(manualTool, functionCall.Parameters);
+
                     var missingParameter = FindMissingManualParameter(manualTool, functionCall.Parameters);
                     if (missingParameter != null)
                     {
@@ -52,6 +54,11 @@ namespace KitWright.Editor.Tools
                     }
 
                     return WrapLegacyStringResult(manualTool.Handler(functionCall.Parameters));
+                }
+                catch (ToolArgumentException pex)
+                {
+                    return ToolResultFormatter.Error(pex.Code,
+                        new { param = pex.ParamName, provided = pex.Provided, expected = pex.Expected });
                 }
                 catch (Exception ex)
                 {
@@ -83,6 +90,9 @@ namespace KitWright.Editor.Tools
                                        || ex is AmbiguousTargetException || ex is AmbiguousTypeException)
             {
                 var inner = (ex as TargetInvocationException)?.InnerException ?? ex;
+                if (inner is ToolArgumentException argument)
+                    return ToolResultFormatter.Error(argument.Code,
+                        new { param = argument.ParamName, provided = argument.Provided, expected = argument.Expected });
                 if (inner is PathOutsideProjectException)
                     return ToolResultFormatter.Error("PATH_OUTSIDE_PROJECT",
                         new { function = functionCall.FunctionName, message = inner.Message });
@@ -105,7 +115,7 @@ namespace KitWright.Editor.Tools
                             candidates = ambiguous.Candidates,
                             message = inner.Message
                         },
-                        "Re-call with find_method=by_id and one of the candidate ids, or find_method=by_path.");
+                        "Pass one of the candidate ids as the target (find_method=by_id where the tool has that parameter).");
 
                 Debug.LogError($"[KitWright] Function '{functionCall.FunctionName}' failed: {inner.Message}\n{inner.StackTrace}");
                 return ToolResultFormatter.Error("FUNCTION_FAILED",
@@ -206,7 +216,7 @@ namespace KitWright.Editor.Tools
 
             try
             {
-                payload = JToken.Parse(s);
+                payload = JsonParse.Token(s);
                 return true;
             }
             catch
@@ -324,13 +334,111 @@ namespace KitWright.Editor.Tools
             for (int i = 0; i < plans.Length; i++)
                 accepted[i] = plans[i].SnakeName;
 
+            ThrowUnknownParameters(unknown, accepted);
+        }
+
+        // A manual tool that declares nothing has no list to check against, so it still takes anything.
+        private static void RejectUnknownManualParameters(
+            ToolRegistry.ManualToolEntry manualTool, Dictionary<string, string> parameters)
+        {
+            var schema = manualTool.Definition?.parameters;
+            if (schema == null || parameters == null || parameters.Count == 0)
+                return;
+
+            var accepted = new List<string>();
+            if (schema.properties != null)
+                accepted.AddRange(schema.properties.Keys);
+            if (schema.required != null)
+            {
+                foreach (var name in schema.required)
+                {
+                    if (!accepted.Contains(name))
+                        accepted.Add(name);
+                }
+            }
+
+            if (accepted.Count == 0)
+                return;
+
+            List<string> unknown = null;
+            foreach (var key in parameters.Keys)
+            {
+                if (!accepted.Contains(key))
+                    (unknown ??= new List<string>()).Add(key);
+            }
+
+            if (unknown != null)
+                ThrowUnknownParameters(unknown, accepted.ToArray());
+        }
+
+        private static void ThrowUnknownParameters(List<string> unknown, string[] accepted)
+        {
+            var suggestions = new List<string>();
+            foreach (var key in unknown)
+            {
+                var suggestion = SuggestParameter(key, accepted);
+                if (suggestion != null)
+                    suggestions.Add($"'{key}' -> '{suggestion}'");
+            }
+
             throw new ToolArgumentException(
                 "UNKNOWN_PARAM",
                 string.Join(", ", unknown),
                 null,
-                accepted.Length == 0
+                (accepted.Length == 0
                     ? "no parameters"
-                    : $"one of [{string.Join(", ", accepted)}]");
+                    : $"one of [{string.Join(", ", accepted)}]") +
+                (suggestions.Count == 0 ? string.Empty : $". Did you mean {string.Join(", ", suggestions)}?"));
+        }
+
+        private static readonly string[] CountSynonyms = { "limit", "count", "max", "top", "take", "n", "size", "page_size", "max_results", "max_entries", "max_count" };
+        private static readonly string[] CountNames = { "count", "max_entries", "max_results", "limit" };
+
+        internal static string SuggestParameter(string key, string[] accepted)
+        {
+            if (Array.IndexOf(CountSynonyms, key) >= 0)
+            {
+                foreach (var name in CountNames)
+                {
+                    if (Array.IndexOf(accepted, name) >= 0)
+                        return name;
+                }
+            }
+
+            string best = null;
+            var bestDistance = 3;
+            foreach (var name in accepted)
+            {
+                var distance = EditDistance(key, name);
+                if (distance < bestDistance && distance < key.Length)
+                {
+                    best = name;
+                    bestDistance = distance;
+                }
+            }
+
+            return best;
+        }
+
+        private static int EditDistance(string a, string b)
+        {
+            var row = new int[b.Length + 1];
+            for (int j = 0; j <= b.Length; j++)
+                row[j] = j;
+
+            for (int i = 1; i <= a.Length; i++)
+            {
+                var diagonal = row[0];
+                row[0] = i;
+                for (int j = 1; j <= b.Length; j++)
+                {
+                    var above = row[j];
+                    row[j] = Math.Min(Math.Min(row[j] + 1, row[j - 1] + 1), diagonal + (a[i - 1] == b[j - 1] ? 0 : 1));
+                    diagonal = above;
+                }
+            }
+
+            return row[b.Length];
         }
 
         private object[] BuildArguments(MethodInfo method, Dictionary<string, string> parameters)
@@ -383,7 +491,7 @@ namespace KitWright.Editor.Tools
             return args;
         }
 
-        private object ConvertValue(string value, Type targetType)
+        internal static object ConvertValue(string value, Type targetType)
         {
             if (targetType == typeof(string))
                 return value;
@@ -405,27 +513,36 @@ namespace KitWright.Editor.Tools
                 return int.Parse(value, CultureInfo.InvariantCulture);
             if (targetType == typeof(long))
                 return long.Parse(value, CultureInfo.InvariantCulture);
+            // NumberStyles.Float, not the default: that one also allows group separators, so "0,5" read as 5.
             if (targetType == typeof(float))
-                return float.Parse(value, CultureInfo.InvariantCulture);
+            {
+                var f = float.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+                if (float.IsNaN(f) || float.IsInfinity(f))
+                    throw new FormatException($"'{value}' is not a finite number");
+                return f;
+            }
             if (targetType == typeof(double))
-                return double.Parse(value, CultureInfo.InvariantCulture);
+            {
+                var d = double.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
+                if (double.IsNaN(d) || double.IsInfinity(d))
+                    throw new FormatException($"'{value}' is not a finite number");
+                return d;
+            }
+            // Convert.ChangeType reads decimals with group separators allowed, so "0,5" came back as 5.
+            if (targetType == typeof(decimal))
+                return decimal.Parse(value, NumberStyles.Float, CultureInfo.InvariantCulture);
             if (targetType == typeof(bool))
             {
-                if (value == "true" || value == "1" || value.Equals("yes", StringComparison.OrdinalIgnoreCase))
+                if (value == "1" || value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                    value.Equals("yes", StringComparison.OrdinalIgnoreCase))
                     return true;
-                if (value == "false" || value == "0" || value.Equals("no", StringComparison.OrdinalIgnoreCase))
+                if (value == "0" || value.Equals("false", StringComparison.OrdinalIgnoreCase) ||
+                    value.Equals("no", StringComparison.OrdinalIgnoreCase))
                     return false;
                 throw new FormatException($"'{value}' is not a boolean (expected true/false/1/0/yes/no)");
             }
             if (targetType.IsEnum)
-            {
-                // Enum.Parse accepts unmapped NUMERIC strings (e.g. "999" -> (T)999) without
-                // throwing, so validate the result is a defined member.
-                var parsed = Enum.Parse(targetType, value, ignoreCase: true);
-                if (!Enum.IsDefined(targetType, parsed))
-                    throw new FormatException($"'{value}' is not a defined {targetType.Name} value (one of [{string.Join(", ", Enum.GetNames(targetType))}])");
-                return parsed;
-            }
+                return ParseEnum(value, targetType);
 
             // Vector3: "x,y,z" or "(x,y,z)"
             if (targetType == typeof(Vector3))
@@ -433,55 +550,122 @@ namespace KitWright.Editor.Tools
             // Vector2
             if (targetType == typeof(Vector2))
                 return ParseVector2(value);
+            if (targetType == typeof(Vector4))
+            {
+                var c = ParseComponents(value, 4);
+                return new Vector4(c[0], c[1], c[2], c[3]);
+            }
+            if (targetType == typeof(Quaternion))
+            {
+                var c = ParseComponents(value, 4);
+                if (c[0] == 0f && c[1] == 0f && c[2] == 0f && c[3] == 0f)
+                    throw new FormatException($"'{value}' is the zero quaternion, which is not a rotation (0,0,0,1 is no rotation)");
+                return new Quaternion(c[0], c[1], c[2], c[3]);
+            }
             // Color: "r,g,b,a" or "r,g,b" or "#hex"
             if (targetType == typeof(Color))
                 return ParseColor(value);
+            if (IsListType(targetType))
+            {
+                var array = JsonParse.Array(value);
+                var element = targetType.IsArray ? targetType.GetElementType() : targetType.GetGenericArguments()[0];
+                if (IsIntegralType(element))
+                    RequireIntegerElements(array);
+                return array.ToObject(targetType);
+            }
 
             return Convert.ChangeType(value, targetType, CultureInfo.InvariantCulture);
         }
 
-        private Vector3 ParseVector3(string value)
-        {
-            value = value.Trim('(', ')', ' ');
-            var parts = value.Split(',');
-            if (parts.Length != 3)
-                throw new FormatException($"expected 3 comma-separated numbers 'x,y,z', got {parts.Length}");
-            return new Vector3(
-                float.Parse(parts[0].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[2].Trim(), CultureInfo.InvariantCulture));
-        }
+        private static bool IsListType(Type type) =>
+            type.IsArray || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>));
 
-        private Vector2 ParseVector2(string value)
-        {
-            value = value.Trim('(', ')', ' ');
-            var parts = value.Split(',');
-            if (parts.Length != 2)
-                throw new FormatException($"expected 2 comma-separated numbers 'x,y', got {parts.Length}");
-            return new Vector2(
-                float.Parse(parts[0].Trim(), CultureInfo.InvariantCulture),
-                float.Parse(parts[1].Trim(), CultureInfo.InvariantCulture));
-        }
+        private static bool IsIntegralType(Type type) =>
+            type == typeof(byte) || type == typeof(sbyte) || type == typeof(short) || type == typeof(ushort) ||
+            type == typeof(int) || type == typeof(uint) || type == typeof(long) || type == typeof(ulong);
 
-        private Color ParseColor(string value)
+        // ToObject rounds 1.5 to 2 and reads "3" as 3. A float token with no fractional part (3.0) is still an integer.
+        private static void RequireIntegerElements(JArray array)
         {
-            value = value.Trim();
-            if (value.StartsWith("#"))
+            for (var i = 0; i < array.Count; i++)
             {
-                if (ColorUtility.TryParseHtmlString(value, out var c))
-                    return c;
-                throw new FormatException($"'{value}' is not a valid #hex color");
+                var item = array[i];
+                if (item.Type == JTokenType.Integer)
+                    continue;
+
+                if (item.Type == JTokenType.Float)
+                {
+                    var number = (double)item;
+                    if (!double.IsInfinity(number) && number == Math.Floor(number))
+                        continue;
+                }
+
+                throw new FormatException($"element {i} ({item.ToString(Formatting.None)}) is not an integer");
+            }
+        }
+
+        private static bool IsFlagsEnum(Type type) => type.IsDefined(typeof(FlagsAttribute), false);
+
+        // Enum.Parse reads "A,B" on any enum as the OR of both, so a plain enum with C = A|B took it as C.
+        // Only a [Flags] enum takes a list, and only of names it defines.
+        private static object ParseEnum(string value, Type enumType)
+        {
+            var names = Enum.GetNames(enumType);
+            if (value.IndexOf(',') >= 0)
+            {
+                if (!IsFlagsEnum(enumType))
+                    throw new FormatException($"'{value}' is not one {enumType.Name} value (one of [{string.Join(", ", names)}])");
+
+                var picked = new List<string>();
+                foreach (var part in value.Split(','))
+                {
+                    var name = Array.Find(names, n => string.Equals(n, part.Trim(), StringComparison.OrdinalIgnoreCase));
+                    if (name == null)
+                        throw new FormatException($"'{part.Trim()}' is not a defined {enumType.Name} value (one of [{string.Join(", ", names)}])");
+                    picked.Add(name);
+                }
+
+                return Enum.Parse(enumType, string.Join(",", picked));
             }
 
-            value = value.Trim('(', ')', ' ');
-            var parts = value.Split(',');
-            if (parts.Length < 3 || parts.Length > 4)
-                throw new FormatException($"expected 'r,g,b' or 'r,g,b,a' or '#hex', got {parts.Length} components");
-            float r = float.Parse(parts[0].Trim(), CultureInfo.InvariantCulture);
-            float g = float.Parse(parts[1].Trim(), CultureInfo.InvariantCulture);
-            float b = float.Parse(parts[2].Trim(), CultureInfo.InvariantCulture);
-            float a = parts.Length >= 4 ? float.Parse(parts[3].Trim(), CultureInfo.InvariantCulture) : 1f;
-            return new Color(r, g, b, a);
+            // Enum.Parse accepts unmapped NUMERIC strings (e.g. "999" -> (T)999) without
+            // throwing, so validate the result is a defined member.
+            var parsed = Enum.Parse(enumType, value, ignoreCase: true);
+            if (!Enum.IsDefined(enumType, parsed))
+                throw new FormatException($"'{value}' is not a defined {enumType.Name} value (one of [{string.Join(", ", names)}])");
+            return parsed;
+        }
+
+        private static Vector3 ParseVector3(string value) =>
+            ValueConverter.TryParseVector3(value, out var v, out var error) ? v : throw new FormatException(error);
+
+        private static Vector2 ParseVector2(string value) =>
+            ValueConverter.TryParseVector2(value, out var v, out var error) ? v : throw new FormatException(error);
+
+        private static float[] ParseComponents(string value, int count)
+        {
+            var parts = value.Trim('(', ')', ' ').Split(',');
+            if (parts.Length != count)
+                throw new FormatException($"expected {count} comma-separated numbers, got {parts.Length}");
+
+            var result = new float[count];
+            for (var i = 0; i < count; i++)
+            {
+                if (!ValueConverter.TryFiniteFloat(parts[i], out result[i]))
+                    throw new FormatException($"'{value}' has a non-numeric or non-finite component");
+            }
+
+            return result;
+        }
+
+        private static Color ParseColor(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                throw new FormatException("a color is required");
+
+            return ValueConverter.TryParseColor(value, default, out var color, out var error)
+                ? color
+                : throw new FormatException(error);
         }
 
         // Human-readable expected-format hint for an INVALID_PARAM error, so the caller knows
@@ -490,12 +674,18 @@ namespace KitWright.Editor.Tools
         {
             var t = Nullable.GetUnderlyingType(type) ?? type;
             if (t == typeof(int) || t == typeof(long)) return "an integer";
-            if (t == typeof(float) || t == typeof(double)) return "a number";
+            if (t == typeof(float) || t == typeof(double) || t == typeof(decimal)) return "a number";
             if (t == typeof(bool)) return "a boolean ('true'/'false'/'1'/'0'/'yes')";
             if (t == typeof(Vector3)) return "a Vector3 'x,y,z'";
             if (t == typeof(Vector2)) return "a Vector2 'x,y'";
+            if (t == typeof(Vector4)) return "a Vector4 'x,y,z,w'";
+            if (t == typeof(Quaternion)) return "a Quaternion 'x,y,z,w'";
             if (t == typeof(Color)) return "a Color 'r,g,b[,a]' or '#hex'";
-            if (t.IsEnum) return $"one of [{string.Join(", ", Enum.GetNames(t))}]";
+            if (IsListType(t)) return "a JSON array such as [\"a\",\"b\"]";
+            if (t.IsEnum)
+                return IsFlagsEnum(t)
+                    ? $"one or a comma-separated list of [{string.Join(", ", Enum.GetNames(t))}]"
+                    : $"one of [{string.Join(", ", Enum.GetNames(t))}]";
             return t.Name;
         }
     }

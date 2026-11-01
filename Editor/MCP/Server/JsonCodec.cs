@@ -134,6 +134,137 @@ namespace KitWright.Editor.MCP.Server
             return Deserialize(json, 0);
         }
 
+        // Config files are JSONC for several clients; the parser above stops at the first token that is
+        // not a key, so a comment ahead of or inside a section hides everything after it.
+        public static string StripComments(string json)
+        {
+            if (string.IsNullOrEmpty(json))
+                return json;
+
+            var sb = new StringBuilder(json.Length);
+            var i = 0;
+            while (i < json.Length)
+            {
+                var c = json[i];
+                var next = i + 1 < json.Length ? json[i + 1] : '\0';
+
+                if (c == '"')
+                {
+                    var end = FindStringEnd(json, i);
+                    sb.Append(json, i, end - i + 1);
+                    i = end + 1;
+                }
+                else if (c == '/' && next == '/')
+                {
+                    while (i < json.Length && json[i] != '\n')
+                        i++;
+                }
+                else if (c == '/' && next == '*')
+                {
+                    var close = json.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? json.Length : close + 2;
+                    sb.Append(' ');
+                }
+                else
+                {
+                    sb.Append(c);
+                    i++;
+                }
+            }
+
+            return sb.ToString();
+        }
+
+        // The string values held directly by the object at `path` (keys from the root), located in the
+        // text itself so a caller can edit one in place and leave comments and layout alone.
+        internal static List<(string Key, int Start, int Length)> FindStringValues(string json, params string[] path)
+        {
+            var found = new List<(string Key, int Start, int Length)>();
+            if (string.IsNullOrEmpty(json))
+                return found;
+
+            // One slot per open container: the key last read in an object, null in an array.
+            var keys = new List<string>();
+            var i = 0;
+            while (true)
+            {
+                i = SkipTrivia(json, i);
+                if (i >= json.Length)
+                    return found;
+
+                var c = json[i];
+                if (c == '{' || c == '[')
+                {
+                    keys.Add(null);
+                    i++;
+                }
+                else if (c == '}' || c == ']')
+                {
+                    if (keys.Count > 0)
+                        keys.RemoveAt(keys.Count - 1);
+                    i++;
+                }
+                else if (c == '"')
+                {
+                    var end = FindStringEnd(json, i);
+                    var after = SkipTrivia(json, end + 1);
+                    if (after < json.Length && json[after] == ':')
+                    {
+                        if (keys.Count > 0)
+                            keys[keys.Count - 1] = json.Substring(i + 1, end - i - 1);
+                    }
+                    else if (keys.Count == path.Length + 1 && keys[keys.Count - 1] != null && IsUnder(keys, path))
+                    {
+                        found.Add((keys[keys.Count - 1], i, end - i + 1));
+                    }
+
+                    i = end + 1;
+                }
+                else
+                {
+                    i++;
+                }
+            }
+        }
+
+        private static bool IsUnder(List<string> keys, string[] path)
+        {
+            for (var i = 0; i < path.Length; i++)
+            {
+                if (keys[i] != path[i])
+                    return false;
+            }
+
+            return true;
+        }
+
+        private static int SkipTrivia(string json, int i)
+        {
+            while (i < json.Length)
+            {
+                if (char.IsWhiteSpace(json[i]))
+                {
+                    i++;
+                }
+                else if (json[i] == '/' && i + 1 < json.Length && json[i + 1] == '/')
+                {
+                    while (i < json.Length && json[i] != '\n')
+                        i++;
+                }
+                else if (json[i] == '/' && i + 1 < json.Length && json[i + 1] == '*')
+                {
+                    var close = json.IndexOf("*/", i + 2, StringComparison.Ordinal);
+                    i = close < 0 ? json.Length : close + 2;
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            return i;
+        }
+
         private static object Deserialize(string json, int depth)
         {
             if (string.IsNullOrEmpty(json)) return null;
@@ -148,9 +279,34 @@ namespace KitWright.Editor.MCP.Server
             if (json == "null") return null;
             if (json == "true") return true;
             if (json == "false") return false;
+            if (TryParseInteger(json, out var integer))
+                return integer;
             if (double.TryParse(json, NumberStyles.Any, CultureInfo.InvariantCulture, out var number))
                 return number;
             return json;
+        }
+
+        // A double holds integers exactly only up to 2^53, so a 64-bit id read as one came back changed.
+        // A literal with a fraction or exponent, or too large for 64 bits, stays a double.
+        private static bool TryParseInteger(string text, out object value)
+        {
+            value = null;
+            var start = text.Length > 0 && text[0] == '-' ? 1 : 0;
+            if (start == text.Length)
+                return false;
+
+            for (var i = start; i < text.Length; i++)
+            {
+                if (text[i] < '0' || text[i] > '9')
+                    return false;
+            }
+
+            if (long.TryParse(text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out var signed))
+                value = signed;
+            else if (start == 0 && ulong.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out var unsigned))
+                value = unsigned;
+
+            return value != null;
         }
 
         private static Dictionary<string, object> DeserializeDictionary(string json, int depth)
@@ -303,6 +459,7 @@ namespace KitWright.Editor.MCP.Server
                     {
                         case '"': sb.Append('"'); i += 2; break;
                         case '\\': sb.Append('\\'); i += 2; break;
+                        case '/': sb.Append('/'); i += 2; break;
                         case 'b': sb.Append('\b'); i += 2; break;
                         case 'f': sb.Append('\f'); i += 2; break;
                         case 'n': sb.Append('\n'); i += 2; break;

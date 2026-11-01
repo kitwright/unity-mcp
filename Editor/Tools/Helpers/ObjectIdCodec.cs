@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEngine;
 using UnityObject = UnityEngine.Object;
@@ -45,6 +46,12 @@ namespace KitWright.Editor.Tools.Helpers
                 null);
         }
 #endif
+
+        // Unity 6000.6 formats an EntityId as "index:serial"; earlier versions give a plain number.
+        private static readonly Regex EntityIdText = new Regex(@"^\d+:\d+$");
+
+        public static bool LooksLikeId(string value) =>
+            !string.IsNullOrEmpty(value) && (long.TryParse(value, out _) || EntityIdText.IsMatch(value));
 
         public static string GetSerializableId(UnityObject obj)
         {

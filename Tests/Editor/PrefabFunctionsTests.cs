@@ -95,6 +95,113 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void CreatePrefab_TakesAPrefabPathAsTheFile_AndWontReplaceItUnlessAsked()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var tempFolder = "Assets/__KitWrightMcpPrefabOverwriteTests";
+            var path = tempFolder + "/Made_" + suffix + ".prefab";
+            var source = new GameObject("Source_" + suffix);
+
+            try
+            {
+                EnsureFolder(tempFolder);
+
+                Assert.That(Json(PrefabFunctions.CreatePrefab(source.name, path)), Does.Contain("Created prefab at " + path));
+                Assert.IsTrue(File.Exists(Path.Combine(ApplicationPaths.ProjectRoot, path)),
+                    "a save_path ending in .prefab is the file; it used to become a folder holding it");
+
+                Assert.That(Json(PrefabFunctions.CreatePrefab(source.name, path)), Does.Contain("PREFAB_EXISTS"));
+                Assert.That(Json(PrefabFunctions.CreatePrefab(source.name, path, overwrite: true)), Does.Contain("Created prefab"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(source);
+                if (AssetDatabase.IsValidFolder(tempFolder))
+                    AssetDatabase.DeleteAsset(tempFolder);
+            }
+        }
+
+        [Test]
+        public void CreatePrefab_OnAPrefabInstance_SaysItMadeAVariant()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var tempFolder = "Assets/__KitWrightMcpPrefabInstanceTests";
+            var basePath = tempFolder + "/Base_" + suffix + ".prefab";
+            GameObject instance = null;
+
+            try
+            {
+                EnsureFolder(tempFolder);
+                CreatePrefabAsset(basePath, "BaseRoot_" + suffix);
+                instance = (GameObject)PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>(basePath));
+
+                var reply = Json(PrefabFunctions.CreatePrefab(instance.name, tempFolder + "/Derived_" + suffix + ".prefab"));
+
+                Assert.That(reply, Does.Contain("Variant of " + basePath));
+            }
+            finally
+            {
+                if (instance != null)
+                    UnityEngine.Object.DestroyImmediate(instance);
+                if (AssetDatabase.IsValidFolder(tempFolder))
+                    AssetDatabase.DeleteAsset(tempFolder);
+            }
+        }
+
+        [Test]
+        public void CreatePrefabVariant_RefusesTheBaseItselfAndAnExistingPrefabUnlessAsked()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var tempFolder = "Assets/__KitWrightMcpPrefabVariantExistsTests";
+            var basePath = tempFolder + "/Base_" + suffix + ".prefab";
+            var variantPath = tempFolder + "/Variant_" + suffix + ".prefab";
+
+            try
+            {
+                EnsureFolder(tempFolder);
+                CreatePrefabAsset(basePath, "BaseRoot_" + suffix);
+
+                Assert.That(Json(PrefabFunctions.CreatePrefabVariant(basePath, basePath)), Does.Contain("INVALID_PATH"));
+                Assert.That(Json(PrefabFunctions.CreatePrefabVariant(basePath, variantPath)), Does.Contain("Created prefab variant"));
+                Assert.That(Json(PrefabFunctions.CreatePrefabVariant(basePath, variantPath)), Does.Contain("PREFAB_EXISTS"));
+                Assert.That(Json(PrefabFunctions.CreatePrefabVariant(basePath, variantPath, overwrite: true)), Does.Contain("Created prefab variant"));
+            }
+            finally
+            {
+                if (AssetDatabase.IsValidFolder(tempFolder))
+                    AssetDatabase.DeleteAsset(tempFolder);
+            }
+        }
+
+        [Test]
+        public void UnpackPrefab_ReadsTheModeWithoutCaseAndRefusesAnUnknownOne()
+        {
+            var suffix = Guid.NewGuid().ToString("N");
+            var tempFolder = "Assets/__KitWrightMcpPrefabUnpackTests";
+            var basePath = tempFolder + "/Base_" + suffix + ".prefab";
+            GameObject instance = null;
+
+            try
+            {
+                EnsureFolder(tempFolder);
+                CreatePrefabAsset(basePath, "BaseRoot_" + suffix);
+                instance = (GameObject)PrefabUtility.InstantiatePrefab(AssetDatabase.LoadAssetAtPath<GameObject>(basePath));
+
+                Assert.That(Json(PrefabFunctions.UnpackPrefab(instance.name, "banana")), Does.Contain("INVALID_PARAM"));
+                Assert.IsTrue(PrefabUtility.IsPartOfAnyPrefab(instance), "a refused mode must not unpack anything");
+
+                Assert.That(Json(PrefabFunctions.UnpackPrefab(instance.name, "Outermost")), Does.Contain("(outermost)"));
+            }
+            finally
+            {
+                if (instance != null)
+                    UnityEngine.Object.DestroyImmediate(instance);
+                if (AssetDatabase.IsValidFolder(tempFolder))
+                    AssetDatabase.DeleteAsset(tempFolder);
+            }
+        }
+
+        [Test]
         public void CreatePrefabVariant_InvalidPathRejected()
         {
             Assert.That(Json(PrefabFunctions.CreatePrefabVariant(null, "Assets/x.prefab")), Does.Contain("INVALID_ARGUMENT"));
