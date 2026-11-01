@@ -2,9 +2,6 @@
 
 ## [Unreleased]
 
-### Fixed
-- Writing a file that does not exist yet no longer logs "is a link that could not be followed". `AtomicFile` asked for the attributes of a path it was about to create, took the resulting `FileNotFoundException` for a link it could not follow, and warned. It showed in the Console the first time the settings file was written in a new project, and for any tool that creates a file. A link that cannot be followed still warns.
-
 ## [1.0.2] - 2026-11-01
 
 ### Changed
@@ -14,6 +11,7 @@
 - `execute_code` answers `SAFETY_CHECK_BLOCKED` for a source pattern with an `alternative` naming what to use instead (`while (true)` -> a bounded loop, `File.Delete` -> `delete_asset`, `GetMethod` -> call the API directly and find it with `reflect_api`, a blocked file write -> `write_file`, ...). The reason and the generic hint said what was refused but not what was allowed, so agents guessed or retried with `safety_checks=false`. The compiled-assembly guard's block is unchanged.
 
 ### Fixed
+- Writing a file that does not exist yet no longer logs "is a link that could not be followed". `AtomicFile` asked for the attributes of a path it was about to create, took the resulting `FileNotFoundException` for a link it could not follow, and warned. It showed in the Console the first time the settings file was written in a new project, and for any tool that creates a file. A link that cannot be followed still warns.
 - A JSON `null` argument is an argument left out, in a direct call and in `batch_execute` alike, so the parameter's default applies. It used to reach the tool as `""` from a direct call and as the text `"null"` from a batch: `create_script` with `save_path: null` wrote to the project root (or into a folder named `null`), and `find_assets` with `filter: null` listed all 16,000 assets. A required parameter given `null` now answers `MISSING_PARAM`.
 - `create_script` refuses a `name` that is not a plain file name (`../X`, `a/b`) with `INVALID_NAME`, drops a trailing `.cs` instead of writing `X.cs.cs`, and refuses a `save_path` ending in `.cs` with `INVALID_SAVE_PATH`. `create_prefab` takes a `save_path` ending in `.prefab` as the file, where it made a folder of that name; it refuses to replace an existing prefab unless `overwrite=true`, and says when saving a prefab instance made a Variant. `create_prefab_variant` refuses a `variant_path` equal to its base, and an existing prefab unless `overwrite=true`. `unpack_prefab` reads `mode` without case and refuses an unknown one.
 - Script edits keep the file's BOM and line endings. `patch_script`, `edit_script` and `edit_script_members` rewrote a file without its BOM, `patch_script` could not match a multi-line `old_text` against a CRLF file, and `edit_script` left a CRLF file with mixed endings.
