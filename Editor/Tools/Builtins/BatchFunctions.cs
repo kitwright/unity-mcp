@@ -119,6 +119,8 @@ namespace KitWright.Editor.Tools.Builtins
                     // machine on EditorApplication.update — a sync .GetAwaiter().GetResult() here
                     // deadlocks the editor main thread against that update loop.
                     var raw = await invoker.InvokeAsync(fc);
+                    // The bridge adds the Play Mode note to a direct call; this loop never goes through it.
+                    raw = MCPExecutionBridge.AppendPlayModeNote(raw, name, IsPlaying());
                     var resultToken = TryParse(raw);
                     bool ok = IsSuccess(raw, resultToken);
 
@@ -156,6 +158,9 @@ namespace KitWright.Editor.Tools.Builtins
 
         // Settable so a test can reach the deadline without running for minutes.
         internal static int DeadlineMarginSeconds = 15;
+
+        // Settable so a test can see the Play Mode note without entering Play Mode.
+        internal static System.Func<bool> IsPlaying = () => EditorApplication.isPlaying;
 
         private static SettingsController Settings() =>
             RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;

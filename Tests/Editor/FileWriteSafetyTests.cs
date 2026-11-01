@@ -100,7 +100,7 @@ namespace KitWright.Editor.Tests
             var second = Path.Combine(_root, "second.txt");
             File.WriteAllText(first, "old content that is longer than the new one");
             if (!TryHardLink(second, first))
-                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+                Assert.Ignore("A hard link is only created here on Windows, and it could not be created.");
 
             AtomicFile.WriteAllText(first, "new");
 
@@ -116,7 +116,7 @@ namespace KitWright.Editor.Tests
             var second = Path.Combine(_root, "second.bin");
             File.WriteAllBytes(first, new byte[] { 1, 2, 3, 4, 5, 6, 7, 8 });
             if (!TryHardLink(second, first))
-                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+                Assert.Ignore("A hard link is only created here on Windows, and it could not be created.");
 
             AtomicFile.WriteAllBytes(second, new byte[] { 9, 8 });
 
@@ -131,7 +131,7 @@ namespace KitWright.Editor.Tests
             var second = Path.Combine(_root, "second.txt");
             File.WriteAllBytes(first, Bom.Concat(new[] { (byte)'a' }).ToArray());
             if (!TryHardLink(second, first))
-                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+                Assert.Ignore("A hard link is only created here on Windows, and it could not be created.");
 
             AtomicFile.WriteAllText(second, "b");
 
@@ -150,10 +150,23 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(AtomicFile.HasMultipleHardLinks(first), "a file with one name has one link");
             Assert.IsFalse(AtomicFile.HasMultipleHardLinks(Path.Combine(_root, "missing.txt")));
             if (!TryHardLink(second, first))
-                Assert.Ignore("Hard links are detected on Windows only, or one could not be created here.");
+                Assert.Ignore("A hard link is only created here on Windows, and it could not be created.");
 
             Assert.IsTrue(AtomicFile.HasMultipleHardLinks(first));
             Assert.IsTrue(AtomicFile.HasMultipleHardLinks(second));
+        }
+
+        [TestCase("2\n", 2)]
+        [TestCase(" 3 ", 3)]
+        [TestCase("1", 1)]
+        [TestCase("", 1)]
+        [TestCase(null, 1)]
+        [TestCase("garbage", 1)]
+        [TestCase("0\n", 1)]
+        [TestCase("99999999999\n", 1)]
+        public void ParseLinkCount_ReadsTheFirstIntegerAndAnythingElseIsOneLink(string stdout, int expected)
+        {
+            Assert.AreEqual(expected, AtomicFile.ParseLinkCount(stdout));
         }
 
         [Test]
@@ -254,7 +267,8 @@ namespace KitWright.Editor.Tests
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         private static extern bool CreateHardLinkW(string newFileName, string existingFileName, IntPtr securityAttributes);
 
-        // Needs NTFS but no privilege. Not Windows: the writer detects no hard links there, so nothing to test.
+        // Needs NTFS but no privilege. Not Windows: the stat tool the writer runs there is not run by a
+        // test that makes a link, so only ParseLinkCount is covered on macOS/Linux.
         private static bool TryHardLink(string link, string existing)
         {
             if (Path.DirectorySeparatorChar != '\\')

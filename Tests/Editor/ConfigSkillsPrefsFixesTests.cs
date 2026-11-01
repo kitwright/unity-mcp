@@ -143,6 +143,16 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void PackageSkill_ReadsFrontMatterFromAFileWithCrOnlyLineEndings()
+        {
+            const string markdown = "---\rname: demo\rdescription: A demo skill\r---\rBody line";
+
+            Assert.AreEqual("demo", PackageSkillCatalog.FrontMatterValue(markdown, "name"));
+            Assert.AreEqual("A demo skill", PackageSkillCatalog.FrontMatterValue(markdown, "description"));
+            Assert.AreEqual("Body line", PackageSkillCatalog.StripFrontMatter(markdown));
+        }
+
+        [Test]
         public void PackageSkill_ReadsABlockScalarDescriptionAndKeepsTheOtherFrontMatter()
         {
             const string markdown =

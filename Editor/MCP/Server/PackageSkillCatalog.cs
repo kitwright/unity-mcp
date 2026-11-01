@@ -163,7 +163,7 @@ namespace KitWright.Editor.MCP.Server
 
         private static string[] SplitLines(string markdown)
         {
-            return (markdown ?? string.Empty).Replace("\r\n", "\n").Split('\n');
+            return (markdown ?? string.Empty).Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
         }
 
         private static bool IsFence(string line)

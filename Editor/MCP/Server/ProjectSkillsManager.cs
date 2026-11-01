@@ -27,6 +27,8 @@ namespace KitWright.Editor.MCP.Server
         // The block is committed, so it must read the same on every checkout: no absolute path.
         private const string ProjectRootLine = "- Project root: the folder that contains `Assets/` and `ProjectSettings/`.";
 
+        private const string GameWrightPrefix = "gamewright-";
+
         private const string ManifestDirectory = ".kitwright/skills";
         private const string ManifestFileName = "manifest.json";
         private const string ProjectSkillVersionsMarkerPrefix = "<!-- KitWright Unity project skill versions: ";
@@ -201,6 +203,7 @@ namespace KitWright.Editor.MCP.Server
 
         internal static void ApplyConfiguration(string projectRoot, IEnumerable<string> selectedPlatforms)
         {
+            var retired = ReadRetiredSkillIds(projectRoot);
             var manifest = new ProjectSkillsManifest
             {
                 platforms = selectedPlatforms?.Distinct(StringComparer.OrdinalIgnoreCase).ToList() ?? new List<string>(),
@@ -211,6 +214,7 @@ namespace KitWright.Editor.MCP.Server
             SaveManifest(projectRoot, manifest);
 
             var normalized = LoadManifest(projectRoot);
+            normalized.retiredSkillIds = retired;
             try
             {
                 SyncCodex(projectRoot, normalized);
@@ -221,6 +225,30 @@ namespace KitWright.Editor.MCP.Server
             finally
             {
                 SaveManifest(projectRoot, normalized);
+            }
+        }
+
+        // Read before NormalizeManifest drops the ids the catalog no longer has: they name the skill folders of
+        // packages uninstalled since the last sync.
+        private static List<string> ReadRetiredSkillIds(string projectRoot)
+        {
+            try
+            {
+                var path = GetManifestPath(projectRoot);
+                if (!File.Exists(path))
+                    return new List<string>();
+
+                var recorded = JsonUtility.FromJson<ProjectSkillsManifest>(File.ReadAllText(path))?.skillVersions;
+                var installed = new HashSet<string>(GetInstalledSkills().Select(skill => skill.Id), StringComparer.OrdinalIgnoreCase);
+                return (recorded ?? new List<SkillVersionEntry>())
+                    .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.id) && !installed.Contains(entry.id.Trim()))
+                    .Select(entry => entry.id.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
+            catch (Exception)
+            {
+                return new List<string>();
             }
         }
 
@@ -468,6 +496,10 @@ namespace KitWright.Editor.MCP.Server
 
             DeleteManagedSkillDirectories(projectRoot, skillsRoot, manifest, current);
 
+            var oldFolders = RemoveSupersededGameWrightFolders(projectRoot, skillsRoot, manifest, current);
+            if (oldFolders.Count > 0)
+                Debug.LogWarning($"[KitWright] Old GameWright skill folders were left in place: {string.Join("; ", oldFolders)}.");
+
             foreach (var relative in current)
             {
                 if (!manifest.managedFiles.Contains(relative))
@@ -586,10 +618,15 @@ namespace KitWright.Editor.MCP.Server
             }
 
             DeleteManagedCursorRules(rulesRoot, written);
+
+            var oldRules = RemoveSupersededGameWrightRules(rulesRoot, written);
+            if (oldRules.Count > 0)
+                Debug.LogWarning($"[KitWright] Old GameWright Cursor rules were left in place: {string.Join("; ", oldRules)}.");
         }
 
         // Only what the manifest lists is removed, and only a SKILL.md that still carries the managed marker
-        // in its header: a folder is never deleted wholesale, because it may hold the user's own files.
+        // in its header: a folder is never deleted wholesale, because it may hold the user's own files. The one
+        // exception is the folder of an uninstalled skill, once it holds nothing but SKILL.md and recorded files.
         // `keep` holds the files a sync just wrote.
         private static void DeleteManagedSkillDirectories(
             string projectRoot,
@@ -628,27 +665,142 @@ namespace KitWright.Editor.MCP.Server
                 return;
 
             // Folders an earlier version wrote carry no record: the skill's own name, or the legacy
-            // `kitwright-<id>` form of it, stands in for the listing.
+            // `kitwright-<id>` form of it, stands in for the listing. A skill that left the catalog since the
+            // last sync is matched the same way, but its folder goes only when nothing else is in it.
             foreach (var directory in Directory.GetDirectories(skillsRoot))
             {
                 var name = Path.GetFileName(directory);
                 var skillPath = Path.Combine(directory, "SKILL.md");
-                if (!IsManagedFile(skillPath) || !IsListedSkillFolder(name, manifest))
+                var listed = IsListedSkillFolder(name, manifest);
+                var retired = !listed && NamesAny(name, manifest.retiredSkillIds);
+                if (!(listed || retired) || !IsManagedFile(skillPath))
                     continue;
 
                 if (keep != null && keep.Contains(prefix + name + "/SKILL.md", StringComparer.OrdinalIgnoreCase))
                     continue;
 
-                File.Delete(skillPath);
-                PruneEmptyDirectories(directory);
+                if (!retired)
+                {
+                    File.Delete(skillPath);
+                    PruneEmptyDirectories(directory);
+                }
+                else if (HoldsOnlyManagedFiles(directory, prefix + name, manifest))
+                {
+                    DeleteSkillFolder(directory, prefix + name, manifest);
+                }
+                else
+                {
+                    Debug.LogWarning($"[KitWright] '{directory}' belonged to a skill that is no longer installed, but it holds files KitWright did not write, so it was left as it is.");
+                }
             }
+        }
+
+        private static bool NamesAny(string folder, IEnumerable<string> ids)
+        {
+            return ids != null && ids.Any(id =>
+                !string.IsNullOrEmpty(id) &&
+                (string.Equals(folder, id, StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(folder, "kitwright-" + id, StringComparison.OrdinalIgnoreCase)));
         }
 
         private static bool IsListedSkillFolder(string name, ProjectSkillsManifest manifest)
         {
-            return manifest.skillVersions.Any(entry =>
-                string.Equals(name, entry.id, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals(name, "kitwright-" + entry.id, StringComparison.OrdinalIgnoreCase));
+            return NamesAny(name, manifest.skillVersions.Select(entry => entry.id));
+        }
+
+        // Nothing in the folder but SKILL.md and files the manifest records: no file of the user's.
+        private static bool HoldsOnlyManagedFiles(string directory, string relativeDirectory, ProjectSkillsManifest manifest)
+        {
+            foreach (var file in PackageSkillCatalog.RelativeFiles(directory))
+            {
+                var relative = file.Replace('\\', '/');
+                if (!string.Equals(relative, "SKILL.md", StringComparison.OrdinalIgnoreCase) &&
+                    !manifest.managedFiles.Contains(relativeDirectory + "/" + relative))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private static void DeleteSkillFolder(string directory, string relativeDirectory, ProjectSkillsManifest manifest)
+        {
+            foreach (var file in PackageSkillCatalog.RelativeFiles(directory))
+            {
+                File.Delete(Path.Combine(directory, file));
+                manifest.managedFiles.Remove(relativeDirectory + "/" + file.Replace('\\', '/'));
+            }
+
+            PruneEmptyDirectories(directory);
+        }
+
+        // GameWright wrote `gamewright-<id>` folders; the same skill now lives under its own name. An old folder
+        // goes only when this sync installs that skill, its SKILL.md opens with the GameWright header and nothing
+        // else is in it. What stays is returned with its reason, for the caller to report.
+        internal static List<string> RemoveSupersededGameWrightFolders(
+            string projectRoot,
+            string skillsRoot,
+            ProjectSkillsManifest manifest,
+            ISet<string> current)
+        {
+            var kept = new List<string>();
+            if (!Directory.Exists(skillsRoot))
+                return kept;
+
+            var rootRelative = RelativeTo(projectRoot, skillsRoot);
+            foreach (var directory in Directory.GetDirectories(skillsRoot).OrderBy(path => path, StringComparer.Ordinal))
+            {
+                var name = Path.GetFileName(directory);
+                if (!name.StartsWith(GameWrightPrefix, StringComparison.OrdinalIgnoreCase) ||
+                    !IsGameWrightFile(Path.Combine(directory, "SKILL.md")))
+                {
+                    continue;
+                }
+
+                var id = name.Substring(GameWrightPrefix.Length);
+                var replaced = new[] { id, "kitwright-" + id }.Any(installed =>
+                    current.Contains(rootRelative + "/" + installed + "/SKILL.md", StringComparer.OrdinalIgnoreCase));
+                if (!replaced)
+                    kept.Add($"{name} (this sync does not install '{id}')");
+                else if (!HoldsOnlyManagedFiles(directory, rootRelative + "/" + name, manifest))
+                    kept.Add($"{name} (holds files KitWright did not write)");
+                else
+                    DeleteSkillFolder(directory, rootRelative + "/" + name, manifest);
+            }
+
+            return kept;
+        }
+
+        private static List<string> RemoveSupersededGameWrightRules(string rulesRoot, ISet<string> written)
+        {
+            var kept = new List<string>();
+            foreach (var file in Directory.GetFiles(rulesRoot, GameWrightPrefix + "*.mdc", SearchOption.TopDirectoryOnly)
+                         .OrderBy(path => path, StringComparer.Ordinal))
+            {
+                if (!IsGameWrightFile(file))
+                    continue;
+
+                var name = Path.GetFileName(file);
+                if (written.Contains("kitwright-" + name.Substring(GameWrightPrefix.Length)))
+                    File.Delete(file);
+                else
+                    kept.Add($"{name} (this sync does not write its KitWright rule)");
+            }
+
+            return kept;
+        }
+
+        private static bool IsGameWrightFile(string path)
+        {
+            try
+            {
+                return File.Exists(path) && ManagedBlockText.HasLegacyHeader(File.ReadAllText(path));
+            }
+            catch
+            {
+                return false;
+            }
         }
 
         private static void PruneEmptyDirectories(string directory)
@@ -1458,6 +1610,7 @@ $@"
             manifest.platforms ??= new List<string>();
             manifest.skillVersions ??= new List<SkillVersionEntry>();
             manifest.managedFiles ??= new List<string>();
+            manifest.retiredSkillIds ??= new List<string>();
 
             manifest.managedFiles = manifest.managedFiles
                 .Where(value => !string.IsNullOrWhiteSpace(value))
@@ -1511,6 +1664,10 @@ $@"
 
             // Every file a sync wrote under a skills folder, relative to the project root.
             public List<string> managedFiles = new List<string>();
+
+            // Ids the manifest on disk listed that the catalog no longer has. ApplyConfiguration fills it for one
+            // sync; it is never saved.
+            [NonSerialized] public List<string> retiredSkillIds = new List<string>();
         }
 
         [Serializable]
@@ -1642,6 +1799,7 @@ $@"
         }
 
         // A marker is a line of its own (indentation allowed); inside a sentence or a code span it is text.
+        // A line ends at LF, CRLF or a lone CR: a classic-Mac file has no LF for a line-anchored regex to find.
         internal static Markers Scan(string content, string begin, string end)
         {
             var begins = WholeLines(content, begin);
@@ -1658,8 +1816,7 @@ $@"
         {
             return Regex.Matches(
                 content ?? string.Empty,
-                "^[ \\t]*" + Regex.Escape(marker) + "[ \\t]*(?=\\r?$)",
-                RegexOptions.Multiline);
+                "(?<![^\\r\\n])[ \\t]*" + Regex.Escape(marker) + "[ \\t]*(?![^\\r\\n])");
         }
 
         internal static bool HasBlockMarker(string content)
@@ -1680,6 +1837,17 @@ $@"
         // A generated skill file or rule opens with the marker, after its front matter if it has any.
         internal static bool HasManagedHeader(string content)
         {
+            var line = HeaderLine(content);
+            return line == ProjectSkillsManager.ManagedMarker || line == LegacyBeginMarker;
+        }
+
+        internal static bool HasLegacyHeader(string content)
+        {
+            return HeaderLine(content) == LegacyBeginMarker;
+        }
+
+        private static string HeaderLine(string content)
+        {
             var lines = (content ?? string.Empty).TrimStart('\uFEFF').Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
             var index = 0;
             if (lines[0].Trim() == "---")
@@ -1694,13 +1862,11 @@ $@"
             for (; index < lines.Length; index++)
             {
                 var line = lines[index].Trim();
-                if (line.Length == 0)
-                    continue;
-
-                return line == ProjectSkillsManager.ManagedMarker || line == LegacyBeginMarker;
+                if (line.Length > 0)
+                    return line;
             }
 
-            return false;
+            return null;
         }
 
         // The file's new text, or null with `refusal` set (written for "'<path>' <refusal>") when its markers
@@ -1837,16 +2003,29 @@ $@"
         {
             var crlf = 0;
             var lf = 0;
+            var cr = 0;
             for (var i = 0; i < text.Length; i++)
             {
-                if (text[i] != '\n')
-                    continue;
-
-                if (i > 0 && text[i - 1] == '\r')
-                    crlf++;
-                else
+                if (text[i] == '\n')
+                {
                     lf++;
+                }
+                else if (text[i] == '\r')
+                {
+                    if (i + 1 < text.Length && text[i + 1] == '\n')
+                    {
+                        crlf++;
+                        i++;
+                    }
+                    else
+                    {
+                        cr++;
+                    }
+                }
             }
+
+            if (cr > crlf && cr > lf)
+                return "\r";
 
             return crlf > lf ? "\r\n" : "\n";
         }

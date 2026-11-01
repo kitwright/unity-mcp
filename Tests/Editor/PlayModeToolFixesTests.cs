@@ -310,6 +310,36 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("", MCPExecutionBridge.AppendPlayModeNote("", "create_game_object", playing: true));
         }
 
+        [UnityTest]
+        public System.Collections.IEnumerator BatchExecute_InPlayMode_NotesTheSceneEditsAndNothingElse()
+        {
+            Undo.IncrementCurrentGroup();
+            var target = new GameObject(Unique("KwBatchPlayNote"));
+            var wasPlaying = BatchFunctions.IsPlaying;
+            BatchFunctions.IsPlaying = () => true;
+            try
+            {
+                var batch = BatchFunctions.BatchExecute(
+                    "[{\"name\":\"set_transform\",\"params\":{\"target\":\"" + target.name + "\",\"position\":\"5,0,0\"}}," +
+                    "{\"name\":\"get_editor_state\",\"params\":{}}]");
+
+                var start = Time.realtimeSinceStartup;
+                while (!batch.IsCompleted && Time.realtimeSinceStartup - start < 10f)
+                    yield return null;
+                Assert.IsTrue(batch.IsCompleted, "the batch did not finish");
+
+                var results = JObject.Parse(Newtonsoft.Json.JsonConvert.SerializeObject(batch.Result))["data"]["results"];
+                Assert.IsTrue((bool)results[0]["result"]["success"], results[0].ToString());
+                StringAssert.EndsWith(SceneFunctions.DiscardedWithPlayMode, (string)results[0]["result"]["message"]);
+                StringAssert.DoesNotContain(SceneFunctions.DiscardedWithPlayMode, results[1].ToString());
+            }
+            finally
+            {
+                BatchFunctions.IsPlaying = wasPlaying;
+                Object.DestroyImmediate(target);
+            }
+        }
+
         [Test]
         public void SceneEditingTools_NamesRealToolsAndNeverAReadOnlyOne()
         {

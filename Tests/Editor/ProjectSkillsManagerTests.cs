@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -1029,6 +1030,289 @@ namespace KitWright.Editor.Tests
                 CollectionAssert.AreEqual(
                     new[] { ".claude/skills/a/SKILL.md" },
                     ProjectSkillsManager.LoadManifest(projectRoot).managedFiles);
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        private static string Visible(string text)
+        {
+            return text.Replace("\r", "\\r").Replace("\n", "\\n");
+        }
+
+        [Test]
+        public void Scan_FindsTheMarkerLinesWhateverEndsTheLines()
+        {
+            foreach (var newline in new[] { "\n", "\r\n", "\r" })
+            {
+                var content = "intro" + newline + "  " + BeginMarker + "  " + newline + "body" + newline + EndMarker + newline + "outro" + newline;
+                var scan = ScanKitWright(content);
+
+                Assert.IsTrue(scan.IsWellFormed, Visible(newline));
+                Assert.AreEqual(
+                    "  " + BeginMarker + "  " + newline + "body" + newline + EndMarker,
+                    content.Substring(scan.Start, scan.End - scan.Start),
+                    Visible(newline));
+
+                var prose = "intro" + newline + "see " + BeginMarker + " here" + newline + BeginMarker + " not alone" + newline;
+                Assert.AreEqual(0, ScanKitWright(prose).BeginCount, Visible(newline));
+            }
+
+            var mixed = "a\r\n" + BeginMarker + "\rbody\n" + EndMarker + "\r\nz";
+            var mixedScan = ScanKitWright(mixed);
+            Assert.IsTrue(mixedScan.IsWellFormed);
+            Assert.AreEqual(BeginMarker + "\rbody\n" + EndMarker, mixed.Substring(mixedScan.Start, mixedScan.End - mixedScan.Start));
+
+            Assert.IsTrue(ScanKitWright("x\r" + BeginMarker + "\ry\r" + EndMarker).IsWellFormed);
+        }
+
+        [Test]
+        public void DominantNewline_NamesTheEndingMostLinesUseIncludingALoneCr()
+        {
+            Assert.AreEqual("\r", ManagedTextFile.DominantNewline("a\rb\rc\r"));
+            Assert.AreEqual("\r", ManagedTextFile.DominantNewline("a\r\nb\rc\rd\r"));
+            Assert.AreEqual("\r\n", ManagedTextFile.DominantNewline("a\r\nb\r\nc\n"));
+            Assert.AreEqual("\n", ManagedTextFile.DominantNewline("a\nb\nc\r\n"));
+            Assert.AreEqual("\n", ManagedTextFile.DominantNewline("one line"));
+            Assert.AreEqual("\n", ManagedTextFile.DominantNewline(string.Empty));
+
+            var text = ManagedTextFile.Decode(Encoding.UTF8.GetBytes("a\rb\rc\r"), out _, out var newline);
+            Assert.AreEqual("a\rb\rc\r", text);
+            Assert.AreEqual("\r", newline);
+        }
+
+        [Test]
+        public void UpsertAndStrip_KeepACrOnlyFileCrOnlyAndNeverAppendASecondBlock()
+        {
+            var content = "# Team\rKeep.\r\r" + BeginMarker + "\rold\r" + EndMarker + "\rTail.\r";
+            var block = BeginMarker + "\nnew\nmore\n" + EndMarker;
+            var newline = ManagedTextFile.DominantNewline(content);
+
+            var updated = ManagedBlockText.Upsert(content, block, "# T", string.Empty, newline, out var refusal);
+            Assert.IsNull(refusal);
+            Assert.AreEqual("# Team\rKeep.\r\r" + BeginMarker + "\rnew\rmore\r" + EndMarker + "\rTail.\r", updated);
+            Assert.AreEqual(updated, ManagedBlockText.Upsert(updated, block, "# T", string.Empty, newline, out refusal));
+
+            var appended = ManagedBlockText.Upsert("# Team\rKeep.\r", block, "# T", string.Empty, "\r", out refusal);
+            Assert.AreEqual("# Team\rKeep.\r\r" + BeginMarker + "\rnew\rmore\r" + EndMarker + "\r", appended);
+            Assert.AreEqual(appended, ManagedBlockText.Upsert(appended, block, "# T", string.Empty, "\r", out refusal));
+
+            Assert.AreEqual("# Team\rKeep.\r", ManagedBlockText.Strip(appended, "# T", string.Empty, "\r", out refusal));
+            Assert.IsNull(refusal);
+            Assert.IsNull(ManagedBlockText.Strip("# T\r\r" + BeginMarker + "\rbody\r" + EndMarker + "\r", "# T", string.Empty, "\r", out refusal));
+            Assert.IsNull(refusal);
+        }
+
+        [Test]
+        public void ApplyConfiguration_KeepsACrOnlyInstructionsFileCrOnlyWithOneBlock()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var agentsPath = ProjectSkillsManager.GetCodexAgentsPath(projectRoot);
+                File.WriteAllText(agentsPath, "# Team\rKeep.\r");
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex" });
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "codex" });
+
+                var content = File.ReadAllText(agentsPath);
+                StringAssert.StartsWith("# Team\rKeep.\r", content);
+                Assert.IsFalse(content.Contains("\n"), "an LF was written into a CR-only file");
+                Assert.AreEqual(1, CountOccurrences(content, BeginMarker));
+                Assert.AreEqual(1, CountOccurrences(content, EndMarker));
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, Array.Empty<string>());
+                Assert.AreEqual("# Team\rKeep.\r", File.ReadAllText(agentsPath));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        private static void WriteSkillFolder(string skillsRoot, string name, string header, params string[] extraFiles)
+        {
+            var directory = Path.Combine(skillsRoot, name);
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "SKILL.md"), "---\nname: " + name + "\n---\n" + header + "\n\n# Old\n");
+
+            foreach (var extra in extraFiles)
+            {
+                var path = Path.Combine(directory, extra);
+                Directory.CreateDirectory(Path.GetDirectoryName(path));
+                File.WriteAllText(path, "mine");
+            }
+        }
+
+        [Test]
+        public void WriteManagedSkillDirectories_RemovesAnUnrecordedFolderOfAnUninstalledSkillOnlyWhenNothingElseIsInIt()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var skillsRoot = ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot);
+                WriteSkillFolder(skillsRoot, "gone", BeginMarker);
+                WriteSkillFolder(skillsRoot, "kitwright-old", BeginMarker);
+                WriteSkillFolder(skillsRoot, "busy", BeginMarker, "scripts/run.py");
+                WriteSkillFolder(skillsRoot, "mine", "# Mine");
+                WriteSkillFolder(skillsRoot, "unlisted", BeginMarker);
+                var manifest = new ProjectSkillsManager.ProjectSkillsManifest
+                {
+                    retiredSkillIds = new List<string> { "gone", "old", "busy", "mine" }
+                };
+
+                ProjectSkillsManager.WriteManagedSkillDirectories(
+                    projectRoot,
+                    skillsRoot,
+                    manifest,
+                    ProjectSkillsManager.SkillPlatform.Claude,
+                    Array.Empty<ProjectSkillsManager.SkillDefinition>());
+
+                Assert.IsFalse(Directory.Exists(Path.Combine(skillsRoot, "gone")));
+                Assert.IsFalse(Directory.Exists(Path.Combine(skillsRoot, "kitwright-old")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "busy", "SKILL.md")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "busy", "scripts", "run.py")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "mine", "SKILL.md")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "unlisted", "SKILL.md")));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
+        public void ApplyConfiguration_RemovesTheFolderOfASkillAnOldManifestListedThatIsNoLongerInstalled()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var manifestPath = ProjectSkillsManager.GetManifestPath(projectRoot);
+                Directory.CreateDirectory(Path.GetDirectoryName(manifestPath));
+                File.WriteAllText(
+                    manifestPath,
+                    "{\"platforms\":[\"claude\"],\"skillVersions\":[{\"id\":\"gone-skill\",\"version\":\"1\"},{\"id\":\"busy-skill\",\"version\":\"1\"}]}");
+                var skillsRoot = ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot);
+                WriteSkillFolder(skillsRoot, "gone-skill", BeginMarker);
+                WriteSkillFolder(skillsRoot, "busy-skill", BeginMarker, "notes.txt");
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "claude" });
+
+                Assert.IsFalse(Directory.Exists(Path.Combine(skillsRoot, "gone-skill")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "busy-skill", "SKILL.md")));
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "busy-skill", "notes.txt")));
+                Assert.IsTrue(File.Exists(ClaudeSkillPath(projectRoot, "unity-mcp-workflow")));
+
+                var json = File.ReadAllText(manifestPath);
+                StringAssert.DoesNotContain("gone-skill", json);
+                StringAssert.DoesNotContain("retiredSkillIds", json);
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
+        public void RemoveSupersededGameWrightFolders_DeletesAnOldFolderOnlyWhenItsSkillIsInstalledNowAndNothingElseIsInIt()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var skillsRoot = ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot);
+                var old = ManagedBlockText.LegacyBeginMarker;
+                WriteSkillFolder(skillsRoot, "gamewright-demo", old);
+                WriteSkillFolder(skillsRoot, "gamewright-prefixed", old);
+                WriteSkillFolder(skillsRoot, "gamewright-recorded", old, "scripts/x.py");
+                WriteSkillFolder(skillsRoot, "gamewright-busy", old, "mine.txt");
+                WriteSkillFolder(skillsRoot, "gamewright-gone", old);
+                WriteSkillFolder(skillsRoot, "gamewright-current", BeginMarker);
+                WriteSkillFolder(skillsRoot, "gamewright-mine", "# Mine");
+                var manifest = new ProjectSkillsManager.ProjectSkillsManifest
+                {
+                    managedFiles = new List<string> { ".claude/skills/gamewright-recorded/scripts/x.py" }
+                };
+                var current = new HashSet<string>
+                {
+                    ".claude/skills/demo/SKILL.md",
+                    ".claude/skills/kitwright-prefixed/SKILL.md",
+                    ".claude/skills/recorded/SKILL.md",
+                    ".claude/skills/busy/SKILL.md",
+                    ".claude/skills/current/SKILL.md"
+                };
+
+                var kept = ProjectSkillsManager.RemoveSupersededGameWrightFolders(projectRoot, skillsRoot, manifest, current);
+
+                foreach (var removed in new[] { "gamewright-demo", "gamewright-prefixed", "gamewright-recorded" })
+                    Assert.IsFalse(Directory.Exists(Path.Combine(skillsRoot, removed)), removed);
+
+                foreach (var left in new[] { "gamewright-busy", "gamewright-gone", "gamewright-current", "gamewright-mine" })
+                    Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, left, "SKILL.md")), left);
+
+                Assert.IsTrue(File.Exists(Path.Combine(skillsRoot, "gamewright-busy", "mine.txt")));
+                CollectionAssert.IsEmpty(manifest.managedFiles);
+                Assert.AreEqual(2, kept.Count);
+                StringAssert.StartsWith("gamewright-busy", kept[0]);
+                StringAssert.StartsWith("gamewright-gone", kept[1]);
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+            }
+        }
+
+        [Test]
+        public void WriteManagedSkillDirectories_RemovesTheGameWrightFolderOfTheSkillItInstalls()
+        {
+            var projectRoot = CreateTempProjectPath();
+            var source = CreateTempProjectPath();
+
+            try
+            {
+                WriteDemoSkillSource(source);
+                WriteSkillFolder(ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot), "gamewright-demo", ManagedBlockText.LegacyBeginMarker);
+
+                InstallDemoSkill(projectRoot, source, new ProjectSkillsManager.ProjectSkillsManifest(), true);
+
+                Assert.IsFalse(Directory.Exists(Path.Combine(ProjectSkillsManager.GetClaudeSkillsRoot(projectRoot), "gamewright-demo")));
+                Assert.IsTrue(File.Exists(ClaudeSkillPath(projectRoot, "demo")));
+            }
+            finally
+            {
+                DeleteTempProjectPath(projectRoot);
+                DeleteTempProjectPath(source);
+            }
+        }
+
+        [Test]
+        public void ApplyConfiguration_RemovesAnOldGameWrightCursorRuleOnlyWhenItsKitWrightRuleIsWritten()
+        {
+            var projectRoot = CreateTempProjectPath();
+
+            try
+            {
+                var rulesRoot = ProjectSkillsManager.GetCursorRulesPath(projectRoot);
+                Directory.CreateDirectory(rulesRoot);
+                var header = "---\ndescription: x\n---\n" + ManagedBlockText.LegacyBeginMarker + "\n";
+                var replaced = Path.Combine(rulesRoot, "gamewright-unity-mcp-workflow.mdc");
+                var orphan = Path.Combine(rulesRoot, "gamewright-not-installed.mdc");
+                var mine = Path.Combine(rulesRoot, "gamewright-mine.mdc");
+                File.WriteAllText(replaced, header);
+                File.WriteAllText(orphan, header);
+                File.WriteAllText(mine, "# Mine\n");
+
+                ProjectSkillsManager.ApplyConfiguration(projectRoot, new[] { "cursor" });
+
+                Assert.IsFalse(File.Exists(replaced));
+                Assert.IsTrue(File.Exists(orphan));
+                Assert.IsTrue(File.Exists(mine));
+                Assert.IsTrue(File.Exists(Path.Combine(rulesRoot, "kitwright-unity-mcp-workflow.mdc")));
             }
             finally
             {

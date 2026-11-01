@@ -1,9 +1,11 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace KitWright.Editor.Tools.Helpers
 {
@@ -135,13 +137,17 @@ namespace KitWright.Editor.Tools.Helpers
             }
         }
 
-        // Windows only: stat's struct layout and libc export differ per OS and CPU and Mono.Unix is not
-        // available, so a hard-linked file on macOS/Linux is still swapped. Any failure reads as one link.
+        // Windows asks the file handle. stat's struct layout and libc export differ per OS and CPU and
+        // Mono.Unix is not available, so macOS/Linux run the platform's own stat tool instead of a
+        // P/Invoke. Any failure reads as one link.
         internal static bool HasMultipleHardLinks(string path)
         {
             try
             {
-                return Path.DirectorySeparatorChar == '\\' && File.Exists(path) && LinkCountOnWindows(path) > 1;
+                if (!File.Exists(path))
+                    return false;
+
+                return Path.DirectorySeparatorChar == '\\' ? LinkCountOnWindows(path) > 1 : LinkCountOnUnix(path) > 1;
             }
             catch (Exception)
             {
@@ -155,6 +161,41 @@ namespace KitWright.Editor.Tools.Helpers
                 return GetFileInformationByHandle(stream.SafeFileHandle.DangerousGetHandle(), out var information)
                     ? information.NumberOfLinks
                     : 0;
+        }
+
+        private static int LinkCountOnUnix(string path)
+        {
+            var mac = RuntimeInformation.IsOSPlatform(OSPlatform.OSX);
+            if (!mac && !RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
+                return 1;
+
+            // Argument-string parsers disagree on backslashes, so a path with a quote or a backslash
+            // stays swapped rather than risk another file's count.
+            if (path.IndexOfAny(new[] { '"', '\\' }) >= 0)
+                return 1;
+
+            // Absolute on macOS: a GNU stat ahead of it on PATH reads -f as a filesystem query.
+            var start = new ProcessStartInfo(mac ? "/usr/bin/stat" : "stat", (mac ? "-f %l" : "-c %h") + " -- \"" + path + "\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true
+            };
+
+            using (var stat = Process.Start(start))
+            {
+                if (stat.WaitForExit(2000))
+                    return ParseLinkCount(stat.StandardOutput.ReadToEnd());
+
+                stat.Kill();
+                return 1;
+            }
+        }
+
+        internal static int ParseLinkCount(string stdout)
+        {
+            var match = Regex.Match(stdout ?? string.Empty, "^\\s*([0-9]+)");
+            return match.Success && int.TryParse(match.Groups[1].Value, out var count) && count > 0 ? count : 1;
         }
 
         // File.Replace and File.Move put a regular file where a symlink was, so a dotfile linked into
