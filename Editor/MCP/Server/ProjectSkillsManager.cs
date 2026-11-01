@@ -498,7 +498,7 @@ namespace KitWright.Editor.MCP.Server
 
             var oldFolders = RemoveSupersededGameWrightFolders(projectRoot, skillsRoot, manifest, current);
             if (oldFolders.Count > 0)
-                Debug.LogWarning($"[KitWright] Old GameWright skill folders were left in place: {string.Join("; ", oldFolders)}.");
+                SkillWarnings.Once($"[KitWright] Old GameWright skill folders were left in place: {string.Join("; ", oldFolders)}.");
 
             foreach (var relative in current)
             {
@@ -521,7 +521,7 @@ namespace KitWright.Editor.MCP.Server
 
             var plan = PlanSiblingFiles(PackageSkillCatalog.RelativeFiles(skill.SourceDirectory), directory, out var refused);
             foreach (var path in refused)
-                Debug.LogWarning($"[KitWright] Skill '{skill.Id}': '{path}' would leave the skill folder, so it was not copied.");
+                SkillWarnings.Once($"[KitWright] Skill '{skill.Id}': '{path}' would leave the skill folder, so it was not copied.");
 
             foreach (var relative in plan)
             {
@@ -534,7 +534,7 @@ namespace KitWright.Editor.MCP.Server
                 var bytes = File.ReadAllBytes(source);
                 if (File.Exists(target) && !previous.Contains(recorded) && !bytes.SequenceEqual(File.ReadAllBytes(target)))
                 {
-                    Debug.LogWarning($"[KitWright] Skill '{skill.Id}': '{target}' already exists and was not written by KitWright, so it was left as it is.");
+                    SkillWarnings.Once($"[KitWright] Skill '{skill.Id}': '{target}' already exists and was not written by KitWright, so it was left as it is.");
                     continue;
                 }
 
@@ -621,7 +621,7 @@ namespace KitWright.Editor.MCP.Server
 
             var oldRules = RemoveSupersededGameWrightRules(rulesRoot, written);
             if (oldRules.Count > 0)
-                Debug.LogWarning($"[KitWright] Old GameWright Cursor rules were left in place: {string.Join("; ", oldRules)}.");
+                SkillWarnings.Once($"[KitWright] Old GameWright Cursor rules were left in place: {string.Join("; ", oldRules)}.");
         }
 
         // Only what the manifest lists is removed, and only a SKILL.md that still carries the managed marker
@@ -690,7 +690,7 @@ namespace KitWright.Editor.MCP.Server
                 }
                 else
                 {
-                    Debug.LogWarning($"[KitWright] '{directory}' belonged to a skill that is no longer installed, but it holds files KitWright did not write, so it was left as it is.");
+                    SkillWarnings.Once($"[KitWright] '{directory}' belonged to a skill that is no longer installed, but it holds files KitWright did not write, so it was left as it is.");
                 }
             }
         }
@@ -2085,6 +2085,23 @@ $@"
                 TryRead(path, out _, out bom, out newline);
 
             Write(path, ToNewline(text, newline), bom);
+        }
+    }
+
+    // The sync runs on every editor start and domain reload; a folder it keeps on purpose would repeat
+    // the same warning each time until the user removes it.
+    internal static class SkillWarnings
+    {
+        private static readonly System.Collections.Generic.HashSet<string> Seen = new System.Collections.Generic.HashSet<string>();
+
+        // True when the message was logged, false when this domain already did.
+        internal static bool Once(string message)
+        {
+            if (!Seen.Add(message))
+                return false;
+
+            UnityEngine.Debug.LogWarning(message);
+            return true;
         }
     }
 }

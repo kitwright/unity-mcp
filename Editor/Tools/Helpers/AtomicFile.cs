@@ -175,7 +175,13 @@ namespace KitWright.Editor.Tools.Helpers
                 return 1;
 
             // Absolute on macOS: a GNU stat ahead of it on PATH reads -f as a filesystem query.
-            var start = new ProcessStartInfo(mac ? "/usr/bin/stat" : "stat", (mac ? "-f %l" : "-c %h") + " -- \"" + path + "\"")
+            return LinkCountFromStat(mac ? "/usr/bin/stat" : "stat", (mac ? "-f %l" : "-c %h") + " -- \"" + path + "\"");
+        }
+
+        // Runs a stat tool and reads the link count it prints; 1 when it fails, prints nothing or hangs.
+        internal static int LinkCountFromStat(string executable, string arguments)
+        {
+            var start = new ProcessStartInfo(executable, arguments)
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,

@@ -1332,5 +1332,18 @@ namespace KitWright.Editor.Tests
             if (Directory.Exists(path))
                 Directory.Delete(path, true);
         }
+
+        [Test]
+        public void SkillWarnings_LogAMessageOncePerDomainSoAKeptFolderDoesNotNagOnEverySync()
+        {
+            var message = "[KitWright] test warning " + System.Guid.NewGuid().ToString("N");
+
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Warning, message);
+
+            Assert.IsTrue(SkillWarnings.Once(message));
+            Assert.IsFalse(SkillWarnings.Once(message));
+            Assert.IsFalse(SkillWarnings.Once(message));
+            UnityEngine.TestTools.LogAssert.NoUnexpectedReceived();
+        }
     }
 }

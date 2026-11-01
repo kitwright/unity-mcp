@@ -140,6 +140,33 @@ namespace KitWright.Editor.Tests
             CollectionAssert.AreEqual(expected, File.ReadAllBytes(second));
         }
 
+        // The Unix branch of HasMultipleHardLinks runs the system stat tool; this drives that same process
+        // and parsing chain with whatever GNU stat the host has (a Windows machine with Git for Windows has one).
+        [Test]
+        public void LinkCountFromStat_ReadsTheCountOfARealHardLinkedFile()
+        {
+            var stat = Path.DirectorySeparatorChar == '\\'
+                ? new[] { @"C:\Program Files\Git\usr\bin\stat.exe", @"C:\Program Files (x86)\Git\usr\bin\stat.exe" }.FirstOrDefault(File.Exists)
+                : (File.Exists("/usr/bin/stat") ? "/usr/bin/stat" : null);
+            if (stat == null)
+                Assert.Ignore("No GNU stat on this host.");
+
+            var args = Path.DirectorySeparatorChar != '\\' && RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "-f %l -- " : "-c %h -- ";
+            var first = Path.Combine(_root, "one name.txt");
+            var second = Path.Combine(_root, "two names.txt");
+            File.WriteAllText(first, "x");
+
+            Assert.AreEqual(1, AtomicFile.LinkCountFromStat(stat, args + "\"" + first + "\""));
+            Assert.AreEqual(1, AtomicFile.LinkCountFromStat(stat, args + "\"" + Path.Combine(_root, "missing.txt") + "\""),
+                "a stat that fails prints nothing on stdout, which counts as one link");
+
+            if (!TryHardLink(second, first))
+                Assert.Ignore("This host cannot create a hard link here.");
+
+            Assert.AreEqual(2, AtomicFile.LinkCountFromStat(stat, args + "\"" + first + "\""));
+            Assert.AreEqual(2, AtomicFile.LinkCountFromStat(stat, args + "\"" + second + "\""));
+        }
+
         [Test]
         public void HasMultipleHardLinks_CountsTheLinksAndTreatsAMissingFileAsOne()
         {
@@ -271,11 +298,14 @@ namespace KitWright.Editor.Tests
         // test that makes a link, so only ParseLinkCount is covered on macOS/Linux.
         private static bool TryHardLink(string link, string existing)
         {
-            if (Path.DirectorySeparatorChar != '\\')
-                return false;
-
             try
             {
+                if (Path.DirectorySeparatorChar != '\\')
+                {
+                    using (var ln = Process.Start(new ProcessStartInfo("/bin/ln", $"\"{existing}\" \"{link}\"") { UseShellExecute = false, CreateNoWindow = true }))
+                        return ln.WaitForExit(5000) && ln.ExitCode == 0 && File.Exists(link);
+                }
+
                 return CreateHardLinkW(link, existing, IntPtr.Zero) && File.Exists(link);
             }
             catch (Exception)
