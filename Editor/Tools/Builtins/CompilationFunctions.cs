@@ -366,23 +366,46 @@ namespace KitWright.Editor.Tools.Builtins
     [InitializeOnLoad]
     internal static class ExternalSyncRecoveryTracker
     {
+        internal const double NotCompiledGraceSeconds = 25;
+        private const double PendingScanIntervalSeconds = 1;
+        private const string CleanReport = "No compilation errors detected.";
+
+        private static DateTime _waitStartedAt;
+        private static DateTime _nextPendingScanAt;
+        private static int _pendingScriptFiles;
+        private static bool _compileSeen;
+        private static bool _waiting;
+
         static ExternalSyncRecoveryTracker()
         {
             TryCompletePendingRecovery();
         }
+
+        internal enum RecoveryStep { Wait, RecordOutcome, RecordNotCompiled }
 
         internal static void TryCompletePendingRecovery()
         {
             if (!CompilationFunctions.HasPendingExternalSync())
                 return;
 
-            if (!ShouldWaitForCompilation())
+            _waitStartedAt = DateTime.UtcNow;
+            if (!_waiting)
             {
-                CompleteRecovery();
+                _compileSeen = false;
+                _nextPendingScanAt = DateTime.MinValue;
+            }
+
+            if (TryRecord())
+            {
+                StopWaiting();
                 return;
             }
 
-            EditorApplication.update += WaitUntilCompilationEnds;
+            if (_waiting)
+                return;
+
+            _waiting = true;
+            EditorApplication.update += WaitForCompileOutcome;
         }
 
         /// <summary>Recovery gate, extracted so it is testable: while a compile is in flight the
@@ -392,16 +415,57 @@ namespace KitWright.Editor.Tools.Builtins
             return CompilationService.IsActuallyCompiling;
         }
 
-        private static void WaitUntilCompilationEnds()
+        // Leaving Play Mode reloads the domain before Unity's own compile starts, so stale scripts with
+        // no compile seen yet is not an outcome: the recompile is still to come.
+        internal static RecoveryStep DecideRecovery(bool compiling, bool compileSeen, int pendingScriptFiles, double waitedSeconds)
         {
-            if (ShouldWaitForCompilation())
-                return;
+            if (compiling)
+                return RecoveryStep.Wait;
 
-            EditorApplication.update -= WaitUntilCompilationEnds;
-            CompleteRecovery();
+            if (compileSeen || pendingScriptFiles == 0)
+                return RecoveryStep.RecordOutcome;
+
+            return waitedSeconds < NotCompiledGraceSeconds ? RecoveryStep.Wait : RecoveryStep.RecordNotCompiled;
         }
 
-        private static void CompleteRecovery()
+        private static void WaitForCompileOutcome()
+        {
+            if (!CompilationFunctions.HasPendingExternalSync() || TryRecord())
+                StopWaiting();
+        }
+
+        private static void StopWaiting()
+        {
+            _waiting = false;
+            EditorApplication.update -= WaitForCompileOutcome;
+        }
+
+        private static bool TryRecord()
+        {
+            var compiling = ShouldWaitForCompilation();
+            _compileSeen |= compiling;
+
+            var now = DateTime.UtcNow;
+            if (!compiling && !_compileSeen && now >= _nextPendingScanAt)
+            {
+                _pendingScriptFiles = CompilationFunctions.PendingScriptFileCount();
+                _nextPendingScanAt = now.AddSeconds(PendingScanIntervalSeconds);
+            }
+
+            switch (DecideRecovery(compiling, _compileSeen, _pendingScriptFiles, (now - _waitStartedAt).TotalSeconds))
+            {
+                case RecoveryStep.Wait:
+                    return false;
+                case RecoveryStep.RecordNotCompiled:
+                    CompleteRecovery(compileRan: false);
+                    return true;
+                default:
+                    CompleteRecovery(compileRan: true);
+                    return true;
+            }
+        }
+
+        private static void CompleteRecovery(bool compileRan)
         {
             if (!CompilationFunctions.HasPendingExternalSync())
                 return;
@@ -426,7 +490,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             var outcome = CompilationFunctions.DescribeRecoveredCompile(
-                compilationService.GetCompilationErrors(includeWarnings: true),
+                compileRan ? compilationService.GetCompilationErrors(includeWarnings: true) : CleanReport,
                 CompilationFunctions.PendingScriptFileCount());
             DomainReloadHandler.StoreRecoveryInfo("request_recompile", outcome.Status.ToString(), outcome.Summary + playModeNote);
         }

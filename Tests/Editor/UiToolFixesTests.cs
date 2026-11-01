@@ -35,7 +35,8 @@ namespace KitWright.Editor.Tests
             _selectionBefore = Selection.objects;
             _eventSystemsBefore = ObjectsHelper.FindObjectsByTypeUnsorted<EventSystem>(FindObjectsInactive.Include);
 
-            // The creators only look for an active EventSystem, so hiding it makes "none in the scene" deterministic.
+            // With every EventSystem of the scene inactive, a creator adds none and warns; a test that needs
+            // "none at all" assumes the scene had none to begin with.
             foreach (var eventSystem in ObjectsHelper.FindObjectsByTypeUnsorted<EventSystem>(FindObjectsInactive.Exclude))
             {
                 eventSystem.gameObject.SetActive(false);
@@ -346,14 +347,36 @@ namespace KitWright.Editor.Tests
         [Test]
         public void CreateButton_AddsAnEventSystemLikeTheOtherInteractiveCreators()
         {
+            Assume.That(_eventSystemsBefore, Is.Empty, "The scene already has an EventSystem, so the creator adds none.");
             var canvas = new GameObject(Name("KwUiBareCanvas"), typeof(Canvas));
-            Assert.IsNull(UnityEngine.Object.FindAnyObjectByType<EventSystem>(), "The fixture hides the scene's EventSystem.");
 
-            Ok("create_button", "name", Name("KwUiButton"), "text", "Go", "parent_name", canvas.name);
+            var answer = Ok("create_button", "name", Name("KwUiButton"), "text", "Go", "parent_name", canvas.name);
 
             var eventSystem = UnityEngine.Object.FindAnyObjectByType<EventSystem>();
             Assert.IsNotNull(eventSystem, "A Button with no EventSystem is dead in Play Mode.");
             Assert.IsNotNull(eventSystem.GetComponent<BaseInputModule>());
+            StringAssert.DoesNotContain("inactive", (string)answer["message"]);
+        }
+
+        [Test]
+        public void UiCreators_WithOnlyAnInactiveEventSystemAddNoSecondOneAndSaySo()
+        {
+            var inactive = new GameObject(Name("KwUiInactiveEventSystem"), typeof(EventSystem));
+            inactive.SetActive(false);
+            var canvas = new GameObject(Name("KwUiBareCanvas"), typeof(Canvas));
+            var before = ObjectsHelper.FindObjectsByTypeUnsorted<EventSystem>(FindObjectsInactive.Include).Length;
+
+            var answers = new[]
+            {
+                Ok("create_button", "name", Name("KwUiButton"), "text", "Go", "parent_name", canvas.name),
+                Ok("create_ui_element", "kind", "slider", "name", Name("KwUiSlider"), "parent_name", canvas.name),
+                Ok("create_canvas", "name", Name("KwUiCanvas")),
+            };
+
+            Assert.AreEqual(before, ObjectsHelper.FindObjectsByTypeUnsorted<EventSystem>(FindObjectsInactive.Include).Length,
+                "A second EventSystem was added next to the inactive one.");
+            foreach (var answer in answers)
+                StringAssert.Contains("EventSystem exists but is inactive", (string)answer["message"]);
         }
 
         [Test]

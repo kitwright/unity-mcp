@@ -252,10 +252,20 @@ namespace KitWright.Editor.Tests
         [TestCase("Window/Layouts/Revert Factory Settings")]
         [TestCase("Window/Layouts/Revert Factory Settings...")]
         [TestCase("/Window//Layouts/Revert Factory Settings")]
-        public void RevertFactorySettingsIsADialogOpenerThatAllowModalLifts(string menuPath)
+        public void RevertFactorySettingsWipesTheSavedLayoutSoItIsRefusedEvenWithAllowModal(string menuPath)
         {
-            Assert.AreEqual("MENU_ITEM_OPENS_MODAL", Code(MenuItemFunctions.Refusal(menuPath, false, _ => true)), menuPath);
-            Assert.IsNull(MenuItemFunctions.Refusal(menuPath, true, _ => true), menuPath);
+            foreach (var allowModal in new[] { false, true })
+            {
+                var refusal = MenuItemFunctions.Refusal(menuPath, allowModal, _ => true);
+
+                Assert.IsNotNull(refusal, $"{menuPath} allowModal={allowModal}");
+                var answer = JObject.FromObject(refusal);
+                Assert.AreEqual("MENU_ITEM_REFUSED", (string)answer["code"]);
+                Assert.AreEqual("Window/Layouts/Revert Factory Settings", (string)answer["data"]["matched"]);
+                StringAssert.Contains("saved window layout", (string)answer["hint"]);
+            }
+
+            Assert.IsNull(MenuItemFunctions.Refusal("Window/Layouts/Default", true, _ => true));
         }
 
         [Test]

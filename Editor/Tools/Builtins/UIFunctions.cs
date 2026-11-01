@@ -48,10 +48,10 @@ namespace KitWright.Editor.Tools.Builtins
 
             canvasGo.AddComponent<CanvasScaler>();
             canvasGo.AddComponent<GraphicRaycaster>();
-            EnsureEventSystem();
+            var eventSystemNote = EnsureEventSystem();
 
             Selection.activeGameObject = canvasGo;
-            return $"Created Canvas '{name}' with {mode} render mode.{note}";
+            return $"Created Canvas '{name}' with {mode} render mode.{note}{eventSystemNote}";
         }
 
         internal static bool TryParseRenderMode(string value, out RenderMode mode)
@@ -108,10 +108,10 @@ namespace KitWright.Editor.Tools.Builtins
             textComp.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
 
             SetLayerRecursively(buttonGo, parent.gameObject.layer);
-            EnsureEventSystem();
+            var eventSystemNote = EnsureEventSystem();
 
             Selection.activeGameObject = buttonGo;
-            return $"Created UI Button '{name}' with text '{text}'";
+            return $"Created UI Button '{name}' with text '{text}'{eventSystemNote}";
         }
 
         [Description("Create a UI Text element")]
@@ -241,7 +241,7 @@ namespace KitWright.Editor.Tools.Builtins
                 go.name = name;
             go.transform.SetParent(parent, false);
             SetLayerRecursively(go, parent.gameObject.layer);
-            EnsureEventSystem();
+            var eventSystemNote = EnsureEventSystem();
 
             var rect = go.GetComponent<RectTransform>();
             // On stretch anchors (a panel) sizeDelta is a margin added to the parent's size, not a size.
@@ -253,7 +253,7 @@ namespace KitWright.Editor.Tools.Builtins
             ApplyAnchorPreset(rect, anchor, pivot);
 
             Selection.activeGameObject = go;
-            return $"Created UI {normalized} '{go.name}' under '{parent.name}' with {go.transform.childCount} child object(s).";
+            return $"Created UI {normalized} '{go.name}' under '{parent.name}' with {go.transform.childCount} child object(s).{eventSystemNote}";
         }
 
         // The sprites Unity's own GameObject > UI menu hands DefaultControls. Missing ones stay null,
@@ -275,16 +275,22 @@ namespace KitWright.Editor.Tools.Builtins
         private static Sprite BuiltinSprite(string path) => AssetDatabase.GetBuiltinExtraResource<Sprite>(path);
 
         // Interactable controls do nothing without one, and a Canvas made outside create_canvas may not have it.
-        private static void EnsureEventSystem()
+        // An inactive EventSystem is not replaced: a second one would exist once the first is reactivated.
+        private static string EnsureEventSystem()
         {
-            if (UnityEngine.Object.FindAnyObjectByType<EventSystem>() != null) return;
+            var existing = ObjectsHelper.FindObjectsByTypeUnsorted<EventSystem>(FindObjectsInactive.Include);
+            if (existing.Length > 0)
+                return existing.Any(e => e.gameObject.activeInHierarchy) ? string.Empty : InactiveEventSystemNote;
 
             var esGo = new GameObject("EventSystem");
             StageUtility.PlaceGameObjectInCurrentStage(esGo);
             esGo.AddComponent<EventSystem>();
             ObjectFactory.AddComponent(esGo, ChooseInputModuleType(ActiveInputHandler(), TypeResolver.Resolve(InputSystemModuleTypeName)));
             Undo.RegisterCreatedObjectUndo(esGo, "Create EventSystem");
+            return string.Empty;
         }
+
+        private const string InactiveEventSystemNote = " An EventSystem exists but is inactive: activate it for the UI to respond.";
 
         private const string InputSystemModuleTypeName = "UnityEngine.InputSystem.UI.InputSystemUIInputModule";
 

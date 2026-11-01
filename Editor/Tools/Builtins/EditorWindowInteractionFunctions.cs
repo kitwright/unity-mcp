@@ -35,7 +35,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (!TryParseButton(button, out var mouseButton))
                 return ToolResultFormatter.Error("INVALID_PARAM", new { param = "button", provided = button, valid = ButtonNames });
 
-            if (!TryResolvePanel(window, focus, out var target, out var root, out var error))
+            if (!TryResolvePanel(window, focus, out var target, out var root, out var error, focusOnlyToRender: true))
                 return error;
 
             try
@@ -68,6 +68,13 @@ namespace KitWright.Editor.Tools.Builtins
                                "position of a synthesized event, so the control would not react. Drive this window " +
                                "through its UI Toolkit controls, or through a menu item."
                     });
+                }
+
+                // Only a click that is really sent may move editor focus; the refusals above must not.
+                if (focus)
+                {
+                    target.Focus();
+                    target.Repaint();
                 }
 
                 // A real pointer-down moves focus on its way through the panel; a synthesized one does not,
@@ -141,7 +148,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static bool TryResolvePanel(string window, bool focus, out EditorWindow target, out VisualElement root, out string error)
+        private static bool TryResolvePanel(string window, bool focus, out EditorWindow target, out VisualElement root, out string error, bool focusOnlyToRender = false)
         {
             target = null;
             root = null;
@@ -178,7 +185,9 @@ namespace KitWright.Editor.Tools.Builtins
                 return false;
             }
 
-            if (focus)
+            // A window in a background tab has no panel until it is focused, so a caller that defers its focus
+            // (focusOnlyToRender) still gets it here when there would be nothing to pick from.
+            if (focus && (!focusOnlyToRender || target.rootVisualElement?.panel == null))
             {
                 target.Focus();
                 target.Repaint();

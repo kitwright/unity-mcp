@@ -49,7 +49,7 @@ namespace KitWright.Editor.State
         public static void SaveState(KitWrightState state)
         {
             SessionState.SetString(StateKey, state.ToString());
-            SessionState.SetString(TimestampKey, DateTime.Now.ToString("O"));
+            SessionState.SetString(TimestampKey, DateTime.UtcNow.ToString("O"));
         }
 
         public static void SavePendingFunction(FunctionCall functionCall)
@@ -94,7 +94,7 @@ namespace KitWright.Editor.State
                 ["toolName"] = toolName ?? string.Empty,
                 ["status"] = status ?? string.Empty,
                 ["summary"] = summary ?? string.Empty,
-                ["timestamp"] = DateTime.Now.ToString("O")
+                ["timestamp"] = DateTime.UtcNow.ToString("O")
             };
 
             SessionState.SetString(LastRecoveryInfoKey, JsonCodec.Serialize(payload));
@@ -122,11 +122,10 @@ namespace KitWright.Editor.State
                     Summary = GetString(dict, "summary")
                 };
 
-                var timestampStr = GetString(dict, "timestamp");
-                if (DateTime.TryParse(timestampStr, null,
-                        System.Globalization.DateTimeStyles.RoundtripKind, out var timestamp))
+                if (TryParseUtc(GetString(dict, "timestamp"), out var timestampUtc))
                 {
-                    result.Timestamp = timestamp;
+                    result.TimestampUtc = timestampUtc;
+                    result.Timestamp = timestampUtc.ToLocalTime();
                 }
 
                 return result;
@@ -211,10 +210,9 @@ namespace KitWright.Editor.State
 
             // Discard if too old (> 120 seconds)
             var reloadedAt = DateTime.MinValue;
-            if (DateTime.TryParse(timestampStr, null,
-                    System.Globalization.DateTimeStyles.RoundtripKind, out var ts))
+            if (TryParseUtc(timestampStr, out var ts))
             {
-                if ((DateTime.Now - ts).TotalSeconds > 120)
+                if ((DateTime.UtcNow - ts).TotalSeconds > 120)
                     return null;
 
                 reloadedAt = ts;
@@ -228,13 +226,29 @@ namespace KitWright.Editor.State
             };
         }
 
+        // Stored UTC so two stamps either side of a DST fall-back still order correctly; a record a
+        // previous domain wrote in local time (offset included) reads as the same instant. Anything
+        // unparsable stays DateTime.MinValue, which never counts as recorded.
+        internal static bool TryParseUtc(string text, out DateTime utc)
+        {
+            if (DateTimeOffset.TryParse(text, System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.AssumeLocal, out var parsed))
+            {
+                utc = parsed.UtcDateTime;
+                return true;
+            }
+
+            utc = DateTime.MinValue;
+            return false;
+        }
+
         // The new domain's own recovery code may already have recorded this tool's outcome, with
         // data (Play Mode errors) that the generic interrupted record would overwrite.
         internal static bool IsRecordedSince(RecoveryInfo info, string toolName, DateTime since)
         {
             return info != null &&
                    since > DateTime.MinValue &&
-                   info.Timestamp >= since &&
+                   info.TimestampUtc >= since.ToUniversalTime() &&
                    string.Equals(info.ToolName, toolName, StringComparison.OrdinalIgnoreCase);
         }
 
@@ -331,7 +345,9 @@ namespace KitWright.Editor.State
             public string ToolName;
             public string Status;
             public string Summary;
+            // Local, for display and for callers that subtract it from DateTime.Now; ordering uses TimestampUtc.
             public DateTime Timestamp;
+            public DateTime TimestampUtc;
         }
     }
 }

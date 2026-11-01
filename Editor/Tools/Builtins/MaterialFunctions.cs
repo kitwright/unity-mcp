@@ -211,7 +211,7 @@ namespace KitWright.Editor.Tools.Builtins
                 // scene dirty so the change is a visible unsaved edit that persists on scene save,
                 // rather than a Success reported for a change that would silently vanish on reload.
                 var scene = UnityEditor.SceneManagement.EditorSceneManager.GetActiveScene();
-                if (scene.IsValid())
+                if (scene.IsValid() && !UnityEditor.EditorApplication.isPlaying)
                     UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(scene);
                 persisted = false;
             }

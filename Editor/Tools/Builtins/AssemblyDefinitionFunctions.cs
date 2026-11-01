@@ -100,7 +100,8 @@ namespace KitWright.Editor.Tools.Builtins
             });
         }
 
-        [Description("List all Assembly Definition files, optionally scoped to a folder and including Packages/.")]
+        [Description("List all Assembly Definition files, optionally scoped to a folder and including Packages/. " +
+                     "editable is false for an asmdef in a package that is not embedded in the project (a file: or registry package), which the other assembly definition tools cannot read or change.")]
         [ReadOnlyTool]
         public static object ListAssemblyDefs(
             [ToolParam("Folder to search in (default 'Assets')", Required = false)] string folder = "Assets",
@@ -118,7 +119,8 @@ namespace KitWright.Editor.Tools.Builtins
                     path = p,
                     name = (string)obj?["name"],
                     referenceCount = (obj?["references"] as JArray)?.Count ?? 0,
-                    editorOnly = (obj?["includePlatforms"] as JArray)?.Any(t => (string)t == "Editor") ?? false
+                    editorOnly = (obj?["includePlatforms"] as JArray)?.Any(t => (string)t == "Editor") ?? false,
+                    editable = IsEditableLocation(p, PackageSourceOf(p))
                 };
             }).ToList();
 
@@ -336,25 +338,41 @@ namespace KitWright.Editor.Tools.Builtins
         {
             error = null;
             string full = null;
-            // The project root rather than Assets/: an embedded package's asmdef under Packages/ is
-            // a target these tools have always been able to edit.
+            // The project root rather than Assets/: the asmdef of an embedded package under Packages/ lives inside
+            // the project, so it can be edited. A file: or registry package lives outside it and PathSafety refuses it.
             if (!string.IsNullOrEmpty(path))
             {
                 try { full = PathSafety.ResolveProjectPath(path); }
                 catch (PathOutsideProjectException ex)
                 {
-                    error = Response.Error("INVALID_PATH", new { path, message = ex.Message });
+                    error = Response.Error("INVALID_PATH", new { path, message = ex.Message }, NotEmbeddedHint(path, PackageSourceOf(path)));
                     return null;
                 }
             }
             if (full == null || !path.EndsWith(".asmdef", StringComparison.OrdinalIgnoreCase) || !File.Exists(full))
             {
-                error = Response.Error("ASMDEF_NOT_FOUND", new { path });
+                error = Response.Error("ASMDEF_NOT_FOUND", new { path }, NotEmbeddedHint(path, PackageSourceOf(path)));
                 return null;
             }
             try { return JsonParse.Object(File.ReadAllText(full)); }
             catch (Exception e) { error = Response.Error("ASMDEF_PARSE_FAILED", new { path, message = e.Message }); return null; }
         }
+
+        private static bool IsPackagePath(string path) =>
+            path != null && path.Replace('\\', '/').StartsWith("Packages/", StringComparison.OrdinalIgnoreCase);
+
+        private static UnityEditor.PackageManager.PackageSource? PackageSourceOf(string path) =>
+            IsPackagePath(path) ? UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path.Replace('\\', '/'))?.source : null;
+
+        // Only an embedded package's files sit inside the project; a file: (Local) or registry package resolves outside it.
+        internal static bool IsEditableLocation(string path, UnityEditor.PackageManager.PackageSource? source) =>
+            !IsPackagePath(path) || source == UnityEditor.PackageManager.PackageSource.Embedded;
+
+        internal static string NotEmbeddedHint(string path, UnityEditor.PackageManager.PackageSource? source) =>
+            source == null || IsEditableLocation(path, source)
+                ? null
+                : $"'{path}' is in a package that is not embedded in the project (a file: or registry package lives outside it), " +
+                  "so this tool can neither read nor edit its asmdef. Embed the package under Packages/, or work on the files at the package's own location.";
 
         private static JObject TryParse(string path)
         {

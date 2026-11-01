@@ -12,6 +12,7 @@ using NUnit.Framework;
 using UnityEditor;
 using UnityEngine;
 using static KitWright.Editor.Tests.ToolCall;
+using PackageSource = UnityEditor.PackageManager.PackageSource;
 
 namespace KitWright.Editor.Tests
 {
@@ -254,6 +255,50 @@ namespace KitWright.Editor.Tests
             CollectionAssert.AreEqual(new[] { "Not.There" }, removed["data"]["notFound"].Select(t => (string)t));
 
             Assert.AreEqual(UnityStyleAsmdef, File.ReadAllText(file));
+        }
+
+        [Test]
+        public void IsEditableLocation_OnlyAnEmbeddedPackageOrAnAssetsPathCanBeEdited()
+        {
+            const string packageAsmdef = "Packages/com.acme.pack/Runtime/A.asmdef";
+
+            Assert.IsTrue(AssemblyDefinitionFunctions.IsEditableLocation("Assets/Scripts/A.asmdef", null));
+            Assert.IsTrue(AssemblyDefinitionFunctions.IsEditableLocation(packageAsmdef, PackageSource.Embedded));
+            Assert.IsTrue(AssemblyDefinitionFunctions.IsEditableLocation("packages\\com.acme.pack\\A.asmdef", PackageSource.Embedded));
+            foreach (var outside in new PackageSource?[] { PackageSource.Local, PackageSource.Registry, PackageSource.Git, PackageSource.BuiltIn, null })
+                Assert.IsFalse(AssemblyDefinitionFunctions.IsEditableLocation(packageAsmdef, outside), outside?.ToString() ?? "no package info");
+            Assert.IsFalse(AssemblyDefinitionFunctions.IsEditableLocation("Packages\\com.acme.pack\\A.asmdef", PackageSource.Local));
+        }
+
+        [Test]
+        public void NotEmbeddedHint_SaysSoOnlyForAPackageKnownToLiveOutsideTheProject()
+        {
+            const string packageAsmdef = "Packages/com.acme.pack/Runtime/A.asmdef";
+
+            StringAssert.Contains("not embedded", AssemblyDefinitionFunctions.NotEmbeddedHint(packageAsmdef, PackageSource.Local));
+            StringAssert.Contains("not embedded", AssemblyDefinitionFunctions.NotEmbeddedHint(packageAsmdef, PackageSource.Registry));
+            Assert.IsNull(AssemblyDefinitionFunctions.NotEmbeddedHint(packageAsmdef, PackageSource.Embedded));
+            Assert.IsNull(AssemblyDefinitionFunctions.NotEmbeddedHint(packageAsmdef, null));
+            Assert.IsNull(AssemblyDefinitionFunctions.NotEmbeddedHint("Assets/Scripts/A.asmdef", null));
+            Assert.IsNull(AssemblyDefinitionFunctions.NotEmbeddedHint(null, null));
+        }
+
+        [Test]
+        public void ListAssemblyDefs_MarksEveryEntryEditableOrNot()
+        {
+            var listed = Ok("list_assembly_defs", "folder", "Assets", "include_packages", "true")["data"]["assemblies"];
+
+            Assert.Greater(listed.Count(), 0);
+            foreach (var entry in listed)
+            {
+                var path = (string)entry["path"];
+                Assert.AreEqual(JTokenType.Boolean, entry["editable"].Type, path);
+                if (path.StartsWith("Assets/"))
+                    Assert.IsTrue((bool)entry["editable"], path);
+                if (path.StartsWith("Packages/") &&
+                    UnityEditor.PackageManager.PackageInfo.FindForAssetPath(path)?.source == PackageSource.Registry)
+                    Assert.IsFalse((bool)entry["editable"], path);
+            }
         }
 
         [Test]

@@ -15,6 +15,7 @@ using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using Step = KitWright.Editor.Tools.Builtins.ExternalSyncRecoveryTracker.RecoveryStep;
 
 namespace KitWright.Editor.Tests
 {
@@ -72,24 +73,25 @@ namespace KitWright.Editor.Tests
             StringAssert.DoesNotContain("SCRIPT_CHANGES_NOT_COMPILED", outcome.Summary);
         }
 
+        private static DomainReloadHandler.RecoveryInfo RecordedAt(string toolName, DateTime utc) =>
+            new DomainReloadHandler.RecoveryInfo { ToolName = toolName, TimestampUtc = utc, Timestamp = utc.ToLocalTime() };
+
         [Test]
         public void GenericInterruptedRecord_DoesNotOverwriteTheOneTheNewDomainAlreadyWrote()
         {
-            var reloadedAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Local);
-            var written = new DomainReloadHandler.RecoveryInfo
-            {
-                ToolName = "request_recompile",
-                Timestamp = reloadedAt.AddSeconds(2)
-            };
+            var reloadedAt = new DateTime(2026, 1, 1, 12, 0, 0, DateTimeKind.Utc);
+            var written = RecordedAt("request_recompile", reloadedAt.AddSeconds(2));
 
             Assert.IsTrue(DomainReloadHandler.IsRecordedSince(written, "Request_Recompile", reloadedAt),
                 "the record written after the reload carries the Play Mode errors; the generic one must not replace it");
+            Assert.IsTrue(DomainReloadHandler.IsRecordedSince(written, "request_recompile", reloadedAt.ToLocalTime()),
+                "the reload time compares as the same instant whatever its Kind");
 
-            written.Timestamp = reloadedAt.AddMinutes(-3);
+            written.TimestampUtc = reloadedAt.AddMinutes(-3);
             Assert.IsFalse(DomainReloadHandler.IsRecordedSince(written, "request_recompile", reloadedAt),
                 "a record from before the reload belongs to an earlier call");
 
-            written.Timestamp = reloadedAt.AddSeconds(2);
+            written.TimestampUtc = reloadedAt.AddSeconds(2);
             Assert.IsFalse(DomainReloadHandler.IsRecordedSince(written, "execute_code", reloadedAt));
             Assert.IsFalse(DomainReloadHandler.IsRecordedSince(null, "request_recompile", reloadedAt));
             Assert.IsFalse(DomainReloadHandler.IsRecordedSince(written, "request_recompile", DateTime.MinValue),
@@ -106,6 +108,8 @@ namespace KitWright.Editor.Tests
 
                 Assert.IsTrue(DomainReloadHandler.IsRecordedSince(stored, "request_recompile", DateTime.Now.AddSeconds(-5)));
                 Assert.IsFalse(DomainReloadHandler.IsRecordedSince(stored, "request_recompile", DateTime.Now.AddSeconds(5)));
+                Assert.Less(Math.Abs((DateTime.Now - stored.Timestamp).TotalMinutes), 1.0,
+                    "Timestamp stays local time: the broker redelivery subtracts it from DateTime.Now");
             }
             finally
             {
@@ -123,12 +127,75 @@ namespace KitWright.Editor.Tests
                 var interrupted = DomainReloadHandler.ConsumeInterruptedState();
 
                 Assert.NotNull(interrupted);
-                Assert.Greater(interrupted.ReloadedAt, DateTime.Now.AddSeconds(-30));
+                Assert.AreEqual(DateTimeKind.Utc, interrupted.ReloadedAt.Kind);
+                Assert.Greater(interrupted.ReloadedAt, DateTime.UtcNow.AddSeconds(-30));
             }
             finally
             {
                 DomainReloadHandler.ClearPendingFunction();
             }
+        }
+
+        [Test]
+        public void RecoveryTimestamps_ReadBackAsTheSameInstantInTheNewAndTheOldLocalFormat()
+        {
+            var utcNow = DateTime.UtcNow;
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc(utcNow.ToString("O"), out var fromUtc));
+            Assert.AreEqual(utcNow, fromUtc);
+
+            var localNow = DateTime.Now;
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc(localNow.ToString("O"), out var fromLocal));
+            Assert.AreEqual(localNow.ToUniversalTime(), fromLocal, "a record a previous domain wrote in local time still reads");
+
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc("2026-01-01T12:00:00.0000000+07:00", out var offset));
+            Assert.AreEqual(new DateTime(2026, 1, 1, 5, 0, 0, DateTimeKind.Utc), offset);
+
+            foreach (var unreadable in new[] { null, "", "not a date" })
+            {
+                Assert.IsFalse(DomainReloadHandler.TryParseUtc(unreadable, out var none));
+                Assert.AreEqual(DateTime.MinValue, none);
+            }
+
+            Assert.IsFalse(DomainReloadHandler.IsRecordedSince(
+                new DomainReloadHandler.RecoveryInfo { ToolName = "request_recompile" }, "request_recompile", utcNow),
+                "a record with no readable timestamp never counts as recorded, so the generic record is still stored");
+        }
+
+        [Test]
+        public void ARecordWrittenAfterADstFallBackReloadStillReadsAsLater()
+        {
+            // 01:30 PDT then 01:10 PST the same night: the wall clock went backwards, the instants did not.
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc("2026-11-01T08:30:00.0000000Z", out var reloadedAt));
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc("2026-11-01T09:10:00.0000000Z", out var recordedAt));
+            Assert.IsTrue(DomainReloadHandler.IsRecordedSince(RecordedAt("request_recompile", recordedAt), "request_recompile", reloadedAt));
+
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc("2026-11-01T01:30:00.0000000-07:00", out var oldReload));
+            Assert.IsTrue(DomainReloadHandler.TryParseUtc("2026-11-01T01:10:00.0000000-08:00", out var oldRecord));
+            Assert.IsTrue(DomainReloadHandler.IsRecordedSince(RecordedAt("request_recompile", oldRecord), "request_recompile", oldReload),
+                "the same holds for stamps an earlier domain wrote in local time");
+        }
+
+        [Test]
+        public void Recovery_WaitsForTheCompileWhileScriptsAreStaleAndNoneHasStarted()
+        {
+            var grace = ExternalSyncRecoveryTracker.NotCompiledGraceSeconds;
+
+            Assert.AreEqual(Step.Wait, ExternalSyncRecoveryTracker.DecideRecovery(false, false, 3, 0),
+                "leaving Play Mode reloads before the compile starts; recording now would be a final-looking error");
+            Assert.AreEqual(Step.Wait, ExternalSyncRecoveryTracker.DecideRecovery(false, false, 3, grace - 0.1));
+            Assert.AreEqual(Step.RecordNotCompiled, ExternalSyncRecoveryTracker.DecideRecovery(false, false, 3, grace),
+                "nothing started within the grace period");
+        }
+
+        [Test]
+        public void Recovery_RecordsTheRealOutcomeOnceACompileHasRun()
+        {
+            Assert.AreEqual(Step.Wait, ExternalSyncRecoveryTracker.DecideRecovery(true, true, 3, 1000),
+                "a compile in flight is waited out whatever the clock says");
+            Assert.AreEqual(Step.RecordOutcome, ExternalSyncRecoveryTracker.DecideRecovery(false, true, 3, 5),
+                "the compile ended: its result is the record, not the staleness measured before it");
+            Assert.AreEqual(Step.RecordOutcome, ExternalSyncRecoveryTracker.DecideRecovery(false, false, 0, 0),
+                "nothing stale, nothing to wait for");
         }
 
         [Test]

@@ -107,7 +107,7 @@ namespace KitWright.Editor.Tools.Builtins
             // RenderSettings has no discrete Undo target (it is scene-global state); mark the scene dirty so
             // the change persists on save.
             var scene = SceneManager.GetActiveScene();
-            if (scene.IsValid())
+            if (scene.IsValid() && !EditorApplication.isPlaying)
                 EditorSceneManager.MarkSceneDirty(scene);
 
             var notes = EffectNotes(parsedAmbientLight.HasValue, RenderSettings.ambientMode, fog_density >= 0f, RenderSettings.fogMode,

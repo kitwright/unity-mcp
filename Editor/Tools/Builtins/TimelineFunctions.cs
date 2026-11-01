@@ -76,7 +76,7 @@ namespace KitWright.Editor.Tools.Builtins
                 // Evaluate() writes the sampled pose into the bound scene objects, which are not
                 // captured by the director-only Undo above. Mark the owning scene dirty first so the
                 // change is visibly unsaved even when Evaluate throws after a partial write.
-                if (go.scene.IsValid())
+                if (go.scene.IsValid() && !UnityEditor.EditorApplication.isPlaying)
                     UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(go.scene);
 
                 timeProp.SetValue(director, time);

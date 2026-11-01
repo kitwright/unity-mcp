@@ -21,8 +21,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("MenuItem")]
     internal static class MenuItemFunctions
     {
-        // Menu items that quit the editor, open or switch the project, or wipe PlayerPrefs. Refused
-        // whatever allow_modal says: it only vouches that a human is there to click a dialog.
+        // Menu items that quit the editor, open or switch the project, or irreversibly wipe PlayerPrefs or the
+        // saved window layout. Refused whatever allow_modal says: it only vouches that a human is there to click a dialog.
         private static readonly string[] NeverRunMenuPaths =
         {
             "File/Exit",
@@ -31,6 +31,7 @@ namespace KitWright.Editor.Tools.Builtins
             "File/New Project",
             "File/Open Project",
             "Edit/Clear All PlayerPrefs",
+            "Window/Layouts/Revert Factory Settings",
         };
 
         // Menu items that open a modal or a file picker. A modal runs its own message loop,
@@ -53,7 +54,6 @@ namespace KitWright.Editor.Tools.Builtins
             ("Assets/Export Package", null),
             ("Assets/Reimport All", null),
             ("Assets/Delete", "delete_asset"),
-            ("Window/Layouts/Revert Factory Settings", null),
             ("Help/About Unity", null),
         };
 
@@ -163,7 +163,7 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 return Response.Error("MENU_ITEM_REFUSED",
                     new { menu_path = menuPath, matched = never },
-                    $"'{never}' quits the editor, opens or switches the project, or clears PlayerPrefs. " +
+                    $"'{never}' quits the editor, opens or switches the project, or irreversibly clears PlayerPrefs or the saved window layout. " +
                     "This tool will not run it, even with allow_modal=true; do it by hand in the editor.");
             }
 
@@ -249,7 +249,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "Paths known to open a modal dialog or file picker are refused, because a modal stops the " +
                      "editor loop this call returns on and only a human clicking the dialog can unstick it; " +
                      "pass allow_modal=true to run one anyway when someone is watching the editor. " +
-                     "Items that quit the editor, open or switch the project, or clear PlayerPrefs are always refused.")]
+                     "Items that quit the editor, open or switch the project, or irreversibly clear PlayerPrefs or the saved window layout are always refused.")]
         public static object ExecuteMenuItem(
             [ToolParam("Full menu path, e.g. 'GameObject/2D Object/Sprite'")] string menu_path,
             [ToolParam("Run a menu item that is known to open a modal dialog or file picker. Only with a human at the editor.", Required = false)] bool allow_modal = false)

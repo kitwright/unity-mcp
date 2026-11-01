@@ -10,7 +10,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Prefs")]
     internal static class PrefsFunctions
     {
-        [Description("Read an EditorPrefs value (editor-only, persists across sessions on this machine). Auto-detects type as string, int, float, or bool.")]
+        [Description("Read an EditorPrefs value (editor-only, persists across sessions on this machine). Auto-detects type as string, int, float, or bool. " +
+                     "EditorPrefs cannot tell a bool from an int, so a stored 0 or 1 is reported as bool when type is auto; pass type to force the reading.")]
         [ReadOnlyTool]
         public static object GetEditorPref(
             [ToolParam("Preference key")] string key,
