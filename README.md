@@ -23,7 +23,7 @@
 
 KitWright MCP for Unity is an MIT-licensed Unity Editor MCP server that lets AI assistants like Claude Code, Cursor, LM Studio, Windsurf, Codex, and VS Code Copilot operate directly inside your running Unity project.
 
-Describe your game in one sentence — your AI assistant builds it in Unity through KitWright MCP for Unity's 274 built-in tools for scene creation, script generation, runtime validation, input simulation, performance analysis, and editor automation.
+Describe your game in one sentence — your AI assistant builds it in Unity through KitWright MCP for Unity's built-in tools for scene creation, script generation, runtime validation, input simulation, performance analysis, and editor automation.
 
 > *"Build a snake game with a 10x10 grid, food spawning, score UI, and game-over screen"*
 >
@@ -250,7 +250,7 @@ Open your AI client and try: *"Create a 3D platformer level with 5 floating plat
 - This package is **Editor-only**. It does not add runtime components to your built game.
 - The MCP server starts on `http://127.0.0.1:8765/` by default.
 - Local MCP server settings are stored in `UserSettings/KitWrightMcpSettings.json`.
-- The package defaults to the `core` MCP tool profile to reduce tool-list noise for AI clients. `core` currently exposes 43 high-signal tools centered on `execute_code`, play mode control, input simulation, screenshots, performance inspection, logs, compilation checks, structured object location and component editing, editor selection / prefab-stage state, live C# API reflection, Unity documentation lookup, and `execute_menu_item` as a low-friction fallback. Switch to `full` in the **Server** tab if you want all 274 tools exposed. A profile only shortens the tool list for the client; it is not an access control, since any client can switch it with `set_tool_profile` and `execute_code` is in every profile. Restrict a tool through your client's tool-approval prompt.
+- The package defaults to the `core` MCP tool profile to reduce tool-list noise for AI clients. `core` exposes a compact set of high-signal tools centered on `execute_code`, play mode control, input simulation, screenshots, performance inspection, logs, compilation checks, structured object location and component editing, editor selection / prefab-stage state, live C# API reflection, Unity documentation lookup, and `execute_menu_item` as a low-friction fallback. Switch to `full` in the **Server** tab if you want every tool exposed. A profile only shortens the tool list for the client; it is not an access control, since any client can switch it with `set_tool_profile` and `execute_code` is in every profile. Restrict a tool through your client's tool-approval prompt.
 - `execute_code` safety checks and the stricter filesystem guard are enabled by default from the **Settings** tab. The guard blocks obvious destructive snippets, broad `System.IO` writes, raw file streams, and absolute/user/system/traversal paths. It catches accidents, not intent: `safety_checks` is a tool argument, so any client that can call `execute_code` can pass `safety_checks=false` and skip both the source blocklist and the compiled-assembly guard. It is neither a sandbox nor a security boundary — see [SECURITY.md](./SECURITY.md).
 - Plugin debug logging is off by default and can also be enabled from the **Settings** tab. Warnings and errors are always written to the Unity Console.
 - All exposed MCP tools run directly. There is no extra approval toggle.
@@ -262,13 +262,13 @@ Open your AI client and try: *"Create a 3D platformer level with 5 floating plat
 - **Default Safety Checks** — `execute_code` now has persistent default-on safety toggles, including a stricter filesystem guard for clients that do not expose per-call arguments clearly
 - **Play Mode Automation** — Enter play mode, simulate keyboard/mouse input, capture screenshots, inspect logs, and validate behavior from the same MCP session
 - **Project Context Built In** — Exposes live resources for project state, active scene, selection, compilation, console output, and MCP interaction history
-- **Focused by Default, Full When Needed** — `core` exposes a compact high-signal toolset; `full` exposes 274 tools
+- **Focused by Default, Full When Needed** — `core` exposes a compact high-signal toolset; `full` exposes every tool
 - **Single Unity Package** — No extra approval UI, no external daemon to click through, and no Python requirement for the Unity-side plugin itself
 - **Extensible** — Add custom tools with attribute-based discovery, or connect Unity to external MCP services when needed
 
 ## Highlights
 
-- **274 Built-in Tools** — Scene editing, assets, scripts, play mode control, screenshots and screenshot diffing, performance analysis, prompts, resources, structured object location, SerializedObject-based component and project-settings editing, animator authoring, compound uGUI controls, editor-state inspection, menu-item fallback, and editor automation across 57 modules. Full list: [TOOLS.md](TOOLS.md)
+- **Built-in Tools** — Scene editing, assets, scripts, play mode control, screenshots and screenshot diffing, performance analysis, prompts, resources, structured object location, SerializedObject-based component and project-settings editing, animator authoring, compound uGUI controls, editor-state inspection, menu-item fallback, and editor automation across 57 modules. Full list: [TOOLS.md](TOOLS.md)
 - **Structured Returns + `instanceId` Chaining** — Tools return `{success, message, data}` JSON with stable `instanceId` fields so agents can chain `by_id` calls reliably instead of re-resolving by name
 - **`IKitWrightCommand` for `execute_code`** — New snippet template with auto-Undo (`ctx.RegisterObjectCreation` / `ctx.RegisterObjectModification` / `ctx.DestroyObject`), structured logs (`ctx.Log/LogWarning/LogError`), and a tracked changelog returned to the agent
 - **Resources & Prompts** — Live project context, scene/selection/error resources, resource templates, and reusable workflow prompts
@@ -321,7 +321,7 @@ The table below compares this repository with the publicly documented behavior o
 |------|--------------------------|--------------------|
 | Unity-side architecture | Embedded Unity Editor package with built-in HTTP MCP server | Unity bridge plus a Python MCP server, run locally or remote-hosted with API-key auth |
 | Extra local prerequisites | Unity package only for core workflows | Unity + Python 3.10+ + `uv` according to the public quick start |
-| Tool surface | 274 fine-grained tools across 57 modules, chained by `instanceId` | ~51 wide `manage_*` entrypoints with an `action` enum per tool (README states "47 focused entrypoints") |
+| Tool surface | Fine-grained tools across 57 modules, chained by `instanceId` | ~51 wide `manage_*` entrypoints with an `action` enum per tool (README states "47 focused entrypoints") |
 | Primary workflow style | `execute_code` first, then focused helper tools | `manage_*` families first; `execute_code` is available in the `scripting_ext` group |
 | Default tool exposure | Compact `core` profile with optional `full` expansion | Tool groups toggled per session via `manage_tools` |
 | Asset generation | Not built-in (compose external APIs via `execute_code`) | `generate_image` / `generate_audio` / `generate_model` via fal.ai, Tripo, Meshy, plus Sketchfab import |
@@ -346,7 +346,7 @@ The table below compares this repository with Unity Technologies' official `com.
 | License | MIT, open source | Unity Terms of Service, proprietary |
 | Deployment | Local HTTP MCP server in Editor, no cloud | Editor + native Relay subprocess + Unity Cloud backend |
 | Billing | Free, user brings their own AI client | Credits-based (Unity Dashboard) |
-| Tool exposure | 274 tools across 57 modules, `core` (43) / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
+| Tool exposure | Tools across 57 modules, `core` / `full` profiles | ~15 MCP tools (mostly `Manage*` families) |
 | Generic escape hatch | `execute_code` — Roslyn-first in-memory compile, `IKitWrightCommand` + Undo, no sandbox (client-side approval) | `RunCommand` — namespace blacklist sandbox |
 | Play mode validation | Full loop: enter / simulate input / capture / read logs / exit | Enter/Exit only; no input simulation |
 | Asset generators | Not built-in (compose external APIs via `execute_code`) | Native Image / Mesh / PBR / Sound / Animation generators |
@@ -359,7 +359,7 @@ For a long-form comparison of the two approaches see [KitWright MCP for Unity vs
 
 The current open-source package exposes four high-value capability layers:
 
-- **Tools** — 274 total tools in `full`, 43 focused tools in `core`
+- **Tools** — every tool in `full`, a focused subset in `core`
 - **Primary execution** — `execute_code` for rich editor/runtime orchestration
 - **Prompts** — workflow prompts like `fix_compile_errors`, `runtime_validation`, and `create_playable_prototype`
 - **Resources** — project context, scene summaries, selection state, compile errors, console errors, MCP interaction history, plus resource templates for scene objects, components, and asset paths
@@ -439,7 +439,7 @@ MCP Server (HTTP JSON-RPC 2.0)
     └─ MCPRequestHandler (protocol handling)
         └─ MCPExecutionBridge
             └─ FunctionInvoker (reflection-based invocation)
-                └─ Tool Functions (274 built-in tools across 57 modules)
+                └─ Tool Functions (built-in tools across 57 modules)
 ```
 
 ```
