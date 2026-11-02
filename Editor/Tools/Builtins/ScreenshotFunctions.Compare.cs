@@ -153,7 +153,7 @@ namespace KitWright.Editor.Tools.Builtins
                 if (!string.IsNullOrEmpty(directory))
                     Directory.CreateDirectory(directory);
 
-                File.WriteAllBytes(resolved, diffTexture.EncodeToPNG());
+                AtomicFile.WriteAllBytes(resolved, diffTexture.EncodeToPNG());
                 savedPath = resolved;
                 return true;
             }

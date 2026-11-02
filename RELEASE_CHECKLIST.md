@@ -2,6 +2,12 @@
 
 Use this checklist before publishing a new open-source release of KitWright MCP for Unity.
 
+**Quick release:** `scripts~/ship.sh <version>` runs everything below that can be run: it checks that CI is
+green on `main`, stamps `CHANGELOG.md`, bumps the version, builds and validates the `.unitypackage`, pushes
+`main`, publishes `upm`, the tag and the GitHub Release, and verifies them. `--dry-run` only checks.
+OpenUPM follows the tag by itself. What stays manual: the Asset Store upload (Asset Store Publishing Tools,
+from the store project, with the Package Manager dependencies ticked) and the "Tests CI cannot run" list.
+
 The local helper `scripts~/release.sh <version>` automates the high-risk mechanical steps:
 version bumping, Unity EditMode tests, `.unitypackage` export, pathname validation, SHA/manifest generation,
 wrapper packing, and opt-in publishing flags for GitHub, NuGet, and the MCP Registry.
@@ -69,6 +75,7 @@ there only when the test needs something the runners do not have, and name the t
 - [ ] Initial tags or release tags follow the chosen versioning scheme
 - [ ] The `.unitypackage` was exported from an explicit filtered asset list, without `IncludeDependencies` or `IncludeLibraryAssets`
 - [ ] The `.unitypackage` contains only `Assets/unity-mcp` paths; verify there are no `ProjectSettings/`, `Packages/`, `Library/`, `Tests/`, `CLAUDE.md`, or local token entries before upload
+- [ ] The `.unitypackage` has a `packagemanagermanifest` entry listing the `package.json` dependencies, so Unity's import window offers to install them (`release.sh` adds it)
 
 ## 6. Publish
 

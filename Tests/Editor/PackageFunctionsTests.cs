@@ -32,9 +32,19 @@ namespace KitWright.Editor.Tests
         [Test]
         public void InstallRefusesARemoteSourceUntilItIsAskedFor()
         {
-            var refused = PackageFunctions.InstallPackage("https://github.com/x/y.git");
+            var refused = PackageFunctions.InstallPackage("https://github.com/x/y.git").GetAwaiter().GetResult();
 
             StringAssert.Contains("REMOTE_PACKAGE_SOURCE", refused);
         }
+
+        [TestCase("com.kitwright.unity.mcp")]
+        [TestCase(" COM.KitWright.Unity.MCP@1.2.3 ")]
+        public void RemoveRefusesThePackageThatRunsTheServer(string name) =>
+            StringAssert.Contains("PACKAGE_PROTECTED", PackageFunctions.RemovePackage(name).GetAwaiter().GetResult());
+
+        [TestCase("")]
+        [TestCase("   ")]
+        public void RemoveRefusesAnEmptyName(string name) =>
+            StringAssert.Contains("INVALID_PARAM", PackageFunctions.RemovePackage(name).GetAwaiter().GetResult());
     }
 }

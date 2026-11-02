@@ -23,6 +23,7 @@ Default behavior:
   - bump package.json and local wrapper versions when the wrapper workspace exists
   - run Unity EditMode tests
   - export Assets/unity-mcp as a filtered unitypackage without local-only files or tests
+  - add the package.json dependencies as a Package Manager manifest, so Unity's import window offers to install them
   - validate all unitypackage pathnames stay under Assets/unity-mcp
   - generate release notes, SHA256SUMS, and a release manifest
   - dotnet pack the stdio wrapper when the wrapper workspace exists
@@ -42,6 +43,7 @@ Options:
   --no-export          Skip unitypackage export; validates an existing package if present
   --no-wrapper         Skip wrapper version bump and dotnet pack
   --dry-run            Print major actions without mutating files or publishing
+  --bump-only          Only bump package.json and the README snippets, then stop
   -h, --help           Show this help
 
 Environment:
@@ -79,6 +81,7 @@ PUBLISH_NUGET=0
 PUBLISH_REGISTRY=0
 VERIFY_OPENUPM=0
 DRY_RUN=0
+BUMP_ONLY=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -90,6 +93,7 @@ while [[ $# -gt 0 ]]; do
     --publish-registry) PUBLISH_REGISTRY=1 ;;
     --verify-openupm) VERIFY_OPENUPM=1 ;;
     --dry-run) DRY_RUN=1 ;;
+    --bump-only) BUMP_ONLY=1 ;;
     -h|--help) usage; exit 0 ;;
     *) fail "unknown option: $1" ;;
   esac
@@ -407,6 +411,43 @@ EOF
   cleanup_exporter
 }
 
+# AssetDatabase.ExportPackage writes no Package Manager dependencies, so Unity's import window never
+# offers to install them and the scripts fail to compile in a project without Newtonsoft. The Asset
+# Store tools add a packagemanagermanifest entry for this: JSON {"dependencies": {...}} in a folder of
+# that name at the root of the archive, with no pathname or .meta. Here the list is package.json's.
+add_package_manager_manifest() {
+  [[ -f "$PACKAGE_OUTPUT" ]] || fail "unitypackage not found: $PACKAGE_OUTPUT"
+  require_command gzip
+  require_command tar
+
+  info "Adding the Package Manager dependency manifest"
+  local work
+  work="$(mktemp -d)"
+  node - "$ROOT/package.json" "$work" <<'NODE'
+const fs = require("fs");
+const [packageJson, work] = process.argv.slice(2);
+const dependencies = JSON.parse(fs.readFileSync(packageJson, "utf8")).dependencies || {};
+if (Object.keys(dependencies).length === 0) throw new Error("package.json declares no dependencies");
+fs.mkdirSync(work + "/packagemanagermanifest", { recursive: true });
+fs.writeFileSync(work + "/packagemanagermanifest/asset", JSON.stringify({ dependencies }, null, 2));
+NODE
+
+  local existing
+  existing="$(gzip -dc < "$PACKAGE_OUTPUT" | tar -xO packagemanagermanifest/asset 2>/dev/null || true)"
+  if [[ -n "$existing" ]]; then
+    [[ "$existing" == "$(cat "$work/packagemanagermanifest/asset")" ]] ||
+      fail "the unitypackage already carries a different dependency manifest; export it again"
+  else
+    gzip -dc < "$PACKAGE_OUTPUT" > "$work/package.tar"
+    tar -rf "$work/package.tar" --owner=0 --group=0 -C "$work" packagemanagermanifest
+    gzip -n -c "$work/package.tar" > "$PACKAGE_OUTPUT"
+  fi
+  rm -rf "$work"
+
+  gzip -dc < "$PACKAGE_OUTPUT" | tar -t | grep -qx 'packagemanagermanifest/asset' ||
+    fail "the dependency manifest is missing from $PACKAGE_OUTPUT"
+}
+
 validate_unitypackage() {
   [[ -f "$PACKAGE_OUTPUT" ]] || fail "unitypackage not found: $PACKAGE_OUTPUT"
   require_command tar
@@ -435,7 +476,7 @@ generate_notes_and_sums() {
   info "Generating release notes and SHA256SUMS"
   {
     if awk -v version="$VERSION" '
-      $0 ~ "^## \\[" version "\\]" { found = 1; next }
+      index($0, "## [" version "]") == 1 { found = 1; next }
       found && /^## \[/ { exit }
       found { print }
       END { exit found ? 0 : 1 }
@@ -611,6 +652,10 @@ archive_artifacts() {
 
 main() {
   require_command node
+  if [[ "$BUMP_ONLY" == 1 ]]; then
+    bump_versions
+    return
+  fi
   require_command rg
   require_command shasum
   run mkdir -p "$OUT_DIR"
@@ -623,6 +668,7 @@ main() {
     info "Dry run complete; skipped artifact validation, packing, and publishing"
     return
   fi
+  add_package_manager_manifest
   validate_unitypackage
   pack_wrapper
   generate_notes_and_sums

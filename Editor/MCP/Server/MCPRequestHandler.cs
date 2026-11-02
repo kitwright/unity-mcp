@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using KitWright.Editor.Services;
 using KitWright.Editor.Settings;
+using KitWright.Editor.Tools.Helpers;
 using UnityEngine;
 
 namespace KitWright.Editor.MCP.Server
@@ -51,12 +52,20 @@ namespace KitWright.Editor.MCP.Server
         // with no session id (plain HTTP POST) share the sessionless slot.
         private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _negotiatedBySession
             = new System.Collections.Concurrent.ConcurrentDictionary<string, string>();
+        private readonly SessionRecency _negotiatedRecency = new SessionRecency();
 
         private static string SessionKey(MCPRequest request) =>
             string.IsNullOrEmpty(request?.SessionId) ? string.Empty : request.SessionId;
 
-        private string NegotiatedFor(MCPRequest request) =>
-            _negotiatedBySession.TryGetValue(SessionKey(request), out var version) ? version : ProtocolVersion;
+        private string NegotiatedFor(MCPRequest request)
+        {
+            var key = SessionKey(request);
+            if (!_negotiatedBySession.TryGetValue(key, out var version))
+                return ProtocolVersion;
+
+            _negotiatedRecency.Touch(key);
+            return version;
+        }
 
         public MCPRequestHandler(
             MCPToolExporter toolExporter,
@@ -136,7 +145,10 @@ namespace KitWright.Editor.MCP.Server
                 : null;
 
             var negotiated = NegotiateProtocolVersion(requested);
-            _negotiatedBySession[SessionKey(request)] = negotiated;
+            var sessionKey = SessionKey(request);
+            _negotiatedBySession[sessionKey] = negotiated;
+            _negotiatedRecency.Touch(sessionKey);
+            _negotiatedRecency.Evict(_negotiatedBySession, SessionRecency.MaxSessions);
             MCPToolListChangeNotifier.Observe(request.SessionId);
 
             var result = new Dictionary<string, object>
@@ -439,7 +451,7 @@ namespace KitWright.Editor.MCP.Server
 
             try
             {
-                var parsed = Newtonsoft.Json.Linq.JObject.Parse(result);
+                var parsed = KitWright.Editor.Tools.Helpers.JsonParse.Object(result);
                 if (parsed["success"]?.Type != Newtonsoft.Json.Linq.JTokenType.Boolean)
                     return false;
 

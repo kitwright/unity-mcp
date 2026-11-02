@@ -169,21 +169,20 @@ namespace KitWright.Editor.Tools.Scripting
         };
 
         private static string[] _loadedPaths;
-        private static string[] _codeDomPaths;
+        private static int _fileBackedCount;
 
-        // Statics die with every domain reload, which is also the only moment the loaded
-        // assembly set can change, so no explicit invalidation is needed.
+        // Mono loads BCL assemblies lazily, so the set grows between domain reloads. The count of
+        // file-backed assemblies says when it did; a compiled snippet is loaded from bytes, has no
+        // location and so does not count, which keeps the cache warm across execute_code calls.
         internal static string[] GetLoadedPaths()
         {
-            if (_loadedPaths != null)
+            var assemblies = AppDomain.CurrentDomain.GetAssemblies().Where(IsFileBacked).ToArray();
+            if (_loadedPaths != null && assemblies.Length == _fileBackedCount)
                 return _loadedPaths;
 
             var best = new Dictionary<string, KeyValuePair<Version, string>>(StringComparer.OrdinalIgnoreCase);
-            foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
+            foreach (var assembly in assemblies)
             {
-                if (assembly.IsDynamic)
-                    continue;
-
                 try
                 {
                     var location = assembly.Location;
@@ -206,12 +205,20 @@ namespace KitWright.Editor.Tools.Scripting
                 .Select(entry => entry.Value)
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
                 .ToArray();
+            _fileBackedCount = assemblies.Length;
             return _loadedPaths;
+        }
+
+        private static bool IsFileBacked(Assembly assembly)
+        {
+            try { return !assembly.IsDynamic && !string.IsNullOrEmpty(assembly.Location); }
+            catch { return false; }
         }
 
         internal static string[] GetCodeDomPaths()
         {
-            return _codeDomPaths ?? (_codeDomPaths = FilterForCodeDom(GetLoadedPaths()));
+            return FilterForCodeDom(RoslynCscScriptCompiler.GetReferencePaths(
+                GetLoadedPaths(), RoslynCscScriptCompiler.ResolveMonoLibRoot()));
         }
 
         internal static string[] FilterForCodeDom(string[] paths)
@@ -231,6 +238,10 @@ namespace KitWright.Editor.Tools.Scripting
     {
         private const int DefaultTimeoutMilliseconds = 15000;
         private const int OutputDrainMilliseconds = 5000;
+
+        // A compile that was killed (editor closed mid-run, domain reload) never reaches its own cleanup.
+        private static readonly TimeSpan StaleTempDirAge = TimeSpan.FromHours(1);
+        private static int _sweptStaleTempDirs;
 
         private readonly string _compilerHostPathOverride;
         private readonly string _cscPathOverride;
@@ -256,7 +267,11 @@ namespace KitWright.Editor.Tools.Scripting
             if (!TryResolveToolchain(out var compilerHostPath, out var cscPath, out var monoLibRoot, out var toolchainError))
                 return ScriptCompilationResult.Unavailable(Name, toolchainError);
 
-            var tempRoot = Path.Combine(Path.GetTempPath(), "KitWrightExecuteCode", Guid.NewGuid().ToString("N"));
+            var compileRoot = Path.Combine(Path.GetTempPath(), "KitWrightExecuteCode");
+            if (System.Threading.Interlocked.Exchange(ref _sweptStaleTempDirs, 1) == 0)
+                Helpers.Housekeeping.DeleteStaleDirectories(compileRoot, StaleTempDirAge);
+
+            var tempRoot = Path.Combine(compileRoot, Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempRoot);
 
             try
@@ -373,7 +388,7 @@ namespace KitWright.Editor.Tools.Scripting
             if (string.IsNullOrEmpty(compilerHostPath) || string.IsNullOrEmpty(cscPath))
                 TryResolvePreferredCompilerHost(out compilerHostPath, out cscPath);
             if (string.IsNullOrEmpty(monoLibRoot))
-                monoLibRoot = FindFirstExisting(GetMonoLibRootCandidates());
+                monoLibRoot = ResolveMonoLibRoot();
 
             if (string.IsNullOrEmpty(compilerHostPath))
             {
@@ -409,7 +424,7 @@ namespace KitWright.Editor.Tools.Scripting
             sb.AppendLine("-unsafe-");
             sb.AppendLine("-out:" + QuoteResponseFileValue(outputPath));
 
-            foreach (var reference in GetReferencePaths(monoLibRoot))
+            foreach (var reference in GetReferencePaths(ScriptCompilerReferences.GetLoadedPaths(), monoLibRoot))
                 sb.AppendLine("-r:" + QuoteResponseFileValue(reference));
 
             sb.AppendLine(QuoteResponseFileValue(sourcePath));
@@ -448,15 +463,40 @@ namespace KitWright.Editor.Tools.Scripting
             return false;
         }
 
-        private static IEnumerable<string> GetReferencePaths(string monoLibRoot)
+        // The BCL assemblies a snippet is likely to name. Mono loads these lazily, so one nothing has
+        // touched yet is absent from the loaded set and its types fail with CS1069/CS0012 (ZipFile lives
+        // in System.IO.Compression.FileSystem). A curated list rather than the whole profile folder:
+        // that also holds Mono.Cecil and other copies of types a loaded Unity package already defines.
+        private static readonly string[] ProfileAssemblies =
+        {
+            "mscorlib",
+            "System",
+            "System.Core",
+            "System.Data",
+            "System.IO.Compression",
+            "System.IO.Compression.FileSystem",
+            "System.Net.Http",
+            "System.Numerics",
+            "System.Runtime.Serialization",
+            "System.Xml",
+            "System.Xml.Linq",
+            "Microsoft.CSharp"
+        };
+
+        internal static string ResolveMonoLibRoot() => FindFirstExisting(GetMonoLibRootCandidates());
+
+        // The CodeDom fallback takes this list too, so a snippet resolves the same BCL types with either compiler.
+        internal static string[] GetReferencePaths(IEnumerable<string> loadedPaths, string monoLibRoot)
         {
             var references = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var path in ScriptCompilerReferences.GetLoadedPaths())
+            foreach (var path in loadedPaths)
                 references[Path.GetFileName(path)] = path;
 
-            AddProfileReferenceIfMissing(references, monoLibRoot, "mscorlib.dll");
-            AddProfileReferenceIfMissing(references, monoLibRoot, "System.dll");
-            AddProfileReferenceIfMissing(references, monoLibRoot, "System.Core.dll");
+            if (!string.IsNullOrEmpty(monoLibRoot))
+            {
+                foreach (var name in ProfileAssemblies)
+                    AddProfileReferenceIfMissing(references, monoLibRoot, name + ".dll");
+            }
 
             return references.Values
                 .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)

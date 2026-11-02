@@ -346,5 +346,15 @@ namespace KitWright.Editor.Tests
             Assert.That(second, Does.Not.Contain("newer"),
                 "The tool ignored cursor and handed back the newest entry again.");
         }
+
+        [Test]
+        public void GetConsoleLogs_SinceSecondsInAutoModeWithNoMatchIsAnEmptyAnswerNotAUsageError()
+        {
+            var result = Tools.Builtins.VisualFeedbackFunctions.GetConsoleLogs(
+                filter_text: "KitWrightNoEntryCarriesThis_" + System.Guid.NewGuid().ToString("N"), since_seconds: 30);
+
+            Assert.That(result, Does.Not.Contain("INVALID_SINCE_SECONDS"));
+            Assert.That(result, Does.Contain("from the last 30 second(s)"));
+        }
     }
 }

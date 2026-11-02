@@ -1,6 +1,7 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System.IO;
+using System.Linq;
 using KitWright.Editor.Tools.Builtins;
 using NUnit.Framework;
 using UnityEngine;
@@ -63,6 +64,75 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("patch_script", refused);
             Assert.AreEqual(original, File.ReadAllText(FullPath("Probe.cs")),
                 "A refused create must leave the file untouched.");
+        }
+
+        [TestCase("../Escaped")]
+        [TestCase("Sub/Probe")]
+        [TestCase("Sub\\Probe")]
+        [TestCase("..")]
+        [TestCase("")]
+        public void CreateScript_RefusesANameThatIsNotAPlainFileName(string name)
+        {
+            StringAssert.Contains("INVALID_NAME", CodeFunctions.CreateScript(name, Sound, Folder));
+            Assert.IsEmpty(Directory.GetFileSystemEntries(FullPath(string.Empty)));
+        }
+
+        [Test]
+        public void CreateScript_RefusesAFileAsSavePath_AndStripsACsSuffixFromTheName()
+        {
+            StringAssert.Contains("INVALID_SAVE_PATH", CodeFunctions.CreateScript("Probe", Sound, Folder + "/Dir.cs"));
+            Assert.IsEmpty(Directory.GetFileSystemEntries(FullPath(string.Empty)));
+
+            StringAssert.Contains("Created script 'Dotted.cs'", CodeFunctions.CreateScript("Dotted.cs", Sound, Folder));
+            Assert.IsTrue(File.Exists(FullPath("Dotted.cs")));
+            Assert.IsFalse(File.Exists(FullPath("Dotted.cs.cs")));
+        }
+
+        [TestCase("a\nb\n", "x\ny\n", "a\nb\n")]
+        [TestCase("a\r\nb\r\n", "x\r\ny\r\n", "a\r\nb\r\n")]
+        [TestCase("x\ny\n", "a\r\nb\r\n", "x\r\ny\r\n")]
+        [TestCase("x\r\ny\r\n", "a\nb\n", "x\ny\n")]
+        [TestCase("x\ny\r\n", "a\r\nb\nc\n", "x\ny\r\n")]
+        [TestCase("no newline", "a\r\nb\r\n", "no newline")]
+        public void MatchLineEndings_FollowsTheFileAndLeavesAMixedFileAlone(string text, string reference, string expected)
+        {
+            Assert.AreEqual(expected, CodeFunctions.MatchLineEndings(text, reference));
+        }
+
+        [Test]
+        public void PatchScript_MatchesAMultiLineOldTextAgainstACrlfFile()
+        {
+            var original = "class A\r\n{\r\n    int x;\r\n    int y;\r\n}\r\n";
+            var path = Write("Crlf.txt", original);
+
+            var patched = CodeFunctions.PatchScript(path, "    int x;\n    int y;", "    int x;\n    int z;\n    int y;");
+
+            StringAssert.Contains("Patched script", patched);
+            Assert.AreEqual("class A\r\n{\r\n    int x;\r\n    int z;\r\n    int y;\r\n}\r\n", Read("Crlf.txt"));
+        }
+
+        [Test]
+        public void EditScript_KeepsTheFilesLineEndings()
+        {
+            var original = "class A\r\n{\r\n}\r\n";
+            var path = Write("Rewrite.txt", original);
+
+            CodeFunctions.EditScript(path, "class A\n{\n    int x;\n}\n", CodeFunctions.ComputeSha256(original));
+
+            Assert.AreEqual("class A\r\n{\r\n    int x;\r\n}\r\n", Read("Rewrite.txt"));
+        }
+
+        [Test]
+        public void PatchScript_KeepsTheBomOfTheFileItEdits()
+        {
+            var path = Write("Bom.txt", Sound);
+            File.WriteAllBytes(FullPath("Bom.txt"),
+                new System.Text.UTF8Encoding(true).GetPreamble().Concat(System.Text.Encoding.UTF8.GetBytes(Sound)).ToArray());
+
+            CodeFunctions.PatchScript(path, "void A()", "void B()");
+
+            var bytes = File.ReadAllBytes(FullPath("Bom.txt"));
+            CollectionAssert.AreEqual(new byte[] { 0xEF, 0xBB, 0xBF }, bytes.Take(3).ToArray());
         }
 
         [Test]

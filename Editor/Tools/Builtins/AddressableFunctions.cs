@@ -23,6 +23,37 @@ namespace KitWright.Editor.Tools.Builtins
         private static object NoPackage() => Response.Error("ADDRESSABLES_REQUIRED", new { hint = NoPackageHint });
 #endif
 
+        internal static object NotAddressable(string path, string reason = null) =>
+            reason == null
+                ? Response.Error("ASSET_NOT_ADDRESSABLE", new { path },
+                    "Addressables returned no entry for this asset, so nothing was marked. Pick an asset that ships in the player.")
+                : Response.Error("ASSET_NOT_ADDRESSABLE", new { path, reason },
+                    "Nothing was marked. Pick an asset that ships in the player.");
+
+        // Why a player cannot serve this path, or null. Checked before any group is created, because
+        // Addressables either returns no entry for these or accepts them and fails the build.
+        internal static string UnservableReason(string path)
+        {
+            var normalized = (path ?? string.Empty).Trim().Replace('\\', '/').TrimEnd('/');
+            if (string.Equals(normalized, "Assets", System.StringComparison.OrdinalIgnoreCase))
+                return "The Assets folder itself cannot be an Addressable entry; mark a subfolder or the assets inside it.";
+
+            if (!normalized.StartsWith("Assets/", System.StringComparison.OrdinalIgnoreCase) &&
+                !normalized.StartsWith("Packages/", System.StringComparison.OrdinalIgnoreCase))
+                return "Only assets under Assets/ or Packages/ can be Addressable; built-in resources and other folders are not served from a player.";
+
+            if (string.Equals(System.IO.Path.GetExtension(normalized), ".cs", System.StringComparison.OrdinalIgnoreCase))
+                return "A script is compiled into the player's code and is not an asset a bundle can hold.";
+
+            foreach (var segment in normalized.Split('/'))
+            {
+                if (string.Equals(segment, "Editor", System.StringComparison.OrdinalIgnoreCase))
+                    return "Anything under an Editor folder is stripped from player builds, so it cannot be loaded at runtime.";
+            }
+
+            return null;
+        }
+
         [Description("Mark an asset as Addressable and set its address key. Optionally place it in a named group (created if missing). Requires the Addressables package.")]
         public static object MarkAddressable(
             [ToolParam("Project-relative asset path (e.g. 'Assets/Prefabs/Enemy.prefab')")] string path,
@@ -35,8 +66,19 @@ namespace KitWright.Editor.Tools.Builtins
             var guid = AssetDatabase.AssetPathToGUID(path);
             if (string.IsNullOrEmpty(guid)) return Response.Error("ASSET_NOT_FOUND", new { path });
 
+            var unservable = UnservableReason(path);
+            if (unservable != null) return NotAddressable(path, unservable);
+
+            var createdGroup = !string.IsNullOrEmpty(group) && settings.FindGroup(group) == null;
             var targetGroup = string.IsNullOrEmpty(group) ? settings.DefaultGroup : GetOrCreateGroup(settings, group);
             var entry = settings.CreateOrMoveEntry(guid, targetGroup);
+            if (entry == null)
+            {
+                if (createdGroup)
+                    settings.RemoveGroup(targetGroup);
+                return NotAddressable(path);
+            }
+
             entry.address = string.IsNullOrEmpty(address) ? path : address;
             settings.SetDirty(AddressableAssetSettings.ModificationEvent.EntryModified, entry, true);
             AssetDatabase.SaveAssets();

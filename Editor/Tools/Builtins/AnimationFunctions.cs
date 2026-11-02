@@ -18,39 +18,31 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Animation")]
     internal static class AnimationFunctions
     {
-        [Description("Create an Animator Controller asset")]
+        [Description("Create an Animator Controller asset. Refuses to replace an existing asset unless overwrite=true.")]
         public static string CreateAnimatorController(
-            [ToolParam("Name of the controller")] string name,
-            [ToolParam("Save path", Required = false)] string save_path = "Assets/Animations/")
+            [ToolParam("Name of the controller (file name only, no folders)")] string name,
+            [ToolParam("Folder to save into", Required = false)] string save_path = "Assets/Animations/",
+            [ToolParam("Replace a controller that already exists at that path", Required = false)] bool overwrite = false)
         {
-            try { PathSafety.ResolveAssetPath(save_path.TrimEnd('/', '\\') + "/x"); }
-            catch (PathOutsideProjectException ex)
-            { return ToolResultFormatter.Error("INVALID_PATH", new { save_path, message = ex.Message }); }
+            if (!TryPrepareNewAsset(name, save_path, ".controller", "ANIMATOR_CONTROLLER_EXISTS", overwrite, out var fullPath, out var error))
+                return error;
 
-            if (!Directory.Exists(save_path))
-                Directory.CreateDirectory(save_path);
-
-            var fullPath = $"{save_path}{name}.controller";
             var controller = AnimatorController.CreateAnimatorControllerAtPath(fullPath);
             return $"Created Animator Controller at {fullPath}";
         }
 
-        [Description("Create an Animation Clip asset")]
+        [Description("Create an Animation Clip asset. Refuses to replace an existing asset unless overwrite=true.")]
         public static string CreateAnimationClip(
-            [ToolParam("Name of the animation clip")] string name,
-            [ToolParam("Save path", Required = false)] string save_path = "Assets/Animations/")
+            [ToolParam("Name of the animation clip (file name only, no folders)")] string name,
+            [ToolParam("Folder to save into", Required = false)] string save_path = "Assets/Animations/",
+            [ToolParam("Replace a clip that already exists at that path", Required = false)] bool overwrite = false)
         {
-            try { PathSafety.ResolveAssetPath(save_path.TrimEnd('/', '\\') + "/x"); }
-            catch (PathOutsideProjectException ex)
-            { return ToolResultFormatter.Error("INVALID_PATH", new { save_path, message = ex.Message }); }
-
-            if (!Directory.Exists(save_path))
-                Directory.CreateDirectory(save_path);
+            if (!TryPrepareNewAsset(name, save_path, ".anim", "ANIMATION_CLIP_EXISTS", overwrite, out var fullPath, out var error))
+                return error;
 
             var clip = new AnimationClip();
             clip.name = name;
 
-            var fullPath = $"{save_path}{name}.anim";
             AssetDatabase.CreateAsset(clip, fullPath);
             AssetDatabase.Refresh();
             return $"Created Animation Clip at {fullPath}";
@@ -85,7 +77,7 @@ namespace KitWright.Editor.Tools.Builtins
         public static object GetAnimatorState(
             [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
             [ToolParam("Layer index to report the current state for", Required = false)] int layer = 0,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var resolved = ResolveAnimator(target, find_method);
             if (resolved.Error != null) return resolved.Error;
@@ -138,7 +130,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
             [ToolParam("Parameter name as defined in the Animator Controller")] string parameter,
             [ToolParam("Value: number for Float/Int, true/false for Bool, true/'set'/false/'reset' for Trigger")] string value,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrEmpty(parameter))
                 return Response.Error("PARAMETER_REQUIRED");
@@ -166,8 +158,7 @@ namespace KitWright.Editor.Tools.Builtins
             switch (match.type)
             {
                 case AnimatorControllerParameterType.Float:
-                    if (!float.TryParse(value, System.Globalization.NumberStyles.Float,
-                            System.Globalization.CultureInfo.InvariantCulture, out var f))
+                    if (!ValueConverter.TryFiniteFloat(value, out var f))
                         return Response.Error("INVALID_FLOAT", new { value });
                     animator.SetFloat(match.nameHash, f);
                     return Response.Success($"Set float '{parameter}' = {f}.");
@@ -201,13 +192,15 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Play a specific Animator state by name, e.g. to drive UI or a character to a known visual state " +
                      "before taking a screenshot. In Edit Mode the animator is force-evaluated once so the pose applies " +
-                     "without entering Play Mode. Runtime-only state: not undoable.")]
+                     "without entering Play Mode; there the pose is written into the scene objects the clips animate, " +
+                     "so it is registered with Undo and the scene is marked modified. In Play Mode it is runtime-only " +
+                     "state that resets when Play Mode exits.")]
         public static object PlayAnimatorState(
             [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
             [ToolParam("State name as defined in the Animator Controller (e.g. 'Idle' or 'Base Layer.Idle')")] string state,
             [ToolParam("Layer index; -1 lets Unity pick the first layer containing the state", Required = false)] int layer = -1,
             [ToolParam("Normalized start time 0-1; omit to keep Unity's default", Required = false)] float normalized_time = float.NegativeInfinity,
-            [ToolParam("How to resolve target", Required = false)] string find_method = null)
+            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             if (string.IsNullOrEmpty(state))
                 return Response.Error("STATE_REQUIRED");
@@ -244,11 +237,20 @@ namespace KitWright.Editor.Tools.Builtins
             if (!found)
                 return Response.Error("STATE_NOT_FOUND", new { state, layer, hint = "Check the state name in the Animator Controller (short name or 'LayerName.StateName')." });
 
+            var editMode = !EditorApplication.isPlaying;
+            if (editMode)
+                Undo.RegisterFullObjectHierarchyUndo(animator.gameObject, "Play Animator State");
+
             animator.Play(hash, resolvedLayer, normalized_time);
 
             // In Edit Mode the animator doesn't tick on its own -- evaluate once so the pose is visible immediately.
-            if (!EditorApplication.isPlaying)
+            // The pose lands in serialized scene data, so the scene has to show as modified.
+            if (editMode)
+            {
                 animator.Update(0f);
+                if (animator.gameObject.scene.IsValid())
+                    UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(animator.gameObject.scene);
+            }
 
             return Response.Success($"Playing state '{state}' on '{animator.gameObject.name}' (layer {layer}).", new
             {
@@ -256,7 +258,9 @@ namespace KitWright.Editor.Tools.Builtins
                 state,
                 layer = resolvedLayer,
                 requestedLayer = layer
-            });
+            }, editMode
+                ? "Edit Mode: the pose was written into the scene objects the clips animate. The scene is marked modified; Undo restores the previous pose."
+                : null);
         }
 
         [Description("Add a parameter to an Animator Controller asset. Parameters are what transitions test, so add " +
@@ -267,13 +271,16 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Parameter type: 'float', 'int', 'bool' or 'trigger'")] string type,
             [ToolParam("Default value: a number for float/int, 'true'/'false' for bool. Ignored for trigger.", Required = false)] string default_value = null)
         {
+            if (string.IsNullOrWhiteSpace(name))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "name", provided = name });
+
             var controller = LoadController(controller_path, out var error);
             if (controller == null) return error;
 
             if (controller.parameters.Any(p => p.name == name))
                 return ToolResultFormatter.Error("PARAMETER_EXISTS", new { controller_path, name });
 
-            if (!Enum.TryParse<AnimatorControllerParameterType>(type, true, out var parameterType))
+            if (!ValueConverter.TryParseEnum<AnimatorControllerParameterType>(type, out var parameterType))
                 return ToolResultFormatter.Error("UNKNOWN_PARAMETER_TYPE", new
                 {
                     type,
@@ -294,7 +301,7 @@ namespace KitWright.Editor.Tools.Builtins
                 switch (parameterType)
                 {
                     case AnimatorControllerParameterType.Float:
-                        parsed = ValueConverter.TryParseFloat(default_value, out floatDefault);
+                        parsed = ValueConverter.TryFiniteFloat(default_value, out floatDefault);
                         break;
                     case AnimatorControllerParameterType.Int:
                         parsed = ValueConverter.TryParseInt(default_value, out intDefault);
@@ -338,6 +345,13 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Layer index. Default 0.", Required = false)] int layer = 0,
             [ToolParam("Make this the layer's default (entry) state", Required = false)] bool make_default = false)
         {
+            // Unity rewrites every '.' in a state name to '_' and renames an empty one, so the state added
+            // would not be the one named in the reply, and the duplicate check and FindState compare
+            // text that never matches it.
+            if (string.IsNullOrWhiteSpace(state_name) || state_name.IndexOf('.') >= 0)
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "state_name", provided = state_name },
+                    "state_name must be non-empty and contain no '.': Unity rewrites each '.' to '_', so the state would exist under a different name than the one given.");
+
             var stateMachine = ResolveStateMachine(controller_path, layer, out var controller, out var error);
             if (stateMachine == null) return error;
 
@@ -382,6 +396,10 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Wait for the source clip to finish before transitioning", Required = false)] bool has_exit_time = false,
             [ToolParam("Blend duration in seconds. Default 0.25.", Required = false)] float duration = 0.25f)
         {
+            if (float.IsNaN(duration) || float.IsInfinity(duration) || duration < 0f)
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "duration", provided = duration.ToString() },
+                    "duration must be a finite number of seconds, 0 or more.");
+
             var stateMachine = ResolveStateMachine(controller_path, layer, out var controller, out var error);
             if (stateMachine == null) return error;
 
@@ -463,21 +481,33 @@ namespace KitWright.Editor.Tools.Builtins
             if (componentType == null)
                 return ToolResultFormatter.Error("TYPE_NOT_FOUND", new { type });
 
+            if (string.IsNullOrWhiteSpace(property))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "property", provided = property });
+
             JArray parsedKeys;
-            try { parsedKeys = JArray.Parse(keys); }
+            try { parsedKeys = JsonParse.Array(keys); }
             catch (Exception ex) { return ToolResultFormatter.Error("INVALID_KEYS_JSON", new { message = ex.Message }); }
 
             if (parsedKeys.Count == 0)
                 return ToolResultFormatter.Error("NO_KEYFRAMES", new { hint = "Pass at least one {time, value} pair." });
 
             var keyframes = new Keyframe[parsedKeys.Count];
+            var times = new HashSet<float>();
             for (var i = 0; i < parsedKeys.Count; i++)
             {
-                var time = parsedKeys[i]["time"];
-                var value = parsedKeys[i]["value"];
+                if (!(parsedKeys[i] is JObject key))
+                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = "Each key must be an object like {\"time\":0,\"value\":1}." });
+
+                var time = key["time"];
+                var value = key["value"];
                 if (time == null || value == null)
                     return ToolResultFormatter.Error("INVALID_KEYFRAME", new { index = i, hint = "Each key needs both 'time' and 'value'." });
-                keyframes[i] = new Keyframe(time.Value<float>(), value.Value<float>());
+                if (!TryFiniteNumber(time, out var timeValue) || !TryFiniteNumber(value, out var valueValue))
+                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = "'time' and 'value' must be finite numbers." });
+                if (!times.Add(timeValue))
+                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = $"Another key already has time {timeValue}; times must be distinct." });
+
+                keyframes[i] = new Keyframe(timeValue, valueValue);
             }
 
             var curve = new AnimationCurve(keyframes);
@@ -557,16 +587,26 @@ namespace KitWright.Editor.Tools.Builtins
             error = null;
 
             JArray parsed;
-            try { parsed = JArray.Parse(conditions); }
+            try { parsed = JsonParse.Array(conditions); }
             catch (Exception ex)
             {
                 error = ToolResultFormatter.Error("INVALID_CONDITIONS_JSON", new { message = ex.Message });
                 return false;
             }
 
-            foreach (var entry in parsed)
+            foreach (var item in parsed)
             {
-                var parameter = entry["parameter"]?.Value<string>();
+                if (!(item is JObject entry))
+                {
+                    error = ToolResultFormatter.Error("INVALID_PARAM", new
+                    {
+                        param = "conditions",
+                        hint = "Each condition must be an object like {\"parameter\":\"Speed\",\"mode\":\"Greater\",\"threshold\":0.1}."
+                    });
+                    return false;
+                }
+
+                var parameter = TokenText(entry["parameter"]);
                 if (string.IsNullOrWhiteSpace(parameter))
                 {
                     error = ToolResultFormatter.Error("INVALID_CONDITION", new { hint = "Each condition needs a 'parameter'." });
@@ -586,8 +626,8 @@ namespace KitWright.Editor.Tools.Builtins
                     return false;
                 }
 
-                var modeName = entry["mode"]?.Value<string>() ?? "If";
-                if (!Enum.TryParse<AnimatorConditionMode>(modeName, true, out var mode))
+                var modeName = TokenText(entry["mode"]) ?? "If";
+                if (!ValueConverter.TryParseEnum<AnimatorConditionMode>(modeName, out var mode))
                 {
                     error = ToolResultFormatter.Error("UNKNOWN_CONDITION_MODE", new
                     {
@@ -597,14 +637,91 @@ namespace KitWright.Editor.Tools.Builtins
                     return false;
                 }
 
+                var threshold = 0f;
+                var thresholdToken = entry["threshold"];
+                if (thresholdToken != null && thresholdToken.Type != JTokenType.Null &&
+                    !TryFiniteNumber(thresholdToken, out threshold))
+                {
+                    error = ToolResultFormatter.Error("INVALID_PARAM", new
+                    {
+                        param = "conditions",
+                        parameter,
+                        hint = "'threshold' must be a finite number."
+                    });
+                    return false;
+                }
+
                 result.Add(new ParsedCondition
                 {
                     Mode = mode,
-                    Threshold = entry["threshold"]?.Value<float>() ?? 0f,
+                    Threshold = threshold,
                     Parameter = parameter
                 });
             }
 
+            return true;
+        }
+
+        private static string TokenText(JToken token) =>
+            token == null || token.Type == JTokenType.Null ? null
+            : token.Type == JTokenType.String ? token.Value<string>()
+            : token.ToString();
+
+        private static bool TryFiniteNumber(JToken token, out float value)
+        {
+            value = 0f;
+            switch (token.Type)
+            {
+                case JTokenType.Integer:
+                case JTokenType.Float:
+                    value = token.Value<float>();
+                    return !float.IsNaN(value) && !float.IsInfinity(value);
+                case JTokenType.String:
+                    return ValueConverter.TryFiniteFloat(token.Value<string>(), out value);
+                default:
+                    return false;
+            }
+        }
+
+        private static bool TryPrepareNewAsset(
+            string name, string savePath, string extension, string existsCode, bool overwrite,
+            out string fullPath, out string error)
+        {
+            fullPath = null;
+            error = null;
+
+            if (!AssetFunctions.IsValidAssetName(name))
+            {
+                error = ToolResultFormatter.Error("INVALID_NAME", new { name },
+                    "name is the file name alone, without folders and without leading or trailing dots or spaces; pass the folder in save_path.");
+                return false;
+            }
+
+            if (!AssetFunctions.TryNormalizeAssetPath($"{savePath}/{name}{extension}", out fullPath))
+            {
+                error = ToolResultFormatter.Error("INVALID_PATH", new { save_path = savePath },
+                    "save_path must be a folder under Assets/ with no '..' segments, and no folder name that starts or ends " +
+                    "with a dot or space, ends with '~', or holds a character a file name cannot.");
+                return false;
+            }
+
+            string absolutePath;
+            try { absolutePath = PathSafety.ResolveAssetPath(fullPath); }
+            catch (PathOutsideProjectException ex)
+            {
+                error = ToolResultFormatter.Error("INVALID_PATH", new { save_path = savePath, message = ex.Message },
+                    "save_path must be a folder under Assets/.");
+                return false;
+            }
+
+            if (!overwrite && File.Exists(absolutePath))
+            {
+                error = ToolResultFormatter.Error(existsCode, new { path = fullPath },
+                    "An asset is already at this path. Pass overwrite=true to replace it, or choose another name.");
+                return false;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(absolutePath));
             return true;
         }
 

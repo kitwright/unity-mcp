@@ -39,11 +39,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (go == null)
                 return ObjectsHelper.NotFoundText("name", name);
 
-            Selection.activeGameObject = go;
-            if (SceneView.lastActiveSceneView != null)
-            {
-                SceneView.lastActiveSceneView.FrameSelected();
-            }
+            if (!SceneViewFunctions.TryGetSceneView(out var view, out _))
+                return ToolResultFormatter.Error("NO_SCENE_VIEW", new { hint = SceneViewFunctions.NoSceneViewHint });
+
+            SceneViewFunctions.FrameKeepingSelection(view, go);
             return $"Focused scene view on '{go.name}'";
         }
 
@@ -66,16 +65,28 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Message to log")] string message,
             [ToolParam("Log type: info, warning, error", Required = false)] string log_type = "info")
         {
+            var kind = string.IsNullOrWhiteSpace(log_type) ? "info" : log_type.Trim().ToLowerInvariant();
+            kind = kind switch
+            {
+                "log" or "debug" or "information" => "info",
+                "warn" => "warning",
+                "err" or "fatal" or "exception" => "error",
+                _ => kind
+            };
+            if (kind != "info" && kind != "warning" && kind != "error")
+                return ToolResultFormatter.Error("INVALID_PARAM",
+                    new { param = "log_type", provided = log_type, expected = "info, warning or error" });
+
             // Not the "[KitWright]" prefix the plugin uses for its own chatter: both read paths of
             // get_console_logs drop that prefix on purpose, so a message logged through this tool
             // could never be read back through the tool that exists to read it.
-            switch (log_type.ToLowerInvariant())
+            switch (kind)
             {
                 case "warning": Debug.LogWarning($"[MCP] {message}"); break;
                 case "error": Debug.LogError($"[MCP] {message}"); break;
                 default: Debug.Log($"[MCP] {message}"); break;
             }
-            return $"Logged {log_type}: {message}";
+            return $"Logged {kind}: {message}";
         }
 
         // A modal dialog blocks the editor main loop, which stalls the MCP request pump until a
@@ -119,6 +130,11 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Prefix each entry with the HH:mm:ss it was logged (cache/auto only; the Editor console keeps no timestamps).", Required = false)] bool include_timestamps = false,
             [ToolParam("Resume at this entry index counting back from the newest, as reported by a previous call's next_cursor. Cache source only. 0 starts at the newest.", Required = false)] int cursor = 0)
         {
+            if (!TryNormalizeLogType(log_type, out var normalizedLogType))
+                return ToolResultFormatter.Error("INVALID_PARAM",
+                    new { param = "log_type", provided = log_type, expected = "all, log, warning or error" });
+            log_type = normalizedLogType;
+
             count = Mathf.Clamp(count, 1, 200);
             since_seconds = Mathf.Clamp(since_seconds, 0, 86400);
             source = string.IsNullOrEmpty(source) ? "auto" : source.ToLowerInvariant();
@@ -138,14 +154,14 @@ namespace KitWright.Editor.Tools.Builtins
                 if (!string.IsNullOrEmpty(cachedLogs))
                     return cachedLogs;
 
-                if (source == "cache")
+                if (source == "cache" || since_seconds > 0)
                     return since_seconds > 0
                         ? $"No {log_type} entries found in cached logs from the last {since_seconds} second(s)"
                         : $"No {log_type} entries found in cached logs";
             }
 
             if (since_seconds > 0)
-                return ToolResultFormatter.Error("INVALID_SINCE_SECONDS", new { since_seconds, hint = "since_seconds is only supported when reading from cache or auto mode with cached results." });
+                return ToolResultFormatter.Error("INVALID_SINCE_SECONDS", new { since_seconds, hint = "since_seconds is only supported with source 'cache' or 'auto'." });
 
             var logEntriesType = Type.GetType("UnityEditor.LogEntries, UnityEditor");
             if (logEntriesType == null)
@@ -255,6 +271,14 @@ namespace KitWright.Editor.Tools.Builtins
                 foreach (var bit in forcedBits)
                     setFlagMethod.Invoke(null, new object[] { bit, false });
             }
+        }
+
+        // Both read paths filter on these four and treat anything else as "all", so an unknown value
+        // (info, warn) used to return the whole log as if it had been filtered.
+        internal static bool TryNormalizeLogType(string logType, out string normalized)
+        {
+            normalized = string.IsNullOrWhiteSpace(logType) ? "all" : logType.Trim().ToLowerInvariant();
+            return normalized == "all" || normalized == "log" || normalized == "warning" || normalized == "error";
         }
 
         // LogLevelLog, LogLevelWarning, LogLevelError in UnityEditor's console flags.

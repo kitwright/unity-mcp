@@ -71,7 +71,7 @@ namespace KitWright.Editor.Tools.Builtins
 
                 return sb.ToString();
             }
-            catch (Exception ex)
+            catch (Exception ex) when (!(ex is AmbiguousTargetException))
             {
                 return ToolResultFormatter.Exception(ex);
             }

@@ -36,6 +36,13 @@ EXPECTED = [
     r"AI module is not installed",
     r"compiled out without the com\.unity\.ugui package",
     r"no Game View to route",
+    r"only enforced on Windows",
+    r"different exceptions off Windows",
+    r"Junctions are a Windows feature",
+    r"Windows 8\.3 names",
+    r"Windows path spellings",
+    r"needs a scene already in the build list",
+    r"does not run module initializers",
 ]
 
 

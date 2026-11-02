@@ -89,6 +89,45 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void BuildCodeForCompilation_BareBody_AliasesObjectToUnityEngine()
+        {
+            var fullCode = ScriptExecutionFunctions.BuildCodeForCompilation(
+                "Object.DestroyImmediate(null);", "TempScript", false, out _);
+
+            StringAssert.Contains("using Object = UnityEngine.Object;", fullCode);
+        }
+
+        [Test]
+        public void BuildCodeForCompilation_ClassSnippetThatWouldBeAmbiguous_GetsTheObjectAlias()
+        {
+            var ambiguous = "using System;\nusing UnityEngine;\npublic class A { public static object Run() { return Object.FindFirstObjectByType<Camera>(); } }";
+            var systemOnly = "using System;\npublic class A { public static object Run() { return Object.ReferenceEquals(1, 2); } }";
+
+            StringAssert.StartsWith("using Object = UnityEngine.Object;",
+                ScriptExecutionFunctions.BuildCodeForCompilation(ambiguous, "TempScript", false, out _));
+            StringAssert.DoesNotContain("UnityEngine.Object",
+                ScriptExecutionFunctions.BuildCodeForCompilation(systemOnly, "TempScript", false, out _));
+        }
+
+        [Test]
+        public void HintForCompileErrors_NamesTheCommandSignatureAndStaysQuietOtherwise()
+        {
+            var wrongSignature = new[]
+            {
+                new ScriptCompilationError
+                {
+                    code = "CS0738",
+                    text = "'A' does not implement interface member 'IKitWrightCommand.Execute(ExecutionContext)'."
+                }
+            };
+            var unrelated = new[] { new ScriptCompilationError { code = "CS0103", text = "The name 'x' does not exist" } };
+
+            StringAssert.Contains("void Execute(ExecutionContext ctx)",
+                ScriptExecutionFunctions.HintForCompileErrors(wrongSignature));
+            Assert.IsNull(ScriptExecutionFunctions.HintForCompileErrors(unrelated));
+        }
+
+        [Test]
         public void ReachableProjectNamespaceUsings_AreDerivedFromLoadedScriptAssemblies()
         {
             var projectRoot = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
@@ -176,6 +215,10 @@ namespace KitWright.Editor.Tests
         [TestCase("Environment.Exit(0);", "Environment.Exit")]
         [TestCase("Application.Quit();", "Application.Quit")]
         [TestCase("AssetDatabase.DeleteAsset(\"Assets/test.prefab\");", "AssetDatabase.DeleteAsset")]
+        [TestCase("AssetDatabase.MoveAssetToTrash(\"Assets/test.prefab\");", "AssetDatabase.MoveAssetToTrash")]
+        [TestCase("AssetDatabase.MoveAssetsToTrash(paths, failed);", "AssetDatabase.MoveAssetsToTrash")]
+        [TestCase("FileUtil.ReplaceDirectory(a, b);", "FileUtil")]
+        [TestCase("FileUtil.DeleteFileOrDirectory(a);", "FileUtil")]
         [TestCase("while (true) { DoSomething(); }", "while")]
         [TestCase("while(true){}", "while")]
         [TestCase("for (;;) { DoSomething(); }", "for")]
@@ -352,6 +395,23 @@ namespace KitWright.Editor.Tests
         public void NonStrict_DoesNotBlockStrictOnlyPatterns(string code)
         {
             AssertAllowed(code, false);
+        }
+
+        [TestCase("File.Delete(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("AssetDatabase.DeleteAsset(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("AssetDatabase.MoveAssetToTrash(\"Assets/x.txt\");", false, "delete_asset")]
+        [TestCase("while (true) { }", false, "Bound the loop")]
+        [TestCase("var t = Type.GetType(\"Foo\");", false, "typeof(T)")]
+        [TestCase("var m = t.GetMethod(\"Foo\");", false, "reflect_api")]
+        [TestCase("Application.Quit();", false, "exit_play_mode")]
+        [TestCase("File.WriteAllText(\"Assets/x.txt\", \"data\");", true, "write_file")]
+        [TestCase("new StreamReader(\"x\");", true, "read_file")]
+        [TestCase("Directory.CreateDirectory(\"Assets/gen\");", true, "create_folder")]
+        [TestCase("var path = \"/Users/xyz/.ssh/config\";", true, "Assets/")]
+        public void BlockedPattern_NamesTheAllowedAlternative(string code, bool strict, string expectedAlternativePart)
+        {
+            Assert.IsTrue(ExecuteCodeSafetyPolicy.TryFindViolation(code, strict, out _, out _, out var alternative));
+            StringAssert.Contains(expectedAlternativePart, alternative);
         }
 
         private static void AssertBlocked(string code, bool strict, string expectedReasonPart)

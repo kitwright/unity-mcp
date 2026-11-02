@@ -428,7 +428,7 @@ namespace KitWright.Editor.MCP.Server
                     var editorThreadTask = _threadHelper.ExecuteAsyncOnEditorThreadAsync(
                         async () =>
                         {
-                            var redeliveryResponse = TryCreateBrokerRedeliveryResponse(request);
+                            var redeliveryResponse = await TryCreateBrokerRedeliveryResponseAsync(request);
                             if (redeliveryResponse != null)
                                 return redeliveryResponse;
 
@@ -453,7 +453,8 @@ namespace KitWright.Editor.MCP.Server
                         sendResponse(new MCPResponse
                         {
                             Id = request?.Id,
-                            Error = new MCPError { Code = -32001, Message = $"Tool call timed out after {ceilingMs}ms." }
+                            Error = new MCPError { Code = -32001, Message = ToolTimeoutMessage(GetToolName(request), ceilingMs,
+                                MCPToolExportPolicy.IsToolAllowed("get_execute_code_history", _settings, out _)) }
                         });
                         return;
                     }
@@ -496,6 +497,23 @@ namespace KitWright.Editor.MCP.Server
                     Error = new MCPError { Code = -32603, Message = $"Internal error: {ex.Message}" }
                 });
             }
+        }
+
+        // A bare "timed out" read as "nothing happened", so agents ran the same work a second time
+        // behind the first.
+        internal static string ToolTimeoutMessage(string toolName, int ceilingMs, bool historyExposed = true)
+        {
+            var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled " +
+                          "and may still finish, so check what it did before running it again.";
+
+            return string.Equals(toolName, "execute_code", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(toolName, ToolRegistry.ReplayExecuteCodeToolName, StringComparison.OrdinalIgnoreCase)
+                ? message + " For work that legitimately takes longer, pass timeout_seconds (up to " +
+                  $"{ToolRegistry.MaxExecuteCodeTimeoutSeconds}); " +
+                  (historyExposed
+                      ? "get_execute_code_history shows whether it finished."
+                      : "set_tool_profile 'full' exposes get_execute_code_history, which shows whether it finished.")
+                : message;
         }
 
         // The stall watchdog's verdict is an answer, not a crash: left to the generic catch it
@@ -669,6 +687,22 @@ namespace KitWright.Editor.MCP.Server
                 _settings.MCPServerPort.ToString());
         }
 
+        private static readonly TimeSpan RecompileRecoveryMaxWait = TimeSpan.FromSeconds(30);
+
+        // The record a recompile leaves is written only once compiling ends, which can be after the
+        // reload; answering before that would hand back the stub, or an older recompile's record.
+        internal static async Task<MCPResponse> TryCreateBrokerRedeliveryResponseAsync(MCPRequest request, TimeSpan? maxWait = null)
+        {
+            if (request != null && request.IsBrokerRedelivery &&
+                string.Equals(GetToolName(request), "request_recompile", StringComparison.OrdinalIgnoreCase))
+            {
+                await CompilationFunctions.WaitForHotReloadOutcomeAsync(
+                    () => !CompilationFunctions.HasPendingExternalSync(), maxWait ?? RecompileRecoveryMaxWait);
+            }
+
+            return TryCreateBrokerRedeliveryResponse(request);
+        }
+
         internal static MCPResponse TryCreateBrokerRedeliveryResponse(MCPRequest request)
         {
             if (request == null ||
@@ -679,7 +713,7 @@ namespace KitWright.Editor.MCP.Server
             }
 
             var toolName = GetToolName(request);
-            if (string.Equals(toolName, "get_reload_recovery_status", StringComparison.OrdinalIgnoreCase))
+            if (ToolRegistry.IsReplaySafe(toolName))
                 return null;
 
             var recovery = DomainReloadHandler.GetLastRecoveryInfo(false);
@@ -700,12 +734,8 @@ namespace KitWright.Editor.MCP.Server
             }
             else
             {
-                summary =
-                    "Tool '" + (string.IsNullOrEmpty(toolName) ? "unknown" : toolName) +
-                    "' was interrupted by Unity domain reload. Broker mode kept the HTTP request alive, " +
-                    "but the original Unity AppDomain was unloaded before it could send a response. " +
-                    "The tool was not re-run automatically to avoid duplicate side effects. " +
-                    "Call get_reload_recovery_status, then retry only if more work is needed.";
+                var method = string.IsNullOrEmpty(toolName) ? null : ToolRegistry.GetMethod(toolName);
+                summary = DescribeInterruptedCall(toolName, method != null && ToolRegistry.IsReadOnly(method));
                 isError = true;
             }
 
@@ -725,6 +755,22 @@ namespace KitWright.Editor.MCP.Server
                     ["isError"] = isError
                 }
             };
+        }
+
+        // A read-only call saves no pending marker, so the recovery status has nothing to say about it.
+        internal static string DescribeInterruptedCall(string toolName, bool readOnly)
+        {
+            var name = string.IsNullOrEmpty(toolName) ? "unknown" : toolName;
+            if (readOnly)
+            {
+                return "Tool '" + name + "' is read-only and was interrupted by Unity domain reload before it could send a response. " +
+                       "It changed nothing and left no recovery record, so there is no need to call get_reload_recovery_status: just call it again.";
+            }
+
+            return "Tool '" + name + "' was interrupted by Unity domain reload. Broker mode kept the HTTP request alive, " +
+                   "but the original Unity AppDomain was unloaded before it could send a response. " +
+                   "The tool was not re-run automatically to avoid duplicate side effects. " +
+                   "Call get_reload_recovery_status, then retry only if more work is needed.";
         }
 
         private static string GetToolName(MCPRequest request)
@@ -851,6 +897,9 @@ namespace KitWright.Editor.MCP.Server
                 if (IsSyncExternalChanges(interrupted))
                 {
                     var compilationSummary = BuildSyncExternalChangesRecoverySummary();
+                    if (IsTransientNotCompiled(ExternalSyncRecoveryTracker.IsWaiting, compilationSummary.Summary))
+                        return;
+
                     summary += "\n" + compilationSummary.Summary;
                     PublishRecoverySummary(interrupted, summary, compilationSummary.Status);
                     return;
@@ -869,18 +918,16 @@ namespace KitWright.Editor.MCP.Server
                 StringComparison.OrdinalIgnoreCase);
         }
 
+        // While the tracker still waits for the compile it records the real outcome itself; a "not compiled" read
+        // taken now is only the state before that compile and must not be stored or warned about.
+        internal static bool IsTransientNotCompiled(bool trackerWaiting, string recoveredSummary) =>
+            trackerWaiting && CompilationFunctions.IsNotCompiledOutcome(recoveredSummary);
+
         private (string Summary, MCPToolCallStatus Status) BuildSyncExternalChangesRecoverySummary()
         {
-            var issues = _compilationService.GetCompilationErrors(includeWarnings: true);
-            var hasIssues = !string.Equals(issues, "No compilation errors or warnings detected.", StringComparison.Ordinal) &&
-                            !string.Equals(issues, "No compilation errors detected.", StringComparison.Ordinal);
-
-            if (hasIssues)
-            {
-                return ("External changes were imported, but compilation reported issues.\n" + issues, MCPToolCallStatus.Error);
-            }
-
-            return ("External changes were imported and script compilation finished successfully after domain reload.", MCPToolCallStatus.Success);
+            return CompilationFunctions.DescribeRecoveredCompile(
+                _compilationService.GetCompilationErrors(includeWarnings: true),
+                CompilationFunctions.PendingScriptFileCount());
         }
 
         private void PublishRecoverySummary(
@@ -892,7 +939,9 @@ namespace KitWright.Editor.MCP.Server
             if (string.IsNullOrEmpty(toolName))
                 toolName = "domain_reload";
 
-            DomainReloadHandler.StoreRecoveryInfo(toolName, status.ToString(), summary);
+            if (!DomainReloadHandler.IsRecordedSince(
+                    DomainReloadHandler.GetLastRecoveryInfo(false), toolName, interrupted.ReloadedAt))
+                DomainReloadHandler.StoreRecoveryInfo(toolName, status.ToString(), summary);
             InteractionLog.Add(toolName, status, summary);
 
             if (status == MCPToolCallStatus.Success || status == MCPToolCallStatus.Interrupted)

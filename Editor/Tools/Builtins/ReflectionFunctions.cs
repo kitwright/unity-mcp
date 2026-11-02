@@ -102,13 +102,21 @@ namespace KitWright.Editor.Tools.Builtins
                 .Where(m => !(m is MethodInfo method && method.IsSpecialName) && IsObsolete(m))
                 .Select(m => m.Name);
 
-            var extensions = ExtensionMethodsFor(type).Select(m => m.Name);
+            // Not the ones declared for any T: a "this T" with no constraint applies to every type, so
+            // listing it under each of them buried the ones that were written for this one. They still
+            // resolve when asked for by name.
+            var extensions = ExtensionMethodsFor(type).Where(m => !ExtendsAnyType(m)).Select(m => m.Name);
+
+            var constructors = type.GetConstructors(flags).Select(ConstructorSignature).ToArray();
+            var operators = type.GetMethods(flags).Where(IsOperator).Select(m => m.Name);
 
             return Response.Success($"Declared members of '{type.Name}'.{alsoNamed}", Header(type, new
             {
                 members = new
                 {
+                    constructors,
                     methods = Sorted(methods),
+                    operators = Sorted(operators),
                     properties = Sorted(properties),
                     fields = Sorted(fields),
                     events = Sorted(events)
@@ -121,6 +129,23 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static object DescribeMember(Type type, string member, bool includeNonPublic, string alsoNamed)
         {
+            if (member == ".ctor" || member.Equals("ctor", StringComparison.OrdinalIgnoreCase) ||
+                member.Equals("constructor", StringComparison.OrdinalIgnoreCase))
+            {
+                var constructors = type.GetConstructors(WithVisibility(DeclaredMembers, includeNonPublic))
+                    .Select(ConstructorSignature)
+                    .ToArray();
+                if (constructors.Length == 0)
+                    return Response.Error("MEMBER_NOT_FOUND", new { type = type.FullName, query = member, hint = "No public constructor; look for a static factory method." });
+
+                return Response.Success($"{constructors.Length} constructor signature(s) for '{type.Name}'.{alsoNamed}", new
+                {
+                    type = type.FullName,
+                    member = ".ctor",
+                    signatures = constructors
+                });
+            }
+
             var signatures = Signatures(type, member, WithVisibility(DeclaredMembers, includeNonPublic));
             var inherited = signatures.Length == 0;
             if (inherited)
@@ -281,7 +306,7 @@ namespace KitWright.Editor.Tools.Builtins
         {
             var results = new List<string>();
 
-            foreach (var m in type.GetMethods(flags).Where(m => NameMatches(m.Name, member) && !m.IsSpecialName))
+            foreach (var m in type.GetMethods(flags).Where(m => NameMatches(m.Name, member) && (!m.IsSpecialName || IsOperator(m))))
                 results.Add(MethodSignature(m, skipFirstParameter: false));
 
             foreach (var p in type.GetProperties(flags).Where(p => NameMatches(p.Name, member)))
@@ -475,6 +500,7 @@ namespace KitWright.Editor.Tools.Builtins
             var prefix = member.Length <= TypoPrefixLength ? member : member.Substring(0, TypoPrefixLength);
 
             return type.GetMembers(InheritedMembers)
+                .Where(m => !(m is MethodBase method) || !method.IsSpecialName || IsOperator(method))
                 .Select(m => m.Name)
                 .Concat(ExtensionMethodsFor(type).Select(m => m.Name))
                 .Where(n => n.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) ||
@@ -507,6 +533,20 @@ namespace KitWright.Editor.Tools.Builtins
 
             return header;
         }
+
+        private static bool IsOperator(MethodBase method) =>
+            method.IsSpecialName && method.Name.StartsWith("op_", StringComparison.Ordinal);
+
+        private static bool ExtendsAnyType(MethodInfo method)
+        {
+            var parameter = method.GetParameters()[0].ParameterType;
+            return parameter.IsGenericParameter &&
+                   parameter.GetGenericParameterConstraints().Length == 0 &&
+                   (parameter.GenericParameterAttributes & GenericParameterAttributes.SpecialConstraintMask) == 0;
+        }
+
+        private static string ConstructorSignature(ConstructorInfo constructor) =>
+            Obsolete(constructor) + $"{Short(constructor.DeclaringType)}({string.Join(", ", constructor.GetParameters().Select(Parameter))})";
 
         private static bool NameMatches(string candidate, string member) =>
             string.Equals(candidate, member, StringComparison.OrdinalIgnoreCase);

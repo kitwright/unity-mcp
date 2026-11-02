@@ -26,6 +26,10 @@ namespace KitWright.Editor.Tools.Builtins
             if (!EditorApplication.isPlaying)
                 return ToolResultFormatter.ErrorMessage("PLAY_MODE_REQUIRED", "SimulateMouseClick only works in Play Mode.");
 
+            var buttonError = ChoiceError("button", button, "left", "right", "middle");
+            if (buttonError != null)
+                return buttonError;
+
             try
             {
                 var results = new StringBuilder();
@@ -300,6 +304,29 @@ namespace KitWright.Editor.Tools.Builtins
 
             return false;
         }
+
+        // A value the tool did not recognise used to fall through to its default: "banana" clicked left.
+        internal static string ChoiceError(string param, string value, params string[] allowed)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+                return null;
+
+            foreach (var choice in allowed)
+            {
+                if (string.Equals(choice, value.Trim(), StringComparison.OrdinalIgnoreCase))
+                    return null;
+            }
+
+            return ToolResultFormatter.Error("INVALID_PARAM",
+                new { param, provided = value, expected = "one of " + string.Join(", ", allowed) });
+        }
+
+        // Input is queued for the Input System, which only reads it on a Play Mode frame; an unfocused
+        // editor can be throttled to none, and the call would still have answered success.
+        internal static string FocusNote() =>
+            UnityEditorInternal.InternalEditorUtility.isApplicationActive
+                ? string.Empty
+                : ". Note: the editor window is not focused, so Unity may not be running Play Mode frames and the input can stay queued until it is.";
 
         private static PointerEventData.InputButton ParseButton(string button)
         {

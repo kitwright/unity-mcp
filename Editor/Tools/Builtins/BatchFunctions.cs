@@ -33,7 +33,7 @@ namespace KitWright.Editor.Tools.Builtins
             JArray parsed;
             try
             {
-                parsed = JArray.Parse(commands);
+                parsed = JsonParse.Array(commands);
             }
             catch (System.Exception ex)
             {
@@ -89,11 +89,22 @@ namespace KitWright.Editor.Tools.Builtins
 
                     // This runs its own invoker, so MCPExecutionBridge never sees the sub-commands:
                     // without this check a batch reaches tools that a direct call answers with
-                    // TOOL_NOT_EXPOSED.
-                    if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
+                    // TOOL_NOT_EXPOSED. Unknown names answer UNKNOWN_TOOL first, as a direct call does.
+                    // The budget, the clock and the undo group are this batch's: an inner batch would
+                    // hide its commands from the budget and start a clock of its own.
+                    string refusal = null;
+                    if (string.Equals(name, ToolRegistry.BatchToolName, System.StringComparison.OrdinalIgnoreCase))
+                        refusal = ToolResultFormatter.Error("BATCH_NESTED", new { tool = name },
+                            "batch_execute cannot run inside batch_execute. Put the inner commands in this batch's own commands array (up to 100).");
+                    else if (ToolRegistry.GetMethod(name) == null && !ToolRegistry.IsManualTool(name))
+                        refusal = ToolResultFormatter.Error("UNKNOWN_TOOL", new { tool = name });
+                    else if (!MCPToolExportPolicy.IsToolAllowed(name, Settings(), out var profileKey))
+                        refusal = MCPExecutionBridge.WithheldToolError(
+                            name, profileKey, ToolPackageGate.MissingPackageFor(name), MCPExecutionBridge.NotExposedHint(Settings()));
+
+                    if (refusal != null)
                     {
-                        results.Add(new { index = i, name, result = JToken.Parse(
-                            ToolResultFormatter.Error("TOOL_NOT_EXPOSED", new { tool = name, profile = profileKey })) });
+                        results.Add(new { index = i, name, result = JToken.Parse(refusal) });
                         if (stop_on_error) { aborted = true; break; }
                         continue;
                     }
@@ -108,6 +119,8 @@ namespace KitWright.Editor.Tools.Builtins
                     // machine on EditorApplication.update — a sync .GetAwaiter().GetResult() here
                     // deadlocks the editor main thread against that update loop.
                     var raw = await invoker.InvokeAsync(fc);
+                    // The bridge adds the Play Mode note to a direct call; this loop never goes through it.
+                    raw = MCPExecutionBridge.AppendPlayModeNote(raw, name, IsPlaying());
                     var resultToken = TryParse(raw);
                     bool ok = IsSuccess(raw, resultToken);
 
@@ -146,6 +159,9 @@ namespace KitWright.Editor.Tools.Builtins
         // Settable so a test can reach the deadline without running for minutes.
         internal static int DeadlineMarginSeconds = 15;
 
+        // Settable so a test can see the Play Mode note without entering Play Mode.
+        internal static System.Func<bool> IsPlaying = () => EditorApplication.isPlaying;
+
         private static SettingsController Settings() =>
             RootScopeServices.Services?.GetService(typeof(SettingsController)) as SettingsController;
 
@@ -161,13 +177,17 @@ namespace KitWright.Editor.Tools.Builtins
                    && obj["success"].Value<bool>();
         }
 
-        private static Dictionary<string, string> ExtractParams(JToken paramsToken)
+        internal static Dictionary<string, string> ExtractParams(JToken paramsToken)
         {
             var dict = new Dictionary<string, string>();
             if (!(paramsToken is JObject obj)) return dict;
 
             foreach (var prop in obj.Properties())
             {
+                // Same as a direct call: a JSON null is an argument left out, not the text "null".
+                if (prop.Value.Type == JTokenType.Null)
+                    continue;
+
                 dict[prop.Name] = prop.Value.Type == JTokenType.String
                     ? prop.Value.ToString()
                     : prop.Value.ToString(Formatting.None);
@@ -178,7 +198,7 @@ namespace KitWright.Editor.Tools.Builtins
         private static object TryParse(string raw)
         {
             if (string.IsNullOrEmpty(raw)) return raw;
-            try { return JToken.Parse(raw); }
+            try { return JsonParse.Token(raw); }
             catch { return raw; }
         }
     }

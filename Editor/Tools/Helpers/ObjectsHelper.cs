@@ -57,6 +57,23 @@ namespace KitWright.Editor.Tools.Helpers
         public const string MethodByComponent = "by_component";
         public const string MethodByIdOrNameOrPath = "by_id_or_name_or_path";
 
+        private static readonly string[] ValidMethods =
+        {
+            MethodById, MethodByName, MethodByPath, MethodByTag, MethodByLayer, MethodByComponent, MethodByIdOrNameOrPath
+        };
+
+        /// <summary>Tail of every find_method [ToolParam] text: the accepted values and the default.</summary>
+        public const string FindMethodValues = "one of " +
+            MethodById + ", " + MethodByName + ", " + MethodByPath + ", " + MethodByTag + ", " +
+            MethodByLayer + ", " + MethodByComponent + ", " + MethodByIdOrNameOrPath +
+            "; omit to auto-detect (integer = by_id, contains '/' = by_path, otherwise by_name)";
+
+        internal static void ValidateFindMethod(string searchMethod)
+        {
+            if (!string.IsNullOrEmpty(searchMethod) && Array.IndexOf(ValidMethods, searchMethod) < 0)
+                throw new ToolArgumentException("INVALID_PARAM", "find_method", searchMethod, "one of " + string.Join(", ", ValidMethods));
+        }
+
         internal static T[] FindObjectsByTypeUnsorted<T>(FindObjectsInactive inactive)
             where T : UnityEngine.Object
         {
@@ -98,6 +115,8 @@ namespace KitWright.Editor.Tools.Helpers
             bool findAll = true, bool searchInactive = false, bool searchInChildren = false,
             GameObject root = null)
         {
+            ValidateFindMethod(searchMethod);
+
             var results = new List<GameObject>();
             if (string.IsNullOrEmpty(target))
                 return results;
@@ -105,7 +124,7 @@ namespace KitWright.Editor.Tools.Helpers
             // Auto-detect default method
             if (string.IsNullOrEmpty(searchMethod))
             {
-                if (long.TryParse(target, out _))
+                if (ObjectIdCodec.LooksLikeId(target))
                     searchMethod = MethodById;
                 else if (target.Contains('/'))
                     searchMethod = MethodByPath;
@@ -144,8 +163,7 @@ namespace KitWright.Editor.Tools.Helpers
                 {
                     if (rootObj != null)
                     {
-                        var t = rootObj.transform.Find(target);
-                        if (t != null) results.Add(t.gameObject);
+                        AddPathMatches(rootObj.transform, target, results);
                     }
                     else
                     {
@@ -163,8 +181,7 @@ namespace KitWright.Editor.Tools.Helpers
                                     }
                                     else
                                     {
-                                        var t = sceneRoot.transform.Find(rest);
-                                        if (t != null) results.Add(t.gameObject);
+                                        AddPathMatches(sceneRoot.transform, rest, results);
                                     }
                                 }
                             }
@@ -182,8 +199,7 @@ namespace KitWright.Editor.Tools.Helpers
                                 }
                                 else
                                 {
-                                    var t = stageRoot.transform.Find(rest);
-                                    if (t != null) results.Add(t.gameObject);
+                                    AddPathMatches(stageRoot.transform, rest, results);
                                 }
                             }
                         }
@@ -251,9 +267,6 @@ namespace KitWright.Editor.Tools.Helpers
                     }
                     return FindObjects(target, MethodByName, findAll, searchInactive, searchInChildren, root);
                 }
-                default:
-                    Debug.LogWarning($"[KitWright] Unknown search method '{searchMethod}'");
-                    break;
             }
 
             var distinct = results.Distinct().ToList();
@@ -268,6 +281,38 @@ namespace KitWright.Editor.Tools.Helpers
                         .ToList());
 
             return distinct;
+        }
+
+        // Transform.Find follows only the first child of each name, so same-named siblings never
+        // reached the ambiguity check. Empty segments and ".." behave as they did under Transform.Find.
+        private static void AddPathMatches(Transform from, string path, List<GameObject> results)
+        {
+            var level = new List<Transform> { from };
+            foreach (var segment in path.Split('/'))
+            {
+                if (segment.Length == 0)
+                    continue;
+
+                var next = new List<Transform>();
+                foreach (var parent in level)
+                {
+                    if (segment == "..")
+                    {
+                        if (parent.parent != null)
+                            next.Add(parent.parent);
+                        continue;
+                    }
+
+                    for (var i = 0; i < parent.childCount; i++)
+                    {
+                        var child = parent.GetChild(i);
+                        if (child.name == segment)
+                            next.Add(child);
+                    }
+                }
+                level = next.Distinct().ToList();
+            }
+            results.AddRange(level.Select(t => t.gameObject));
         }
 
         /// <summary>
@@ -428,7 +473,7 @@ namespace KitWright.Editor.Tools.Helpers
 
             // Instance ids are reassigned by every domain reload, so a stale id is the one failure
             // an agent cannot diagnose from the name alone.
-            if (!string.IsNullOrEmpty(value) && long.TryParse(value, out _))
+            if (ObjectIdCodec.LooksLikeId(value))
                 return "Instance ids change on every domain reload (script compile, entering play mode). " +
                        "Re-read get_hierarchy or find_game_objects for current ids.";
 
@@ -448,7 +493,7 @@ namespace KitWright.Editor.Tools.Helpers
         internal static List<string> SuggestTargets(string query)
         {
             var suggestions = new List<string>();
-            if (string.IsNullOrEmpty(query) || long.TryParse(query, out _))
+            if (string.IsNullOrEmpty(query) || ObjectIdCodec.LooksLikeId(query))
                 return suggestions;
 
             var matchPath = query.Contains('/');

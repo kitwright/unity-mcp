@@ -52,9 +52,9 @@ namespace KitWright.Editor.Tests
                 Assert.AreEqual("float", PrefsFunctions.DetectEditorPrefType(keys[1]));
                 Assert.AreEqual("string", PrefsFunctions.DetectEditorPrefType(keys[2]));
 
-                // EditorPrefs stores a bool as an int, so 0 and 1 are reported as bool. An int that
-                // happens to be 0 or 1 is indistinguishable from one; anything else is an int.
-                Assert.AreEqual("bool", PrefsFunctions.DetectEditorPrefType(keys[3]));
+                // EditorPrefs stores a bool as an int and cannot tell them apart, so every stored
+                // integer is an int; a 0 or 1 is flagged boolLike by the tool, not guessed as bool.
+                Assert.AreEqual("int", PrefsFunctions.DetectEditorPrefType(keys[3]));
                 Assert.AreEqual("int", PrefsFunctions.DetectEditorPrefType(keys[4]));
 
                 var read = PrefsFunctions.GetEditorPref(keys[0]);

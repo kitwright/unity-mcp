@@ -11,11 +11,13 @@ namespace KitWright.Editor.Tools.Builtins
     internal static partial class ScreenshotFunctions
     {
         [Description("Capture a screenshot of the Scene View (the editor's scene camera perspective). Returns a base64-encoded PNG image, " +
-                     "or a saved file path when save_to_file=true.")]
+                     "or a saved file path when save_to_file=true. Width and height are in pixels, 64-4096; with only one of them the " +
+                     "other follows the Scene View's aspect ratio, and with neither the Scene View's own size is used (longest side " +
+                     "capped by the 'Screenshot default size' setting).")]
         [ReadOnlyTool]
         public static string CaptureSceneView(
-            [ToolParam("Width of the screenshot in pixels", Required = false)] int width = 0,
-            [ToolParam("Height of the screenshot in pixels", Required = false)] int height = 0,
+            [ToolParam("Width of the screenshot in pixels (64-4096)", Required = false)] int width = 0,
+            [ToolParam("Height of the screenshot in pixels (64-4096)", Required = false)] int height = 0,
             [ToolParam(SaveToFileParamDescription, Required = false)] bool save_to_file = false,
             [ToolParam(OutputPathParamDescription, Required = false)] string output_path = null)
         {
@@ -27,7 +29,11 @@ namespace KitWright.Editor.Tools.Builtins
             if (camera == null)
                 return ToolResultFormatter.Error("SCENE_VIEW_CAMERA_UNAVAILABLE");
 
-            if (width <= 0 || height <= 0)
+            if ((width > 0) != (height > 0))
+            {
+                ResolveCaptureSize(ref width, ref height, camera.pixelWidth, camera.pixelHeight);
+            }
+            else if (width <= 0)
             {
                 width = Mathf.RoundToInt(camera.pixelWidth);
                 height = Mathf.RoundToInt(camera.pixelHeight);

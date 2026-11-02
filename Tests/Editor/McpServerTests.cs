@@ -270,6 +270,89 @@ namespace KitWright.Editor.Tests
             Assert.IsTrue(result);
         }
 
+        [Test]
+        public void RequestRecompile_TakesWaitAndExitPlayModeAsOptInParameters()
+        {
+            var parameters = typeof(CompilationFunctions).GetMethod("RequestRecompile").GetParameters();
+
+            foreach (var name in new[] { "wait", "exit_play_mode" })
+            {
+                var parameter = parameters.SingleOrDefault(p => p.Name == name);
+                Assert.NotNull(parameter, name + " is missing from request_recompile.");
+                Assert.AreEqual(false, parameter.DefaultValue,
+                    name + " has to default to off, or a plain request_recompile changes behavior.");
+            }
+        }
+
+        [Test]
+        public void AttachPlayModeErrors_KeepsAnErrorsCodeAndAddsTheEvidenceToItsData()
+        {
+            var error = KitWright.Editor.Tools.Helpers.ToolResultFormatter.Error("COMPILATION_FAILED", new { issues = "CS0103" });
+
+            var attached = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.AttachPlayModeErrors(error, "[ERROR] boom"));
+
+            Assert.AreEqual("COMPILATION_FAILED", (string)attached["code"]);
+            Assert.AreEqual("CS0103", (string)attached["data"]["issues"]);
+            Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
+        }
+
+        [Test]
+        public void AttachPlayModeErrors_WrapsAPlainAnswerAndLeavesItAloneWithoutEvidence()
+        {
+            Assert.AreEqual("done", CompilationFunctions.AttachPlayModeErrors("done", null));
+            Assert.AreEqual("done", CompilationFunctions.AttachPlayModeErrors("done", string.Empty));
+
+            var attached = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.AttachPlayModeErrors("done", "[ERROR] boom"));
+
+            Assert.AreEqual(true, (bool)attached["success"]);
+            Assert.AreEqual("done", (string)attached["message"]);
+            Assert.AreEqual("[ERROR] boom", (string)attached["data"]["play_mode_console_errors"]);
+        }
+
+        // enter_play_mode returns, and the domain reload it triggers then found the state reset still
+        // waiting behind Play Mode: every entry left a "domain_reload / Interrupted ... re-run the tool" record.
+        [Test]
+        public void ConsumeInterruptedState_IgnoresAToolThatHadAlreadyReturned_AndKeepsOneThatHadNot()
+        {
+            DomainReloadHandler.SaveState(KitWrightState.ExecutingFunction);
+            DomainReloadHandler.ClearPendingFunction();
+            Assert.IsNull(DomainReloadHandler.ConsumeInterruptedState());
+
+            DomainReloadHandler.SaveState(KitWrightState.ExecutingFunction);
+            DomainReloadHandler.SavePendingFunction(new FunctionCall { FunctionName = "build_player" });
+            var interrupted = DomainReloadHandler.ConsumeInterruptedState();
+
+            Assert.NotNull(interrupted);
+            Assert.AreEqual("build_player", interrupted.PendingFunction.FunctionName);
+        }
+
+        [Test]
+        public void ToParameters_LeavesAJsonNullOut()
+        {
+            var parameters = MCPExecutionBridge.ToParameters(new Dictionary<string, object>
+            {
+                { "save_path", null }, { "name", "Probe" }, { "count", 3L }
+            });
+
+            CollectionAssert.AreEquivalent(new[] { "name", "count" }, parameters.Keys);
+            Assert.AreEqual("3", parameters["count"]);
+        }
+
+        [Test]
+        public void ScriptsNewerThanCompilationError_RefusesAnEmptyErrorListThatPredatesTheEdits()
+        {
+            Assert.IsNull(CompilationFunctions.ScriptsNewerThanCompilationError(
+                KitWright.Editor.Tools.Helpers.ScriptChangeState.Empty));
+
+            var stale = new KitWright.Editor.Tools.Helpers.ScriptChangeState();
+            stale.AddOutOfDateSource("Assets/A.cs");
+            var refused = Newtonsoft.Json.Linq.JObject.Parse(CompilationFunctions.ScriptsNewerThanCompilationError(stale));
+
+            Assert.AreEqual("SCRIPT_CHANGES_NOT_COMPILED", (string)refused["code"]);
+            Assert.AreEqual(1, (int)refused["data"]["pending_script_files"]);
+            StringAssert.Contains("request_recompile", (string)refused["data"]["hint"]);
+        }
+
         // A capture run inside batch_execute is a string value in the batch's JSON, not a bare
         // data URI, so it used to reach the client as ~300 KB of base64 text.
         [Test]

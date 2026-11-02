@@ -52,23 +52,27 @@ namespace KitWright.Editor.Tools.Builtins
                      "If omitted, the MCP Settings window's default safety-check setting is used (enabled by default); " +
                      "explicitly passing true or false overrides that default. Project namespaces are not auto-injected " +
                      "by default; add `using` directives in the snippet, or enable the ScriptAssemblies-based convenience toggle in the MCP Settings window. " +
-                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code).")]
+                     "Every invocation is appended to a session-scoped history (see get_execute_code_history / replay_execute_code). " +
+                     "A call is cut off after about 170 s while the work already running in the editor goes on; " +
+                     "pass timeout_seconds for work that legitimately takes longer.")]
         public static async Task<object> ExecuteCode(
             [ToolParam("C# code to execute: a bare method body, or a full class (IKitWrightCommand or static Run()).")] string code,
             [ToolParam("If true, reject the call before compile when the code contains obviously dangerous patterns. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
-            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false)
+            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false,
+            [ToolParam("Seconds the snippet may run, for work that legitimately outlasts the ~170 s call ceiling (up to 1680). Raises the call ceiling to this plus 120 s and the budget for the snippet's loops from 20 s to this, so a runaway loop is stopped only after this long. 0 (default) keeps both ordinary limits; a value never narrows them.", Required = false)] int timeout_seconds = 0)
         {
             var effectiveSafetyChecks = safety_checks ?? ResolveSafetyChecksDefault();
             if (effectiveSafetyChecks)
             {
-                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason))
+                if (ExecuteCodeSafetyPolicy.TryFindViolation(code, strictFilesystemChecks: true, out var pattern, out var reason, out var alternative))
                 {
                     var blocked = Response.Error("SAFETY_CHECK_BLOCKED",
                         new
                         {
                             pattern,
                             reason,
-                            hint = "Rewrite the snippet to avoid the pattern. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
+                            alternative,
+                            hint = "Rewrite the snippet to avoid the pattern. If the alternative names a tool that answers TOOL_NOT_EXPOSED, set_tool_profile 'full' exposes it. safety_checks=false lifts this, but that is the user's call to make — do not retry with it on your own."
                         });
                     AppendHistory(code, false, $"Blocked: {reason}");
                     return blocked;
@@ -107,7 +111,8 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var result = RunInSingleUndoGroup(UndoGroupName(code),
-                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode)));
+                    () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode),
+                        LoopBudgetFor(timeout_seconds)));
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result));
                 return result;
             }
@@ -151,7 +156,8 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Return the most recent execute_code invocations (success or failure) from the current Editor session. " +
-                     "Use replay_execute_code to re-run a past entry by index. History survives domain reloads but is cleared " +
+                     "Each entry has an id that never changes and is never reused, not even after the Editor restarts; pass it to " +
+                     "replay_execute_code to re-run that entry. History survives domain reloads but is cleared " +
                      "when the Editor closes (uses SessionState). Cap is 50 entries; older entries are dropped.")]
         [ReadOnlyTool]
         public static object GetExecuteCodeHistory(
@@ -160,15 +166,13 @@ namespace KitWright.Editor.Tools.Builtins
             var entries = LoadHistory().entries;
             limit = Mathf.Clamp(limit, 1, HistoryMaxEntries);
             var slice = entries.Skip(Math.Max(0, entries.Count - limit)).ToList();
-            // Render newest first, with original index preserved (for replay)
             var view = new List<object>(slice.Count);
             for (int i = slice.Count - 1; i >= 0; i--)
             {
                 var entry = slice[i];
-                var globalIndex = entries.IndexOf(entry);
                 view.Add(new
                 {
-                    index = globalIndex,
+                    id = entry.id,
                     timestamp = entry.timestamp,
                     success = entry.success,
                     summary = entry.summary,
@@ -180,33 +184,54 @@ namespace KitWright.Editor.Tools.Builtins
                 new { total = entries.Count, returned = view.Count, entries = view });
         }
 
-        [Description("Re-run a past execute_code invocation by index (use get_execute_code_history to discover indices). " +
+        [Description("Re-run a past execute_code invocation by its history id (use get_execute_code_history to discover ids). " +
                      "The original code is re-compiled and executed; this also appends a new history entry. " +
-                     "Pass safety_checks to override the MCP Settings window default.")]
+                     "An id that has left the history (it keeps the latest 50) is refused rather than matched to another entry. " +
+                     "Pass safety_checks to override the MCP Settings window default. " +
+                     "Like execute_code, the AssetDatabase is refreshed before compiling unless skip_refresh=true (use it to replay a read-only snippet " +
+                     "without risking an import or domain reload); timeout_seconds raises the budget for the snippet's loops.")]
         public static async Task<object> ReplayExecuteCode(
-            [ToolParam("History index to replay (as returned by get_execute_code_history).")] int index,
-            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null)
+            [ToolParam("History entry id to replay: the `id` field returned by get_execute_code_history. It is an id, not a list position.")] int index,
+            [ToolParam("If true, re-evaluate the safety blocklist before re-running. Guards against accidents only — you can pass false yourself, so it never holds against a caller that wants through. If omitted, uses the MCP Settings window default.", Required = false)] bool? safety_checks = null,
+            [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready, as for execute_code. Use only when the editor is already up to date, e.g. replaying a read-only inspection snippet: the default refresh can trigger an import/domain reload on a shared editor.", Required = false)] bool skip_refresh = false,
+            [ToolParam("Seconds the snippet may run, as for execute_code (up to 1680): raises the budget for the snippet's loops from 20 s to this. 0 (default) keeps the ordinary limit; a value never narrows it.", Required = false)] int timeout_seconds = 0)
         {
-            var entries = LoadHistory().entries;
-            if (entries.Count == 0)
-                return Response.Error("HISTORY_EMPTY");
-            if (index < 0 || index >= entries.Count)
-                return Response.Error("HISTORY_INDEX_OUT_OF_RANGE",
-                    new { provided = index, valid_range = new { min = 0, max = entries.Count - 1 } });
+            var refusal = ResolveReplayEntry(LoadHistory(), index, out var entry);
+            if (refusal != null)
+                return refusal;
 
-            var entry = entries[index];
+            return await ExecuteCode(entry.code, safety_checks, skip_refresh, timeout_seconds);
+        }
+
+        internal static object ResolveReplayEntry(HistoryBox box, int id, out HistoryEntry entry)
+        {
+            entry = box.entries.FirstOrDefault(candidate => candidate.id == id);
+            if (entry == null)
+                return Response.Error("HISTORY_ENTRY_NOT_FOUND",
+                    new
+                    {
+                        provided = id,
+                        oldest_id = box.entries.Count > 0 ? (int?)box.entries[0].id : null,
+                        newest_id = box.entries.Count > 0 ? (int?)box.entries[box.entries.Count - 1].id : null
+                    },
+                    "No entry has that id: it was dropped from the history (the latest 50 are kept), cleared, or never existed. " +
+                    "Ids are not reused, so nothing else answers to it. get_execute_code_history lists the current ids.");
+
             if (string.IsNullOrEmpty(entry.code))
-                return Response.Error("HISTORY_ENTRY_EMPTY", new { index });
+                return Response.Error("HISTORY_ENTRY_EMPTY", new { id = entry.id });
 
-            return await ExecuteCode(entry.code, safety_checks);
+            return null;
         }
 
         [Description("Erase the entire execute_code history for the current Editor session. " +
                      "Useful when you want a clean slate before a fresh experiment or before sharing a session recording.")]
         public static object ClearExecuteCodeHistory()
         {
-            var before = LoadHistory().entries.Count;
-            SessionState.EraseString(HistorySessionKey);
+            var box = LoadHistory();
+            var before = box.entries.Count;
+            // lastId stays, so an id handed out before the clear is never given to a new entry.
+            box.entries.Clear();
+            SessionState.SetString(HistorySessionKey, JsonConvert.SerializeObject(box));
             return Response.Success($"Cleared {before} history entr{(before == 1 ? "y" : "ies")}.",
                 new { cleared = before });
         }
@@ -226,8 +251,9 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Serializable]
-        private class HistoryEntry
+        internal class HistoryEntry
         {
+            public int id;
             public string timestamp;
             public string code;
             public bool success;
@@ -235,24 +261,56 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Serializable]
-        private class HistoryBox
+        internal class HistoryBox
         {
             public List<HistoryEntry> entries = new List<HistoryEntry>();
+            public int lastId;
         }
+
+        // 2026-01-01 UTC. A new history starts numbering from the clock, so an id a client kept from
+        // before an Editor restart (or from a history that could not be read back) matches nothing.
+        private const long HistoryIdEpochSeconds = 1767225600L;
+
+        private static HistoryBox NewHistoryBox() =>
+            new HistoryBox { lastId = (int)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - HistoryIdEpochSeconds) };
 
         private static HistoryBox LoadHistory()
         {
             var raw = SessionState.GetString(HistorySessionKey, null);
             if (string.IsNullOrEmpty(raw))
-                return new HistoryBox();
+                return NewHistoryBox();
             try
             {
-                return JsonConvert.DeserializeObject<HistoryBox>(raw) ?? new HistoryBox();
+                var box = JsonConvert.DeserializeObject<HistoryBox>(raw) ?? NewHistoryBox();
+                // Entries written before ids existed all read as 0, which would make them share one id.
+                foreach (var entry in box.entries)
+                    if (entry.id <= 0)
+                        entry.id = ++box.lastId;
+                return box;
             }
             catch
             {
-                return new HistoryBox();
+                return NewHistoryBox();
             }
+        }
+
+        internal static HistoryEntry AddHistoryEntry(HistoryBox box, string code, bool success, string summary)
+        {
+            var entry = new HistoryEntry
+            {
+                id = ++box.lastId,
+                timestamp = DateTime.UtcNow.ToString("o"),
+                // SessionState holds the whole history as one string and rewrites it on every call,
+                // so a generated 200 KB snippet costs every later call. Too large to keep means too
+                // large to replay, which the replay tool already answers for an empty entry.
+                code = code != null && code.Length <= HistoryMaxCodeChars ? code : string.Empty,
+                success = success,
+                summary = Preview(summary, 200)
+            };
+            box.entries.Add(entry);
+            if (box.entries.Count > HistoryMaxEntries)
+                box.entries.RemoveRange(0, box.entries.Count - HistoryMaxEntries);
+            return entry;
         }
 
         private static void AppendHistory(string code, bool success, string summary)
@@ -260,18 +318,7 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var box = LoadHistory();
-                box.entries.Add(new HistoryEntry
-                {
-                    timestamp = DateTime.UtcNow.ToString("o"),
-                    // SessionState holds the whole history as one string and rewrites it on every call,
-                    // so a generated 200 KB snippet costs every later call. Too large to keep means too
-                    // large to replay, which the replay tool already answers for an empty entry.
-                    code = code != null && code.Length <= HistoryMaxCodeChars ? code : string.Empty,
-                    success = success,
-                    summary = Preview(summary, 200)
-                });
-                if (box.entries.Count > HistoryMaxEntries)
-                    box.entries.RemoveRange(0, box.entries.Count - HistoryMaxEntries);
+                AddHistoryEntry(box, code, success, summary);
                 SessionState.SetString(HistorySessionKey, JsonConvert.SerializeObject(box));
             }
             catch (Exception ex)
@@ -340,13 +387,20 @@ namespace KitWright.Editor.Tools.Builtins
             return "execute_code: " + Preview(firstLine, 60);
         }
 
+        internal static TimeSpan LoopBudgetFor(int timeoutSeconds)
+        {
+            var requested = TimeSpan.FromSeconds(ToolRegistry.ClampExecuteCodeTimeout(timeoutSeconds));
+            return requested > LoopBudgetGuard.DefaultBudget ? requested : LoopBudgetGuard.DefaultBudget;
+        }
+
         private static object CompileAndExecute(string code, string className, bool safetyChecks,
-            SnippetPlacement placement = default)
+            SnippetPlacement placement = default, TimeSpan? loopBudget = null)
         {
             var compilation = ScriptCompilerPipeline.Compile(LoopGuardInjector.Inject(code));
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
             {
                 var errors = compilation.Errors.Select(placement.ToSnippet).ToList();
+                var hint = HintForCompileErrors(errors);
                 // The attempts only say something when one compiler failed over to another; a lone
                 // Roslyn attempt repeated what "compiler" already says, on every compile error.
                 return compilation.Attempts.Count > 1
@@ -355,8 +409,8 @@ namespace KitWright.Editor.Tools.Builtins
                         compiler = compilation.CompilerName,
                         errors,
                         compiler_attempts = compilation.Attempts
-                    })
-                    : Response.Error("COMPILATION_FAILED", new { compiler = compilation.CompilerName, errors });
+                    }, hint)
+                    : Response.Error("COMPILATION_FAILED", new { compiler = compilation.CompilerName, errors }, hint);
             }
 
             if (compilation.Status != ScriptCompilationStatus.Success || compilation.Assembly == null)
@@ -387,7 +441,7 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            LoopBudgetGuard.Begin(LoopBudgetGuard.DefaultBudget);
+            LoopBudgetGuard.Begin(loopBudget ?? LoopBudgetGuard.DefaultBudget);
             try
             {
                 return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts);
@@ -542,7 +596,8 @@ namespace KitWright.Editor.Tools.Builtins
                     actualClassName = match.Groups[1].Value;
 
                 var requiredUsings = GetRequiredSnippetUsings(code);
-                return PrependMissingUsings(code, requiredUsings + projectUsings);
+                var withUsings = PrependMissingUsings(code, requiredUsings + projectUsings);
+                return NeedsObjectAlias(code) ? "using Object = UnityEngine.Object;\n" + withUsings : withUsings;
             }
 
             return WrapCode(code, className, projectUsings);
@@ -550,7 +605,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         /// <summary>
         /// Where the caller's snippet sits in the source that was compiled. The compiler reports lines
-        /// of that source: a bare body starts on line 17, under the usings and the wrapper class, and
+        /// of that source: a bare body starts on line 18, under the usings and the wrapper class, and
         /// its first line is indented 8. Reported as-is, an error on the snippet's line 3 read as line
         /// 19, and the agent spent a round trip finding the line it had written.
         /// </summary>
@@ -605,6 +660,7 @@ using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEditor;
 using UnityEditor.SceneManagement;
+using Object = UnityEngine.Object;
 using {KitWrightScriptingNamespace};
 {projectUsings}
 public static class {className}
@@ -741,6 +797,28 @@ public static class {className}
                 return string.Empty;
 
             return $"using {KitWrightScriptingNamespace};\n";
+        }
+
+        // Only the exact case that would otherwise be CS0104, so a snippet that means System.Object
+        // without importing UnityEngine keeps its meaning.
+        internal static bool NeedsObjectAlias(string code)
+        {
+            return Regex.IsMatch(code, @"(?<![\w.])Object(?!\w)") &&
+                   Regex.IsMatch(code, @"^\s*using\s+System\s*;", RegexOptions.Multiline) &&
+                   Regex.IsMatch(code, @"^\s*using\s+UnityEngine\s*;", RegexOptions.Multiline) &&
+                   !Regex.IsMatch(code, @"^\s*using\s+Object\s*=", RegexOptions.Multiline);
+        }
+
+        internal static string HintForCompileErrors(IEnumerable<ScriptCompilationError> errors)
+        {
+            foreach (var error in errors)
+            {
+                if ((error.code == "CS0535" || error.code == "CS0738") &&
+                    error.text != null && error.text.Contains("IKitWrightCommand"))
+                    return "IKitWrightCommand requires `void Execute(ExecutionContext ctx)`; return data through ctx.ReturnValue.";
+            }
+
+            return null;
         }
 
         internal static bool UsesUnqualifiedIKitWrightCommand(string code)

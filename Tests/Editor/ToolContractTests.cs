@@ -45,7 +45,7 @@ namespace KitWright.Editor.Tests
 
             foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies())
             {
-                if (assembly.IsDynamic)
+                if (assembly.IsDynamic || ToolRegistry.IsTestAssembly(assembly))
                     continue;
 
                 Type[] types;
@@ -155,14 +155,14 @@ namespace KitWright.Editor.Tests
                 "spelled out, so the agent has to guess the format and gets INVALID_PARAM instead");
         }
 
-        // Everything FunctionInvoker.ConvertValue knows how to build. Convert.ChangeType catches the
-        // numeric stragglers; an array, a List<> or a Unity object throws there instead.
+        // Everything FunctionInvoker.ConvertValue knows how to build. Arrays and List<> are read from a JSON
+        // array and Convert.ChangeType catches the numeric stragglers; a Unity object throws there instead.
         private static readonly HashSet<Type> ConvertibleParameterTypes = new HashSet<Type>
         {
             typeof(string), typeof(bool),
             typeof(int), typeof(long), typeof(short),
             typeof(float), typeof(double), typeof(decimal),
-            typeof(Vector2), typeof(Vector3), typeof(Color)
+            typeof(Vector2), typeof(Vector3), typeof(Vector4), typeof(Quaternion), typeof(Color)
         };
 
         [Test]
@@ -174,7 +174,8 @@ namespace KitWright.Editor.Tests
             foreach (var parameter in entry.Value.GetParameters())
             {
                 var type = Nullable.GetUnderlyingType(parameter.ParameterType) ?? parameter.ParameterType;
-                if (type.IsEnum || ConvertibleParameterTypes.Contains(type))
+                var isList = type.IsArray || (type.IsGenericType && type.GetGenericTypeDefinition() == typeof(List<>));
+                if (type.IsEnum || isList || ConvertibleParameterTypes.Contains(type))
                     continue;
 
                 violations.Add($"{entry.Key}({parameter.Name}) is a {type.Name}");
@@ -185,10 +186,9 @@ namespace KitWright.Editor.Tests
                 "parameter can only ever answer INVALID_PARAM - pass a comma-separated string instead");
         }
 
-        // Whether a schema-required argument is actually mandatory cannot be read off the declaration:
-        // BuildArguments fills a compile-time default before it looks at Required, so a tool with one
-        // may still refuse the call in its own body. ToolInvocationSmokeTests settles it by omitting the
-        // argument and looking at the answer.
+        // A parameter with a compile-time default is never listed as required (ToolSchemaBuilder), because
+        // BuildArguments fills the default before it looks at Required. ToolInvocationSmokeTests still
+        // omits each schema-required argument and looks at the answer.
 
         [Test]
         public void EveryToolParameterKeepsItsOwnSlotAfterSnakeCasing()

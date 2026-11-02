@@ -1,7 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
 using System.Collections.Generic;
-using System.Globalization;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
 using UnityEditor;
@@ -30,7 +29,8 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Set scene environment lighting. Only the parameters you provide are applied; the rest are left untouched. " +
-                     "Marks the active scene dirty (save the scene to persist). Returns a full read-back of the resulting settings.")]
+                     "Marks the active scene dirty (save the scene to persist). In Play Mode the change is discarded when it ends. " +
+                     "Returns a full read-back of the resulting settings.")]
         public static object SetLightingSettings(
             [ToolParam("Ambient source mode: Skybox, Trilight, Flat, or Custom.", Required = false)] string ambient_mode = null,
             [ToolParam("Ambient light color as 'r,g,b[,a]' (0-1 floats) or #hex.", Required = false)] string ambient_light = null,
@@ -45,10 +45,7 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (!string.IsNullOrEmpty(ambient_mode))
             {
-                // Enum.TryParse accepts unmapped NUMERIC strings (e.g. "7") without failing, so
-                // validate the result is a defined AmbientMode member.
-                if (!Enum.TryParse<UnityEngine.Rendering.AmbientMode>(ambient_mode.Trim(), true, out var mode) ||
-                    !Enum.IsDefined(typeof(UnityEngine.Rendering.AmbientMode), mode))
+                if (!ValueConverter.TryParseEnum<UnityEngine.Rendering.AmbientMode>(ambient_mode, out var mode))
                     return Response.Error("INVALID_PARAM",
                         new { param = "ambient_mode", provided = ambient_mode, expected = "Skybox|Trilight|Flat|Custom" });
                 parsedAmbientMode = mode;
@@ -70,9 +67,9 @@ namespace KitWright.Editor.Tools.Builtins
                 parsedFogColor = col;
             }
 
-            if (float.IsNaN(fog_density) || float.IsInfinity(fog_density))
+            if (float.IsNaN(fog_density) || float.IsInfinity(fog_density) || (fog_density < 0f && fog_density != -1f))
                 return Response.Error("INVALID_PARAM",
-                    new { param = "fog_density", provided = fog_density, expected = "a finite number >= 0, or -1 to leave unchanged" });
+                    new { param = "fog_density", provided = fog_density.ToString(), expected = "a finite number >= 0, or -1 to leave unchanged" });
 
             if (!parsedAmbientMode.HasValue && !parsedAmbientLight.HasValue && !fog.HasValue &&
                 !parsedFogColor.HasValue && fog_density < 0f)
@@ -110,11 +107,32 @@ namespace KitWright.Editor.Tools.Builtins
             // RenderSettings has no discrete Undo target (it is scene-global state); mark the scene dirty so
             // the change persists on save.
             var scene = SceneManager.GetActiveScene();
-            if (scene.IsValid())
+            if (scene.IsValid() && !EditorApplication.isPlaying)
                 EditorSceneManager.MarkSceneDirty(scene);
 
-            return Response.Success($"Applied lighting changes: {string.Join(", ", applied)}. Save the scene to persist.",
+            var notes = EffectNotes(parsedAmbientLight.HasValue, RenderSettings.ambientMode, fog_density >= 0f, RenderSettings.fogMode,
+                parsedFogColor.HasValue, RenderSettings.fog);
+            return Response.Success(AppliedMessage(string.Join(", ", applied), EditorApplication.isPlaying) + notes,
                 BuildLightingData());
+        }
+
+        // A value Unity stores but does not use in the current mode is not "applied" in any way the scene shows.
+        internal static string EffectNotes(bool ambientLightSet, UnityEngine.Rendering.AmbientMode ambientMode, bool fogDensitySet, FogMode fogMode,
+            bool fogColorSet = false, bool fogOn = true)
+        {
+            var notes = string.Empty;
+            if (ambientLightSet && ambientMode != UnityEngine.Rendering.AmbientMode.Flat)
+                notes += $" ambient_light is stored but only shows with ambient_mode Flat (the mode is {ambientMode}).";
+            if (fogDensitySet && fogMode == FogMode.Linear)
+                notes += " fog_density is stored but Linear fog ignores it (it applies to Exponential and ExponentialSquared).";
+            if (!fogOn && (fogDensitySet || fogColorSet))
+                notes += " fog is off, so nothing shows until fog=true (the fog values are stored).";
+            return notes;
+        }
+
+        internal static string AppliedMessage(string applied, bool playing)
+        {
+            return $"Applied lighting changes: {applied}. " + (playing ? SceneFunctions.DiscardedWithPlayMode : "Save the scene to persist.");
         }
 
         [Description("Start an asynchronous lightmap bake of the current scene. Low value for a 2D project. " +
@@ -129,7 +147,10 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("BAKE_ALREADY_RUNNING",
                     new { hint = "A lightmap bake is already in progress. Poll get_lighting_settings for is_running." });
 
-            Lightmapping.BakeAsync();
+            if (!Lightmapping.BakeAsync())
+                return Response.Error("BAKE_NOT_STARTED",
+                    new { hint = "Unity did not start the bake (for example the scene has nothing to bake, or lightmapping is disabled in the lighting settings)." });
+
             return Response.Success("Started asynchronous lightmap bake.",
                 new { started = true, hint = "poll get_lighting_settings for isRunning" });
         }
@@ -212,19 +233,18 @@ namespace KitWright.Editor.Tools.Builtins
                 return false;
             }
 
-            if (!float.TryParse(parts[0].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var r) ||
-                !float.TryParse(parts[1].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var g) ||
-                !float.TryParse(parts[2].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var b))
+            if (!ValueConverter.TryFiniteFloat(parts[0], out var r) ||
+                !ValueConverter.TryFiniteFloat(parts[1], out var g) ||
+                !ValueConverter.TryFiniteFloat(parts[2], out var b))
             {
-                error = "non-numeric r/g/b component";
+                error = "non-numeric or non-finite r/g/b component";
                 return false;
             }
 
             float a = 1f;
-            if (parts.Length >= 4 &&
-                !float.TryParse(parts[3].Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out a))
+            if (parts.Length >= 4 && !ValueConverter.TryFiniteFloat(parts[3], out a))
             {
-                error = "non-numeric alpha component";
+                error = "non-numeric or non-finite alpha component";
                 return false;
             }
 

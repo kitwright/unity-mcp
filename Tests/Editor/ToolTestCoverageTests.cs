@@ -28,8 +28,6 @@ namespace KitWright.Editor.Tests
             // a recursive test run
             "cancel_test_run",
             "run_tests",
-            // a package resolve, which reloads the domain the run is living in
-            "remove_package",
             // The .asmdef writers left this list when their path refusals got tests; a write that
             // lands still recompiles and reloads the domain, so only the refusals run.
             // arbitrary code or a script edit, same reason
@@ -37,16 +35,11 @@ namespace KitWright.Editor.Tests
             // naming it; running it in a test is still off the table for the reason above.
             "clear_execute_code_history",
             "edit_script_members",
-            "replay_execute_code",
-            // Play Mode, driven from inside a test that is already driving it
-            "enter_play_mode",
-            "exit_play_mode",
             // minutes of work, or a file the size of the heap
             "bake_lightmaps",
             "memory_take_full_snapshot",
             // pins rendering, or drives the real editor GUI
             "frame_debugger_enable",
-            "simulate_editor_window_key",
             // replaces the scene the run is in
             "close_scene",
             "load_scene_additive",
