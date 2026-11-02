@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- The in-window **Update** button now follows the channel the package was installed from, the way Hot Reload splits its two builds. `UpdateChecker.IsAssetStoreBuild` is `false` on `main` and `true` on the `asset-store` branch. An Asset Store build reads `.github/asset-store-version.json` (bumped only once the store has approved a version) and sends the buyer to Package Manager > My Assets instead of downloading the MIT build from GitHub over the store's copy. A package installed as a local or registry UPM package no longer opens a `.unitypackage` import for the same reason; it says where to update instead.
+
 ## [1.0.2] - 2026-11-01
 
 ### Changed

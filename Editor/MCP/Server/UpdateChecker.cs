@@ -23,9 +23,14 @@ namespace KitWright.Editor.MCP.Server
         private const string GitRepositoryUrl = "https://github.com/kitwright/unity-mcp.git";
         private const string LatestReleaseApiUrl = "https://api.github.com/repos/kitwright/unity-mcp/releases/latest";
         private const string DefaultReleasesUrl = "https://github.com/kitwright/unity-mcp/releases";
+        private const string AssetStoreVersionUrl = "https://raw.githubusercontent.com/kitwright/unity-mcp/main/.github/asset-store-version.json";
         private const string ScriptRootSuffix = "/Editor/MCP/Server/MCPServerService.cs";
         private const double AutoCheckIntervalHours = 6d;
         private const string PrefsPrefix = "KitWright.MCP.UpdateChecker";
+
+        // The asset-store branch returns true, main must stay false. A property rather than a const so
+        // the branch that is not taken does not raise CS0162.
+        internal static bool IsAssetStoreBuild => false;
 
         private static bool _stateLoaded;
         private static bool _isChecking;
@@ -143,6 +148,12 @@ namespace KitWright.Editor.MCP.Server
 
             EnsureStateLoaded();
 
+            if (IsAssetStoreBuild)
+            {
+                OpenAssetStoreUpdate();
+                return;
+            }
+
             var latestRelease = _latestRelease;
             var latestVersion = _latestVersion;
             var installContext = _latestInstallContext;
@@ -221,10 +232,24 @@ namespace KitWright.Editor.MCP.Server
                 case InstallMode.GitPackage:
                     StartGitPackageUpdate(latestVersion);
                     return;
+                case InstallMode.UnsupportedPackage:
+                    throw new InvalidOperationException(
+                        $"Installed as a {installContext.Description}. Update it where it was installed from: Package Manager for a registry, git pull for a local folder.");
                 default:
                     await DownloadAndImportUnityPackageAsync(installContext, latestRelease, latestVersion);
                     return;
             }
+        }
+
+        private static void OpenAssetStoreUpdate()
+        {
+            var open = EditorUtility.DisplayDialog(
+                "KitWright MCP",
+                $"Version {_latestVersion} is available on the Unity Asset Store.\n\nIn Package Manager open My Assets, select KitWright MCP for Unity and click Update.",
+                "Open Package Manager",
+                "Cancel");
+            if (open)
+                EditorApplication.ExecuteMenuItem("Window/Package Manager");
         }
 
         private static void StartGitPackageUpdate(string latestVersion)
@@ -504,7 +529,9 @@ namespace KitWright.Editor.MCP.Server
         // warnings into the console of someone who never asked for an update check.
         private static async Task<GitHubReleaseResponse> FetchLatestReleaseAsync(bool logFailures)
         {
-            using (var request = UnityWebRequest.Get(LatestReleaseApiUrl))
+            // The asset-store build follows the version the store has approved, not the newest GitHub
+            // release. That file has a release's tag_name field, so it parses into the same type.
+            using (var request = UnityWebRequest.Get(IsAssetStoreBuild ? AssetStoreVersionUrl : LatestReleaseApiUrl))
             {
                 request.timeout = 15;
                 request.SetRequestHeader("User-Agent", "KitWright-Unity-MCP");

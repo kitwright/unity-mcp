@@ -97,6 +97,16 @@ there only when the test needs something the runners do not have, and name the t
 - [ ] Create the GitHub Release notes
 - [ ] Verify the public repository renders the README and package documentation correctly
 
+## 6b. Asset Store Channel
+
+Asset Store buyers update through Package Manager, so this channel ships separately from the GitHub release.
+
+- [ ] `git checkout asset-store && git merge main`
+- [ ] `UpdateChecker.IsAssetStoreBuild` returns `true` on `asset-store` (a merge from `main` must not flip it back)
+- [ ] Export with `scripts~/release.sh <version>` on `asset-store`, without `--publish-github`
+- [ ] Upload the `.unitypackage` in the Asset Store Publisher Portal and wait for approval
+- [ ] After approval, set `tag_name` in `.github/asset-store-version.json` on `main` to the approved version; Asset Store builds only see an update once it changes
+
 ## 7. Post-Release
 
 - [ ] Re-test installation from the public Git URL
