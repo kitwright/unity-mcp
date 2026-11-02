@@ -30,7 +30,7 @@ namespace KitWright.Editor.MCP.Server
 
         // The asset-store branch returns true, main must stay false. A property rather than a const so
         // the branch that is not taken does not raise CS0162.
-        internal static bool IsAssetStoreBuild => false;
+        internal static bool IsAssetStoreBuild => true;
 
         private static bool _stateLoaded;
         private static bool _isChecking;
