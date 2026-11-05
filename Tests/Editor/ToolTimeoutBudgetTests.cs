@@ -27,7 +27,7 @@ namespace KitWright.Editor.Tests
         [Test]
         public void RequestBudget_OnlyWidensForToolsCallAndNeverBelowTheFallback()
         {
-            var call = new Dictionary<string, object> { { "name", "build_player" } };
+            var call = new Dictionary<string, object> { { "name", "switch_build_target" } };
 
             Assert.Greater(ToolRegistry.TimeoutSecondsForRequest("tools/call", call), 180);
             Assert.AreEqual(180, ToolRegistry.TimeoutSecondsForRequest("tools/list", call));
@@ -144,7 +144,7 @@ namespace KitWright.Editor.Tests
         [Test]
         public void EveryToolThatBlocksTheMainThreadForMinutes_DeclaresABudget()
         {
-            foreach (var tool in new[] { "build_player", "switch_build_target", "bake_nav_mesh" })
+            foreach (var tool in new[] { "switch_build_target", "bake_nav_mesh" })
             {
                 var budget = ToolRegistry.TimeoutSecondsForRequest(
                     "tools/call", new Dictionary<string, object> { { "name", tool } });

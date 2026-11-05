@@ -109,14 +109,22 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static string DisplayName(Scene s) => string.IsNullOrEmpty(s.path) ? s.name : s.path;
 
-        [Description("Open an existing scene by path. Modified scenes are saved first by default; pass discard_unsaved to drop them instead, or save_first=false to fail rather than write.")]
+        [Description("Open an existing scene by path. Modified scenes are saved first by default; pass discard_unsaved to drop them instead, or save_first=false to fail rather than write. " +
+                     "additive keeps the open scenes loaded (multi-scene editing) and replaces nothing, so it skips the unsaved-changes check; use set_active_scene to make it active.")]
         public static string OpenScene(
             [ToolParam("Path to the scene asset (e.g. 'Assets/Scenes/Main.unity')")] string path,
             [ToolParam("Drop unsaved changes in the currently open scenes. Takes precedence over save_first.", Required = false)] bool discard_unsaved = false,
-            [ToolParam("Save modified open scenes before switching (default). A scene never saved to disk still fails, because saving it needs a modal file picker.", Required = false)] bool save_first = true)
+            [ToolParam("Save modified open scenes before switching (default). A scene never saved to disk still fails, because saving it needs a modal file picker.", Required = false)] bool save_first = true,
+            [ToolParam("Open it next to the open scenes instead of replacing them. Default false.", Required = false)] bool additive = false)
         {
             if (!System.IO.File.Exists(path))
                 return ToolResultFormatter.Error("SCENE_FILE_NOT_FOUND", new { path });
+
+            if (additive)
+            {
+                var added = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
+                return $"Loaded scene additively: {added.name} ({SceneManager.sceneCount} scene(s) open)";
+            }
 
             var blocked = UnsavedChangesError(discard_unsaved, save_first);
             if (blocked != null)
@@ -124,17 +132,6 @@ namespace KitWright.Editor.Tools.Builtins
 
             EditorSceneManager.OpenScene(path);
             return $"Opened scene: {path}";
-        }
-
-        [Description("Open a scene additively (keeps currently open scenes loaded), for multi-scene editing. Use set_active_scene to make it the active scene afterward.")]
-        public static string LoadSceneAdditive(
-            [ToolParam("Path to the scene asset (e.g. 'Assets/Scenes/Enemies.unity')")] string path)
-        {
-            if (!System.IO.File.Exists(path))
-                return ToolResultFormatter.Error("SCENE_FILE_NOT_FOUND", new { path });
-
-            var scene = EditorSceneManager.OpenScene(path, OpenSceneMode.Additive);
-            return $"Loaded scene additively: {scene.name} ({SceneManager.sceneCount} scene(s) open)";
         }
 
         [Description("Set which open scene is the active scene (new objects go here; lighting/nav settings follow it). The scene must already be open. Identify by name or path.")]
@@ -152,7 +149,7 @@ namespace KitWright.Editor.Tools.Builtins
                     return $"Active scene: {s.name}";
                 }
             }
-            return ToolResultFormatter.Error("SCENE_NOT_OPEN", new { scene, hint = "Open it first (open_scene or load_scene_additive)." });
+            return ToolResultFormatter.Error("SCENE_NOT_OPEN", new { scene, hint = "Open it first (open_scene with additive=true)." });
         }
 
         [Description("Close/unload an open scene (used in multi-scene editing). Cannot close the only open scene. Identify by name or path; optionally remove it from the Hierarchy entirely. A modified scene is saved first by default; pass discard_unsaved to drop it instead, or save_first=false to fail rather than write.")]
@@ -190,13 +187,21 @@ namespace KitWright.Editor.Tools.Builtins
             return ToolResultFormatter.Error("SCENE_NOT_OPEN", new { scene });
         }
 
-        [Description("Create a new empty scene. Modified scenes are saved first by default; pass discard_unsaved to drop them instead, or save_first=false to fail rather than write.")]
+        [Description("Create a new scene and save it. template 'default' adds a Main Camera and a Directional Light, 'empty' adds nothing. " +
+                     "Modified scenes are saved first by default; pass discard_unsaved to drop them instead, or save_first=false to fail rather than write. " +
+                     "additive opens it next to the open scenes, replacing nothing, so it skips that check.")]
         public static string CreateNewScene(
             [ToolParam("Name for the new scene")] string name,
             [ToolParam("Path to save (e.g. 'Assets/Scenes/')", Required = false)] string save_path = "Assets/Scenes/",
             [ToolParam("Drop unsaved changes in the currently open scenes. Takes precedence over save_first.", Required = false)] bool discard_unsaved = false,
-            [ToolParam("Save modified open scenes before switching (default). A scene never saved to disk still fails, because saving it needs a modal file picker.", Required = false)] bool save_first = true)
+            [ToolParam("Save modified open scenes before switching (default). A scene never saved to disk still fails, because saving it needs a modal file picker.", Required = false)] bool save_first = true,
+            [ToolParam("Open it next to the open scenes instead of replacing them. Default false.", Required = false)] bool additive = false,
+            [ToolParam("'default' (Main Camera + Directional Light, the default) or 'empty'", Required = false)] string template = "default")
         {
+            var seeded = string.IsNullOrEmpty(template) || string.Equals(template, "default", StringComparison.OrdinalIgnoreCase);
+            if (!seeded && !string.Equals(template, "empty", StringComparison.OrdinalIgnoreCase))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "template", provided = template, expected = "default or empty" });
+
             var fullPath = System.IO.Path.Combine(save_path, name + ".unity").Replace('\\', '/');
             PathSafety.ResolveProjectPath(fullPath);
 
@@ -207,7 +212,7 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error("SCENE_EXISTS", new { path = fullPath },
                     "create_new_scene never overwrites. Open it with open_scene, or pick another name.");
 
-            var blocked = UnsavedChangesError(discard_unsaved, save_first);
+            var blocked = additive ? null : UnsavedChangesError(discard_unsaved, save_first);
             if (blocked != null)
                 return blocked;
 
@@ -215,7 +220,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (!string.IsNullOrEmpty(folder) && !AssetDatabase.IsValidFolder(folder))
                 AssetFunctions.CreateFolderRecursive(folder);
 
-            var scene = EditorSceneManager.NewScene(NewSceneSetup.DefaultGameObjects, NewSceneMode.Single);
+            var scene = EditorSceneManager.NewScene(seeded ? NewSceneSetup.DefaultGameObjects : NewSceneSetup.EmptyScene,
+                additive ? NewSceneMode.Additive : NewSceneMode.Single);
 
             return EditorSceneManager.SaveScene(scene, fullPath)
                 ? $"Created and saved new scene: {fullPath}"
@@ -246,23 +252,6 @@ namespace KitWright.Editor.Tools.Builtins
                 {
                     AppendHierarchy(sb, go.transform, 1, 3);
                 }
-            }
-
-            return sb.ToString();
-        }
-
-        [Description("List all scenes in the project")]
-        [ReadOnlyTool]
-        public static string ListScenes()
-        {
-            var guids = AssetDatabase.FindAssets("t:Scene");
-            var sb = new System.Text.StringBuilder();
-            sb.AppendLine($"Found {guids.Length} scenes:");
-
-            foreach (var guid in guids)
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                sb.AppendLine($"  - {path}");
             }
 
             return sb.ToString();

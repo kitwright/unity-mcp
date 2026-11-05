@@ -16,50 +16,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Code")]
     internal static class CodeFunctions
     {
-        private const string DefaultScriptFolder = "Assets/Scripts/";
-
-        private static readonly char[] InvalidScriptNameChars =
-            Path.GetInvalidFileNameChars().Concat(new[] { '/', '\\' }).Distinct().ToArray();
-
-        [Description("Create a new C# script with the specified content")]
-        public static string CreateScript(
-            [ToolParam("Script file name (without .cs, no folders)")]
-            string name,
-            [ToolParam("C# source code content")] string content,
-            [ToolParam("Folder to save into (e.g. 'Assets/Scripts/'); the file name goes in name", Required = false)]
-            string save_path = DefaultScriptFolder)
-        {
-            if (string.IsNullOrWhiteSpace(save_path))
-                save_path = DefaultScriptFolder;
-
-            if (name != null && name.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                name = name.Substring(0, name.Length - 3);
-
-            if (string.IsNullOrWhiteSpace(name) || name == ".." || name.IndexOfAny(InvalidScriptNameChars) >= 0)
-                return ToolResultFormatter.Error("INVALID_NAME", new { name },
-                    "name is the file name alone, without .cs and without folders; pass the folder in save_path.");
-
-            if (save_path.EndsWith(".cs", StringComparison.OrdinalIgnoreCase))
-                return ToolResultFormatter.Error("INVALID_SAVE_PATH", new { save_path },
-                    "save_path is the folder to write into, not the file; put the file name in name.");
-
-            var assetPath = Path.Combine(save_path, $"{name}.cs");
-            var fullPath = PathSafety.ResolveProjectPath(assetPath);
-
-            if (File.Exists(fullPath))
-                return ToolResultFormatter.Error("SCRIPT_EXISTS", new { path = assetPath },
-                    "create_script never overwrites: a file is already there and you may not have read it. " +
-                    "Use edit_script (with expected_sha256) to replace it, or patch_script for a smaller change.");
-
-            Directory.CreateDirectory(Path.GetDirectoryName(fullPath));
-            AtomicFile.WriteAllText(fullPath, content);
-            AssetDatabase.Refresh();
-
-            return $"Created script '{name}.cs' at {assetPath}";
-        }
-
         [Description("Get the SHA256 hash of a script file's current contents. " +
-                     "Pass the returned sha256 as expected_sha256 to edit_script/patch_script so the edit is rejected " +
+                     "Pass the returned sha256 as expected_sha256 to write_file/patch_script so the edit is rejected " +
                      "if the file changed since you read it (prevents overwriting concurrent edits).")]
         [ReadOnlyTool]
         public static object GetScriptSha(
@@ -78,45 +36,8 @@ namespace KitWright.Editor.Tools.Builtins
             });
         }
 
-        [Description("Replace the entire contents of an existing script. " +
-                     "expected_sha256 is required: this is the one edit that overwrites everything, so it must prove " +
-                     "the file has not changed since you read it. read_file returns the sha to pass here — and returns " +
-                     "none when it had to truncate, which is exactly when a whole-file rewrite would destroy the tail. " +
-                     "For a smaller change prefer patch_script or edit_script_members, which need no sha because they " +
-                     "match on what they replace.")]
-        public static string EditScript(
-            [ToolParam("Path to the script file")] string path,
-            [ToolParam("New full content for the script")]
-            string content,
-            [ToolParam("SHA256 of the content you read, from read_file or get_script_sha. Required; the write is rejected with STALE_FILE if the file changed since.")]
-            string expected_sha256)
-        {
-            if (string.IsNullOrEmpty(expected_sha256))
-                return ToolResultFormatter.Error("SHA_REQUIRED", new { path },
-                    "edit_script overwrites the whole file, so it needs the sha256 of the content you based the " +
-                    "rewrite on. Call read_file (or get_script_sha) and pass its sha256. If read_file reported the " +
-                    "file as truncated it returns no sha - use patch_script or edit_script_members instead.");
-
-            var fullPath = PathSafety.ResolveProjectPath(path);
-            if (!File.Exists(fullPath))
-                return ToolResultFormatter.Error("SCRIPT_NOT_FOUND", new { path });
-
-            var original = File.ReadAllText(fullPath);
-            var staleError = CheckPrecondition(path, original, expected_sha256);
-            if (staleError != null) return staleError;
-
-            content = MatchLineEndings(content, original);
-            var syntaxError = CheckSyntaxRegression(path, original, content);
-            if (syntaxError != null) return syntaxError;
-
-            AtomicFile.WriteAllText(fullPath, content);
-            AssetDatabase.Refresh();
-
-            return $"Updated script at {path} (sha256: {ComputeSha256(content)})";
-        }
-
         [Description("Patch a script by finding and replacing specific text. " +
-                     "Safer than edit_script for small changes since it doesn't require sending the entire file content. " +
+                     "Safer than write_file for small changes since it doesn't require sending the entire file content. " +
                      "The old_text must match exactly (including whitespace and indentation). " +
                      "Optionally pass expected_sha256 (from get_script_sha) to reject the patch if the file changed since you read it.")]
         public static string PatchScript(
@@ -132,7 +53,7 @@ namespace KitWright.Editor.Tools.Builtins
             // would spin forever on the main thread.
             if (string.IsNullOrEmpty(old_text))
                 return ToolResultFormatter.Error("EMPTY_OLD_TEXT", new { path },
-                    "old_text must be the exact, non-empty text to replace; use edit_script to rewrite the whole file.");
+                    "old_text must be the exact, non-empty text to replace; use write_file to rewrite the whole file.");
 
             var fullPath = PathSafety.ResolveProjectPath(path);
             if (!File.Exists(fullPath))
@@ -292,7 +213,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // A client sends "\n"; a CRLF file would then never match a multi-line old_text and an
-        // edit_script rewrite would leave the file with mixed endings. A file that already mixes them
+        // write_file rewrite would leave the file with mixed endings. A file that already mixes them
         // is left alone, since there is no single ending to match.
         internal static string MatchLineEndings(string text, string reference)
         {
@@ -329,7 +250,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         // Only reject when the edit introduces a problem the original did not have, so files that
         // were already broken (e.g. mid-refactor) can still be fixed with further edits.
-        private static string CheckSyntaxRegression(string path, string originalContent, string newContent)
+        internal static string CheckSyntaxRegression(string path, string originalContent, string newContent)
         {
             var problem = CSharpSyntaxCheck.FindProblem(newContent);
             if (problem == null || CSharpSyntaxCheck.FindProblem(originalContent) != null)

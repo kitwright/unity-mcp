@@ -48,7 +48,7 @@ namespace KitWright.Editor.Tools.Builtins
         private static bool SessionActive => SessionState.GetBool(SessionKey, false);
 
         [Description("Start a Profiler capture session (enables UnityEngine.Profiling.Profiler and starts a set of " +
-                     "persistent ProfilerRecorder counters used by get_counters/get_frame_timing). Safe to call again while already running.")]
+                     "persistent ProfilerRecorder counters used by get_counters). Safe to call again while already running.")]
         public static string ProfilerStart()
         {
             try
@@ -58,7 +58,7 @@ namespace KitWright.Editor.Tools.Builtins
                 SessionState.SetBool(SessionKey, true);
                 StartRecorders();
                 return "Profiler started. Recorders running: " + _recorders.Count +
-                       ". Call get_frame_timing / get_counters after a few frames have elapsed.";
+                       ". Call get_counters after a few frames have elapsed.";
             }
             catch (Exception ex)
             {
@@ -104,56 +104,6 @@ namespace KitWright.Editor.Tools.Builtins
                     foreach (var kv in _recorders)
                         sb.AppendLine($"  - {kv.Key}: running={kv.Value.IsRunning}, valid={kv.Value.Valid}");
                 }
-                return sb.ToString();
-            }
-            catch (Exception ex)
-            {
-                return ToolResultFormatter.Exception(ex);
-            }
-        }
-
-        [Description("Get CPU/GPU frame timing for the most recently completed frame(s). " +
-                     "Does not require profiler_start. Uses FrameTimingManager.")]
-        [ReadOnlyTool]
-        public static string GetFrameTiming(
-            [ToolParam("Number of recent frames to sample and average (1-30)", Required = false)] int sample_frames = 1)
-        {
-            try
-            {
-                sample_frames = Mathf.Clamp(sample_frames, 1, 30);
-                FrameTimingManager.CaptureFrameTimings();
-                var timings = new FrameTiming[sample_frames];
-                uint timingCount = FrameTimingManager.GetLatestTimings((uint)sample_frames, timings);
-
-                if (timingCount == 0)
-                {
-                    var fallbackMs = Time.unscaledDeltaTime > 0f ? Time.unscaledDeltaTime * 1000.0 : 0.0;
-                    if (fallbackMs <= 0.0)
-                        return ToolResultFormatter.Error("FRAME_TIMING_UNAVAILABLE",
-                            new { hint = "Try again after the editor has rendered a few frames." });
-                    return $"CPU Frame (fallback from Time.unscaledDeltaTime): {fallbackMs:F2} ms, Approx FPS: {1000.0 / fallbackMs:F1}";
-                }
-
-                double cpuSum = 0.0, gpuSum = 0.0;
-                int gpuSamples = 0;
-                for (int i = 0; i < timingCount; i++)
-                {
-                    cpuSum += timings[i].cpuFrameTime;
-                    if (timings[i].gpuFrameTime > 0.0)
-                    {
-                        gpuSum += timings[i].gpuFrameTime;
-                        gpuSamples++;
-                    }
-                }
-
-                var avgCpu = cpuSum / timingCount;
-                var sb = new StringBuilder();
-                sb.AppendLine($"Sampled {timingCount} frame(s)");
-                sb.AppendLine($"- Avg CPU Frame: {avgCpu:F2} ms");
-                sb.AppendLine(gpuSamples > 0
-                    ? $"- Avg GPU Frame: {gpuSum / gpuSamples:F2} ms"
-                    : "- GPU Frame: unavailable");
-                sb.AppendLine($"- Approx FPS (from avg CPU frame): {(avgCpu > 0.0 ? 1000.0 / avgCpu : 0.0):F1}");
                 return sb.ToString();
             }
             catch (Exception ex)

@@ -394,7 +394,7 @@ namespace KitWright.Editor.Tests
         private static void MakeControllerAndClip()
         {
             AnimationFunctions.CreateAnimatorController("Ctrl", Folder + "/");
-            AnimationFunctions.CreateAnimationClip("Clip", Folder + "/");
+            AssetDatabase.CreateAsset(new AnimationClip(), ClipPath);
         }
 
         private static AnimatorController Controller() =>
@@ -411,20 +411,17 @@ namespace KitWright.Editor.Tests
         [TestCase("a/b")]
         [TestCase("..")]
         [TestCase("trailing.")]
-        public void CreateAnimationClipAndController_RefuseAnInvalidName_AndWriteNothing(string name)
+        public void CreateAnimatorController_RefusesAnInvalidName_AndWritesNothing(string name)
         {
-            StringAssert.Contains("INVALID_NAME", AnimationFunctions.CreateAnimationClip(name, Folder + "/"));
             StringAssert.Contains("INVALID_NAME", AnimationFunctions.CreateAnimatorController(name, Folder + "/"));
 
             Assert.IsEmpty(Directory.GetFileSystemEntries(OnDisk(Folder)));
-            Assert.IsFalse(File.Exists(Path.Combine(ProjectRoot, "__KwEscape.anim")));
             Assert.IsFalse(File.Exists(Path.Combine(ProjectRoot, "__KwEscape.controller")));
         }
 
         [Test]
-        public void CreateAnimationClipAndController_RefuseASavePathOutsideAssets()
+        public void CreateAnimatorController_RefusesASavePathOutsideAssets()
         {
-            StringAssert.Contains("INVALID_PATH", AnimationFunctions.CreateAnimationClip("Clip", "Assets/../../Elsewhere/"));
             StringAssert.Contains("INVALID_PATH", AnimationFunctions.CreateAnimatorController("Ctrl", "Assets/../../Elsewhere/"));
         }
 
@@ -432,9 +429,8 @@ namespace KitWright.Editor.Tests
         [TestCase("/ends~/")]
         [TestCase("/trail./")]
         [TestCase("/Sub/../")]
-        public void CreateAnimationClipAndController_RefuseASavePathSegmentUnityIgnoresOrRenames_AndCreateNothing(string tail)
+        public void CreateAnimatorController_RefusesASavePathSegmentUnityIgnoresOrRenames_AndCreatesNothing(string tail)
         {
-            StringAssert.Contains("INVALID_PATH", AnimationFunctions.CreateAnimationClip("Clip", Folder + tail));
             StringAssert.Contains("INVALID_PATH", AnimationFunctions.CreateAnimatorController("Ctrl", Folder + tail));
 
             Assert.IsEmpty(Directory.GetFileSystemEntries(OnDisk(Folder)),
@@ -442,42 +438,19 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void CreateAnimationClipAndController_ReplyWithTheCanonicalAssetPath()
+        public void CreateAnimatorController_RepliesWithTheCanonicalAssetPath()
         {
-            Assert.AreEqual($"Created Animation Clip at {Folder}/Canon.anim",
-                AnimationFunctions.CreateAnimationClip("Canon", Folder + "//"));
             Assert.AreEqual($"Created Animator Controller at {Folder}/Canon.controller",
                 AnimationFunctions.CreateAnimatorController("Canon", Folder.Replace('/', '\\') + "\\"));
         }
 
         [Test]
-        public void CreateAnimationClipAndController_TakeASavePathWithNoTrailingSlash()
+        public void CreateAnimatorController_TakesASavePathWithNoTrailingSlash()
         {
             AnimationFunctions.CreateAnimatorController("KwCtl", Folder);
-            AnimationFunctions.CreateAnimationClip("KwClip", Folder);
 
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimatorController>($"{Folder}/KwCtl.controller"),
                 "The name was glued onto the folder instead of joined to it.");
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<AnimationClip>($"{Folder}/KwClip.anim"));
-        }
-
-        [Test]
-        public void CreateAnimationClip_RefusesToReplaceAClipThatHasCurves()
-        {
-            MakeControllerAndClip();
-            AnimationFunctions.SetClipCurve(ClipPath, "m_LocalPosition.x",
-                "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":1}]");
-            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath);
-            Assert.AreEqual(1, AnimationUtility.GetCurveBindings(clip).Length, "Setup failed: no curve was written.");
-
-            StringAssert.Contains("ANIMATION_CLIP_EXISTS", AnimationFunctions.CreateAnimationClip("Clip", Folder + "/"));
-
-            clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath);
-            Assert.AreEqual(1, AnimationUtility.GetCurveBindings(clip).Length,
-                "A refused create must not reset the clip it found.");
-
-            StringAssert.DoesNotContain("ANIMATION_CLIP_EXISTS",
-                AnimationFunctions.CreateAnimationClip("Clip", Folder + "/", overwrite: true));
         }
 
         [Test]
@@ -605,7 +578,7 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void SetClipCurve_RejectsKeysItWouldHaveDroppedOrThrownOn_AndWritesNoCurve()
+        public void SetAnimationCurve_RejectsKeysItWouldHaveDroppedOrThrownOn_AndWritesNoCurve()
         {
             MakeControllerAndClip();
 
@@ -617,10 +590,11 @@ namespace KitWright.Editor.Tests
                          "[{\"time\":0,\"value\":1},{\"time\":0,\"value\":2}]",
                          "[{\"time\":\"abc\",\"value\":1}]"
                      })
-                StringAssert.Contains("INVALID_PARAM", AnimationFunctions.SetClipCurve(ClipPath, "m_LocalPosition.x", keys));
+                Assert.AreEqual("INVALID_KEYFRAME",
+                    Code("set_animation_curve", "clip", ClipPath, "type", "Transform", "property", "m_LocalPosition.x", "keys", keys), keys);
 
-            StringAssert.Contains("INVALID_PARAM", AnimationFunctions.SetClipCurve(ClipPath, "  ",
-                "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":1}]"));
+            Assert.AreEqual("INVALID_PARAM", (string)JObject.FromObject(UnityCliAssetFunctions.SetAnimationCurve(ClipPath, "Transform", "  ",
+                "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":1}]"))["code"]);
 
             Assert.IsEmpty(AnimationUtility.GetCurveBindings(AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath)));
         }

@@ -77,11 +77,22 @@ namespace KitWright.Editor.Tests
         {
             var hidden = JObject.FromObject(MenuItemFunctions.Refusal("File/Build And Run", false, _ => false));
             Assert.AreEqual(JTokenType.Null, hidden["data"]["tool_instead"].Type);
-            StringAssert.DoesNotContain("build_player", (string)hidden["hint"]);
+            StringAssert.DoesNotContain("Use build instead", (string)hidden["hint"]);
 
             var exposed = JObject.FromObject(MenuItemFunctions.Refusal("File/Build And Run", false, _ => true));
-            Assert.AreEqual("build_player", (string)exposed["data"]["tool_instead"]);
-            StringAssert.Contains("build_player", (string)exposed["hint"]);
+            Assert.AreEqual("build", (string)exposed["data"]["tool_instead"]);
+            StringAssert.Contains("Use build instead", (string)exposed["hint"]);
+        }
+
+        [Test]
+        public void AnEmptyMenuPathListsTheMenuItemsInsteadOfRunningOne()
+        {
+            var answer = JObject.FromObject(MenuItemFunctions.ExecuteMenuItem(""));
+            if (Code(answer) == "FEATURE_UNAVAILABLE")
+                Assert.Ignore("This Unity version does not expose its menu list.");
+
+            Assert.IsTrue((bool)answer["success"], answer.ToString());
+            Assert.Greater(((JArray)answer["data"]["items"]).Count, 0);
         }
 
         [Test]

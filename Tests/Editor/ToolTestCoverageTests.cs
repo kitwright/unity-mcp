@@ -42,7 +42,6 @@ namespace KitWright.Editor.Tests
             "frame_debugger_enable",
             // replaces the scene the run is in
             "close_scene",
-            "load_scene_additive",
             "open_scene",
             "set_active_scene",
             // wipes state that belongs to whoever owns the project

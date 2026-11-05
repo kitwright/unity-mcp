@@ -38,16 +38,24 @@ namespace KitWright.Editor.Tests
             _made.Clear();
 
             foreach (var tag in _addedTags)
-                Call("remove_tag", "tag", tag);
+                Call("set_tags_layers", "settings", TagList("removeTags", tag), "confirm", "true");
             _addedTags.Clear();
             foreach (var layer in _addedLayers)
-                Call("remove_layer", "layer", layer);
+            {
+                var index = LayerMask.NameToLayer(layer);
+                if (index >= 8)
+                    Call("set_tags_layers", "settings", LayerSlot(index, ""), "confirm", "true");
+            }
             _addedLayers.Clear();
 
             Assert.AreEqual(_tagManagerBefore, TagManagerSnapshot(), "The test left TagManager changed.");
         }
 
         private static string Unique(string stem) => stem + "_" + System.Guid.NewGuid().ToString("N");
+
+        private static string TagList(string key, string tag) => "{\"" + key + "\":[\"" + tag + "\"]}";
+
+        private static string LayerSlot(int index, string name) => "{\"setLayers\":[{\"index\":" + index + ",\"name\":\"" + name + "\"}]}";
 
         private GameObject Make(string stem)
         {
@@ -220,24 +228,25 @@ namespace KitWright.Editor.Tests
         public void AddTag_TrimsTheNameAndSavesTagManager()
         {
             var tag = Unique("KwTag");
-            Ok("add_tag", "tag", "  " + tag + " ");
+            Ok("set_tags_layers", "settings", TagList("addTags", "  " + tag + " "), "confirm", "true");
             _addedTags.Add(tag);
 
             CollectionAssert.Contains(InternalEditorUtility.tags, tag);
             CollectionAssert.DoesNotContain(InternalEditorUtility.tags, "  " + tag + " ");
-            StringAssert.Contains(tag, TagManagerFile(), "add_tag has to flush TagManager, not only mark it dirty.");
+            StringAssert.Contains(tag, TagManagerFile(), "set_tags_layers has to flush TagManager, not only mark it dirty.");
 
-            Ok("remove_tag", "tag", " " + tag);
+            Ok("set_tags_layers", "settings", TagList("removeTags", " " + tag), "confirm", "true");
             _addedTags.Remove(tag);
-            StringAssert.DoesNotContain(tag, TagManagerFile(), "remove_tag has to flush TagManager too.");
+            StringAssert.DoesNotContain(tag, TagManagerFile(), "removing a tag has to flush TagManager too.");
         }
 
         [Test]
         public void RemoveTag_CallsABuiltInTagBuiltInInsteadOfMissing()
         {
-            Assert.AreEqual("CANNOT_REMOVE_BUILTIN_TAG", Code("remove_tag", "tag", "Player"));
-            Assert.AreEqual("CANNOT_REMOVE_BUILTIN_TAG", Code("remove_tag", "tag", "MainCamera"));
-            Assert.AreEqual("TAG_NOT_FOUND", Code("remove_tag", "tag", Unique("KwNoSuchTag")));
+            Assert.AreEqual("CANNOT_REMOVE_BUILTIN_TAG", Code("set_tags_layers", "settings", TagList("removeTags", "Player"), "confirm", "true"));
+            Assert.AreEqual("CANNOT_REMOVE_BUILTIN_TAG", Code("set_tags_layers", "settings", TagList("removeTags", "MainCamera"), "dry_run", "true"));
+            Assert.AreEqual("TAG_NOT_FOUND", Code("set_tags_layers", "settings", TagList("removeTags", Unique("KwNoSuchTag")), "confirm", "true"));
+            Assert.AreEqual("INVALID_TAG", Code("set_tags_layers", "settings", TagList("addTags", "  "), "confirm", "true"));
         }
 
         [Test]
@@ -247,17 +256,18 @@ namespace KitWright.Editor.Tests
                 Assert.Ignore("No free user layer slot in this project.");
 
             var layer = Unique("KwLy");
-            Ok("add_layer", "layer", " " + layer + " ");
+            Ok("set_tags_layers", "settings", "{\"setLayers\":[{\"name\":\" " + layer + " \"}]}", "confirm", "true");
             _addedLayers.Add(layer);
 
-            Assert.GreaterOrEqual(LayerMask.NameToLayer(layer), 8);
-            StringAssert.Contains(layer, TagManagerFile(), "add_layer has to flush TagManager.");
+            var index = LayerMask.NameToLayer(layer);
+            Assert.GreaterOrEqual(index, 8);
+            StringAssert.Contains(layer, TagManagerFile(), "set_tags_layers has to flush TagManager.");
 
-            var removed = Ok("remove_layer", "layer", layer);
+            var removed = Ok("set_tags_layers", "settings", LayerSlot(index, ""), "confirm", "true");
             _addedLayers.Remove(layer);
             StringAssert.Contains("culling masks", (string)removed["hint"]);
-            StringAssert.DoesNotContain(layer, TagManagerFile(), "remove_layer has to flush TagManager too.");
-            Assert.AreEqual("LAYER_NOT_FOUND", Code("remove_layer", "layer", layer));
+            StringAssert.DoesNotContain(layer, TagManagerFile(), "clearing a layer has to flush TagManager too.");
+            Assert.AreEqual(-1, LayerMask.NameToLayer(layer));
         }
 
         [Test]

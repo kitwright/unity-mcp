@@ -34,7 +34,8 @@ namespace KitWright.Editor.Tests
                 Assert.That(ProfilerFunctions.ProfilerStart(), Does.Contain("Profiler started"));
                 Assert.That(ProfilerFunctions.ProfilerStatus(), Does.Contain("Profiler.enabled"));
 
-                var frameTiming = ProfilerFunctions.GetFrameTiming(sample_frames: 1);
+                var frameTiming = PerformanceFunctions.GetPerformanceSnapshot(include_scene_counts: false, sample_frames: 5);
+                Assert.That(frameTiming, Does.Contain("Frame Timing:"));
                 Assert.That(frameTiming, Does.Contain("Frame"));
 
                 var counters = ProfilerFunctions.GetCounters();

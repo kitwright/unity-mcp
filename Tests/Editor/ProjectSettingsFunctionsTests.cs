@@ -48,6 +48,24 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(_originalTimeScale, Time.timeScale, 0.0001f);
         }
 
+        [Test]
+        public void SetProjectSettings_DryRunReportsTheChangeAndWritesNothing()
+        {
+            var result = JObject.Parse(JsonConvert.SerializeObject(ProjectSettingsFunctions.SetProjectSettings(
+                Singleton, "{\"m_TimeScale\": 0.25, \"m_NoSuchTimeField\": 1}", dry_run: true)));
+
+            Assert.IsTrue(result.Value<bool>("success"), result.ToString());
+            var field = result["data"]["fields"].Single();
+            Assert.AreEqual("m_TimeScale", field.Value<string>("field"));
+            Assert.AreEqual(_originalTimeScale, field.Value<float>("current"), 0.0001f);
+            Assert.AreEqual(0.25f, field.Value<float>("requested"), 0.0001f);
+            CollectionAssert.AreEqual(new[] { "m_NoSuchTimeField" }, result["data"]["notFound"].Select(t => (string)t).ToArray());
+            Assert.AreEqual(_originalTimeScale, Time.timeScale, 0.0001f, "dry_run must not write.");
+
+            StringAssert.Contains("PROPERTY_SET_FAILED", JsonConvert.SerializeObject(
+                ProjectSettingsFunctions.SetProjectSettings(Singleton, "{\"m_NoSuchTimeField\": 1}", dry_run: true)));
+        }
+
         // The dump is how an agent discovers the paths the writer takes, so anything the writer can
         // reach has to appear here. Hidden properties used to be missing from it entirely.
         [Test]

@@ -96,16 +96,42 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void DeleteSpriteAtlas_MovesTheAtlasToTheTrashInsteadOfUnlinkingIt()
+        public void DeleteAsset_MovesASpriteAtlasToTheTrashInsteadOfUnlinkingIt()
         {
             var path = _folder + "/Doomed_" + Guid.NewGuid().ToString("N") + ".spriteatlas";
             var created = SpriteAtlasFunctions.CreateSpriteAtlas(path).ToString();
             Assert.IsNotNull(AssetDatabase.LoadMainAssetAtPath(path), "Setup failed: " + created);
 
-            var result = SpriteAtlasFunctions.DeleteSpriteAtlas(path).ToString();
+            var result = AssetFunctions.DeleteAsset(path);
 
             StringAssert.Contains("trash", result);
             Assert.IsNull(AssetDatabase.LoadMainAssetAtPath(path), "Atlas is still loadable after delete.");
+        }
+
+        [Test]
+        public void DeleteAsset_TrashesAFileWrittenOutsideTheEditorBeforeItWasImported()
+        {
+            var path = _folder + "/Unimported_" + Guid.NewGuid().ToString("N") + ".txt";
+            System.IO.File.WriteAllText(System.IO.Path.GetFullPath(path), "written behind the AssetDatabase's back");
+
+            var result = AssetFunctions.DeleteAsset(path);
+
+            StringAssert.Contains("trash", result);
+            Assert.IsFalse(System.IO.File.Exists(System.IO.Path.GetFullPath(path)), result);
+        }
+
+        [Test]
+        public void FindAssets_FolderScopesTheSearchAndAMissingFolderIsReported()
+        {
+            var shader = Shader.Find("Sprites/Default") ?? Shader.Find("Unlit/Color");
+            Assert.IsNotNull(shader, "A test shader is required.");
+            AssetDatabase.CreateAsset(new Material(shader), _folder + "/KwScoped.mat");
+            AssetDatabase.SaveAssets();
+
+            var scoped = PathsIn(AssetFunctions.FindAssets("t:Material", max: 500, folder: _folder));
+            CollectionAssert.AreEqual(new[] { _folder + "/KwScoped.mat" }, scoped);
+
+            StringAssert.Contains("FOLDER_NOT_FOUND", AssetFunctions.FindAssets("t:Material", folder: _folder + "/NoSuchFolder"));
         }
 
         [Test]

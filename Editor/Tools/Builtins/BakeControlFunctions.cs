@@ -7,8 +7,8 @@ using UnityEditor;
 namespace KitWright.Editor.Tools.Builtins
 {
     /// <summary>
-    /// Status, cancel and clear for the two asynchronous bakes. bake_lightmaps starts a lightmap bake;
-    /// the occlusion bake is started here, since nothing else does.
+    /// Cancel and clear for the two asynchronous bakes, and the occlusion bake's start and status. bake_lightmaps
+    /// starts a lightmap bake and get_lighting_settings reports it; the occlusion bake is started here, since nothing else does.
     /// </summary>
     [ToolProvider("Lighting")]
     [InitializeOnLoad]
@@ -16,24 +16,11 @@ namespace KitWright.Editor.Tools.Builtins
     {
         private const float UnsetFloat = float.MinValue;
 
-        private static DateTime? lightmapBakeCompletedUtc;
+        internal static DateTime? LightmapBakeCompletedUtc { get; private set; }
 
         static BakeControlFunctions()
         {
-            Lightmapping.bakeCompleted += () => lightmapBakeCompletedUtc = DateTime.UtcNow;
-        }
-
-        [Description("Report the lightmap bake state: 'baking' while a bake runs, else 'idle'. last_completed_utc is when " +
-                     "the last bake finished in this editor session (null if none did). Start a bake with bake_lightmaps.")]
-        [ReadOnlyTool]
-        public static object LightingBakeStatus()
-        {
-            var running = Lightmapping.isRunning;
-            return Response.Success(running ? "A lightmap bake is running." : "No lightmap bake is running.", new
-            {
-                state = running ? "baking" : "idle",
-                last_completed_utc = lightmapBakeCompletedUtc?.ToString("o")
-            });
+            Lightmapping.bakeCompleted += () => LightmapBakeCompletedUtc = DateTime.UtcNow;
         }
 
         [Description("Cancel the running lightmap bake. Answers NO_BAKE_RUNNING when none is running.")]

@@ -12,17 +12,50 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("GameObject")]
     internal static class GameObjectFunctions
     {
-        [Description("Create a new empty GameObject in the scene. Returns the new instanceId so it can be targeted by_id in follow-up calls.")]
+        [Description("Create a GameObject in the scene: empty, or a primitive (Cube, Sphere, Capsule, Cylinder, Plane, Quad) with its mesh and collider. " +
+                     "Position and rotation are world space, scale is local; an omitted one is left as Unity creates it, except that a primitive " +
+                     "under a parent defaults to local scale 1. " +
+                     "Returns the new instanceId so it can be targeted by_id in follow-up calls, plus the components of a primitive.")]
         public static object CreateGameObject(
             [ToolParam("Name of the new GameObject")] string name,
             [ToolParam("Parent GameObject identifier (instance id, name, or path)", Required = false)] string parent = null,
-            [ToolParam("How to resolve parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
+            [ToolParam("How to resolve parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null,
+            [ToolParam("Primitive type: Cube, Sphere, Capsule, Cylinder, Plane, Quad. Empty = an empty GameObject.", Required = false)] string primitive = null,
+            [ToolParam("Position as 'x,y,z'", Required = false)] string position = null,
+            [ToolParam("Euler rotation as 'x,y,z'", Required = false)] string rotation = null,
+            [ToolParam("Scale as 'x,y,z'", Required = false)] string scale = null)
         {
             ObjectsHelper.ValidateFindMethod(find_method);
 
-            // Resolved before the object exists, so a bad parent cannot leave one behind - the order
-            // CreatePrimitive below already uses. Creating first meant PARENT_NOT_FOUND came back
-            // with an orphan sitting at the scene root.
+            var isPrimitive = !string.IsNullOrWhiteSpace(primitive);
+            var type = PrimitiveType.Cube;
+            if (isPrimitive)
+            {
+                switch (primitive.Trim().ToLowerInvariant())
+                {
+                    case "cube": type = PrimitiveType.Cube; break;
+                    case "sphere": type = PrimitiveType.Sphere; break;
+                    case "capsule": type = PrimitiveType.Capsule; break;
+                    case "cylinder": type = PrimitiveType.Cylinder; break;
+                    case "plane": type = PrimitiveType.Plane; break;
+                    case "quad": type = PrimitiveType.Quad; break;
+                    default: return Response.Error("UNKNOWN_PRIMITIVE", new { primitive });
+                }
+            }
+
+            var hasPos = !string.IsNullOrEmpty(position);
+            var hasRot = !string.IsNullOrEmpty(rotation);
+            var hasScl = !string.IsNullOrEmpty(scale);
+            Vector3 pos = default, rot = default, scl = default;
+            if (hasPos && !ValueConverter.TryParseVector3(position, out pos, out var posErr))
+                return Response.Error("INVALID_PARAM", new { param = "position", provided = position, expected = "Vector3 'x,y,z'", detail = posErr });
+            if (hasRot && !ValueConverter.TryParseVector3(rotation, out rot, out var rotErr))
+                return Response.Error("INVALID_PARAM", new { param = "rotation", provided = rotation, expected = "Vector3 'x,y,z'", detail = rotErr });
+            if (hasScl && !ValueConverter.TryParseVector3(scale, out scl, out var sclErr))
+                return Response.Error("INVALID_PARAM", new { param = "scale", provided = scale, expected = "Vector3 'x,y,z'", detail = sclErr });
+
+            // Resolved before the object exists, so a bad parent cannot leave one behind. Creating
+            // first meant PARENT_NOT_FOUND came back with an orphan sitting at the scene root.
             GameObject parentGo = null;
             if (!string.IsNullOrEmpty(parent))
             {
@@ -31,67 +64,28 @@ namespace KitWright.Editor.Tools.Builtins
                     return Response.Error("PARENT_NOT_FOUND", new { parent, find_method });
             }
 
-            var go = new GameObject(name);
+            GameObject go;
+            if (isPrimitive)
+            {
+                go = GameObject.CreatePrimitive(type);
+                go.name = name;
+            }
+            else
+                go = new GameObject(name);
             Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
 
             if (parentGo != null)
                 Undo.SetTransformParent(go.transform, parentGo.transform, $"Set parent of {name}");
+            if (hasPos) go.transform.position = pos;
+            if (hasRot) go.transform.eulerAngles = rot;
+            if (hasScl) go.transform.localScale = scl;
+            // create_primitive's behaviour: a primitive is unit-sized in its parent's space, not in world space.
+            else if (isPrimitive) go.transform.localScale = Vector3.one;
 
             Selection.activeGameObject = go;
-            return Response.Success($"Created GameObject '{name}'.", GameObjectSerializer.DescribeCreated(go));
-        }
-
-        [Description("Create a primitive GameObject (Cube, Sphere, Capsule, Cylinder, Plane, Quad).")]
-        public static object CreatePrimitive(
-            [ToolParam("Name of the new object")] string name,
-            [ToolParam("Primitive type: Cube, Sphere, Capsule, Cylinder, Plane, Quad")] string primitive_type,
-            [ToolParam("Position as 'x,y,z'", Required = false)] string position = "0,0,0",
-            [ToolParam("Scale as 'x,y,z'", Required = false)] string scale = "1,1,1",
-            [ToolParam("Euler rotation as 'x,y,z'", Required = false)] string rotation = "0,0,0",
-            [ToolParam("Parent GameObject identifier (instance id, name, or path)", Required = false)] string parent = null,
-            [ToolParam("How to resolve parent: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
-        {
-            ObjectsHelper.ValidateFindMethod(find_method);
-
-            PrimitiveType type;
-            switch (primitive_type.ToLowerInvariant())
-            {
-                case "cube": type = PrimitiveType.Cube; break;
-                case "sphere": type = PrimitiveType.Sphere; break;
-                case "capsule": type = PrimitiveType.Capsule; break;
-                case "cylinder": type = PrimitiveType.Cylinder; break;
-                case "plane": type = PrimitiveType.Plane; break;
-                case "quad": type = PrimitiveType.Quad; break;
-                default: return Response.Error("UNKNOWN_PRIMITIVE", new { primitive_type });
-            }
-
-            if (!ValueConverter.TryParseVector3(position, out var primPos, out var primPosErr))
-                return Response.Error("INVALID_PARAM", new { param = "position", provided = position, expected = "Vector3 'x,y,z'", detail = primPosErr });
-            if (!ValueConverter.TryParseVector3(scale, out var primScale, out var primScaleErr))
-                return Response.Error("INVALID_PARAM", new { param = "scale", provided = scale, expected = "Vector3 'x,y,z'", detail = primScaleErr });
-            if (!ValueConverter.TryParseVector3(rotation, out var primRot, out var primRotErr))
-                return Response.Error("INVALID_PARAM", new { param = "rotation", provided = rotation, expected = "Vector3 'x,y,z'", detail = primRotErr });
-
-            // Resolved before the primitive exists, so a bad parent cannot leave one behind.
-            GameObject parentGo = null;
-            if (!string.IsNullOrEmpty(parent))
-            {
-                parentGo = ObjectsHelper.FindObject(parent, find_method);
-                if (parentGo == null)
-                    return Response.Error("PARENT_NOT_FOUND", new { parent, find_method });
-            }
-
-            var go = GameObject.CreatePrimitive(type);
-            go.name = name;
-            Undo.RegisterCreatedObjectUndo(go, $"Create {name}");
-            if (parentGo != null)
-                Undo.SetTransformParent(go.transform, parentGo.transform, $"Set parent of {name}");
-            go.transform.position = primPos;
-            go.transform.eulerAngles = primRot;
-            go.transform.localScale = primScale;
-            Selection.activeGameObject = go;
-
-            return Response.Success($"Created {primitive_type} '{name}'.", GameObjectSerializer.DescribeCreated(go, includeComponents: true));
+            return isPrimitive
+                ? Response.Success($"Created {type} '{name}'.", GameObjectSerializer.DescribeCreated(go, includeComponents: true))
+                : Response.Success($"Created GameObject '{name}'.", GameObjectSerializer.DescribeCreated(go));
         }
 
         [Description("Delete a GameObject. Targets resolved through ObjectsHelper (instance id, name, path, tag, layer, component).")]
@@ -244,23 +238,45 @@ namespace KitWright.Editor.Tools.Builtins
                 new { child = child.name, requestedParent = parent != null ? parent.name : null, currentParent = child.transform.parent != null ? child.transform.parent.name : null },
                 "Unity refused the change and left the hierarchy as it was; see the console for the reason.");
 
-        [Description("Add a component to a GameObject. Returns the new component's instanceId.")]
+        [Description("Add a component to a GameObject. Returns the new component's instanceId. component_type is a type name, or a " +
+                     "MonoBehaviour's script asset path ('Assets/Scripts/Player.cs'), whose class is read from the MonoScript so it may " +
+                     "be named differently from the file. A script that has not compiled yet answers SCRIPT_NOT_COMPILED: request_recompile, then retry.")]
         public static object AddComponent(
             [ToolParam("Identifier of the GameObject")] string target,
-            [ToolParam("Component type name (e.g. 'Rigidbody', 'BoxCollider', 'AudioSource')")] string component_type,
+            [ToolParam("Component type name (e.g. 'Rigidbody', 'BoxCollider', 'AudioSource') or script asset path ending in .cs")] string component_type,
             [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
         {
             var go = ObjectsHelper.FindObject(target, find_method);
             if (go == null)
                 return ObjectsHelper.NotFound("target", target, find_method);
 
-            var type = TypeResolver.ResolveComponent(component_type);
-            if (type == null)
-                return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
+            System.Type type;
+            if (component_type != null && component_type.EndsWith(".cs", System.StringComparison.OrdinalIgnoreCase))
+            {
+                var script = AssetDatabase.LoadAssetAtPath<MonoScript>(component_type);
+                if (script == null)
+                    return Response.Error("SCRIPT_NOT_FOUND", new { script_path = component_type });
+
+                type = script.GetClass();
+                if (type == null)
+                    return Response.Error("SCRIPT_NOT_COMPILED", new { script_path = component_type },
+                        "The file has no compiled class yet, or its class name differs from what Unity expects. Run request_recompile and retry.");
+
+                if (!typeof(MonoBehaviour).IsAssignableFrom(type) || type.IsAbstract)
+                    return Response.Error("NOT_A_MONOBEHAVIOUR", new { script_path = component_type, type = type.FullName },
+                        "Only a concrete MonoBehaviour can be attached to a GameObject.");
+            }
+            else
+            {
+                type = TypeResolver.ResolveComponent(component_type);
+                if (type == null)
+                    return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
+            }
 
             var comp = Undo.AddComponent(go, type);
             if (comp == null)
-                return Response.Error("ADD_COMPONENT_FAILED", new { component_type, target = go.name });
+                return Response.Error("ADD_COMPONENT_FAILED", new { component_type, target = go.name },
+                    "Unity refused the component: it may conflict with one already on the GameObject (a [DisallowMultipleComponent] or [RequireComponent] rule).");
 
             return Response.Success($"Added {component_type} to '{go.name}'.",
                 new { gameObjectInstanceId = ObjectIdCodec.GetSerializableId(go),
@@ -299,40 +315,6 @@ namespace KitWright.Editor.Tools.Builtins
                 new { instanceId = ObjectIdCodec.GetSerializableId(go), type = type.Name, remaining = matches.Length - 1 });
         }
 
-        [Description("Enable or disable a component (its 'enabled' checkbox) on a GameObject. Works for Behaviour/MonoBehaviour, Renderer, Collider. Use index when several of the same type exist.")]
-        public static object SetComponentEnabled(
-            [ToolParam("Identifier of the GameObject")] string target,
-            [ToolParam("Component type name (e.g. 'BoxCollider', 'MyScript')")] string component_type,
-            [ToolParam("true to enable, false to disable")] bool enabled,
-            [ToolParam("Which match when several of the same type exist (0-based)", Required = false)] int index = 0,
-            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
-        {
-            var go = ObjectsHelper.FindObject(target, find_method);
-            if (go == null)
-                return ObjectsHelper.NotFound("target", target, find_method);
-
-            var type = TypeResolver.ResolveComponent(component_type);
-            if (type == null)
-                return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
-
-            var matches = go.GetComponents(type);
-            if (matches == null || matches.Length == 0)
-                return Response.Error("COMPONENT_NOT_PRESENT", new { component_type, target = go.name });
-            if (index < 0 || index >= matches.Length)
-                return Response.Error("INDEX_OUT_OF_RANGE", new { index, count = matches.Length });
-
-            var comp = matches[index];
-            var prop = comp.GetType().GetProperty("enabled");
-            if (prop == null || !prop.CanWrite)
-                return Response.Error("COMPONENT_NOT_TOGGLEABLE", new { component_type, hint = "Component has no 'enabled' property." });
-
-            Undo.RecordObject(comp, $"Set {component_type} enabled");
-            prop.SetValue(comp, enabled);
-
-            return Response.Success($"{(enabled ? "Enabled" : "Disabled")} {component_type} on '{go.name}'.",
-                new { instanceId = ObjectIdCodec.GetSerializableId(go), type = type.Name, enabled });
-        }
-
         [Description("Set tag and/or layer on a GameObject.")]
         public static object SetTagAndLayer(
             [ToolParam("Identifier of the GameObject")] string target,
@@ -361,9 +343,9 @@ namespace KitWright.Editor.Tools.Builtins
             var tagDefined = hasTag && System.Array.IndexOf(UnityEditorInternal.InternalEditorUtility.tags, tag) >= 0;
             var layerIndex = hasLayer ? LayerMask.NameToLayer(layer) : -1;
             if (hasTag && !tagDefined)
-                warnings.Add($"Tag '{tag}' is not defined; use add_tag first.");
+                warnings.Add($"Tag '{tag}' is not defined; add it with set_tags_layers first.");
             if (hasLayer && layerIndex < 0)
-                warnings.Add($"Layer '{layer}' is not defined; use add_layer first.");
+                warnings.Add($"Layer '{layer}' is not defined; add it with set_tags_layers first.");
 
             // A call that applied nothing is not a success; one that applied one half and could not
             // apply the other still is, with the warning saying which.

@@ -27,7 +27,11 @@ namespace KitWright.Editor.Tools.Builtins
                      "discover the real field names (the Physics window's \"Layer Collision Matrix\" is 'm_LayerCollisionMatrix', " +
                      "a 32-element array). Nested pages are descended, and each 'Name' is then the full property path you can " +
                      "hand straight to FindProperty (e.g. 'm_QualitySettings.Array.data[0].shadowResolution'); at most 400 are " +
-                     "returned and 'propertyCount' reports the real total. This tool is read-only — hand the paths it " +
+                     "returned and 'propertyCount' reports the real total. Pages by window: Physics 'PhysicsManager' (m_Gravity, " +
+                     "m_DefaultSolverIterations, m_BounceThreshold), Audio 'AudioManager' (m_Volume, 'Rolloff Scale', 'Doppler Factor'), " +
+                     "Time 'TimeManager' ('Fixed Timestep', 'Maximum Allowed Timestep', m_TimeScale), Quality 'QualitySettings' " +
+                     "(m_CurrentQuality, m_QualitySettings per level), Graphics 'GraphicsSettings' (m_CustomRenderPipeline), legacy " +
+                     "Input 'InputManager' (m_Axes), Tags and Layers 'TagManager'. This tool is read-only — hand the paths it " +
                      "reports straight to set_project_settings to write them back.\n" +
                      "Patching ProjectSettings/*.asset as text while the editor is open is picked up only if an " +
                      "AssetDatabase.Refresh follows. Skip that and the file and the editor's in-memory copy of the page " +
@@ -88,11 +92,14 @@ namespace KitWright.Editor.Tools.Builtins
                      "copy of the page and the file on disk move together. That save also writes any other asset with unsaved " +
                      "changes, and does not run when no field was applied. Patching ProjectSettings/*.asset as text " +
                      "instead is picked up only if an AssetDatabase.Refresh follows; without one the editor keeps its " +
-                     "own copy and overwrites the edit the next time Unity writes settings.")]
+                     "own copy and overwrites the edit the next time Unity writes settings.\n" +
+                     "dry_run=true writes nothing: it reports each path's current and requested value, and lists the paths " +
+                     "the page does not have (a value of the wrong type is caught only by the real write).")]
         public static object SetProjectSettings(
             [ToolParam("Settings singleton to write — the same names get_project_settings accepts ('PhysicsManager', " +
                        "'TimeManager', 'QualitySettings', 'GraphicsSettings', ...).")] string singleton,
-            [ToolParam("JSON object of propertyPath→value pairs, e.g. {\"m_Gravity\": {\"x\": 0, \"y\": -20, \"z\": 0}}")] string properties)
+            [ToolParam("JSON object of propertyPath→value pairs, e.g. {\"m_Gravity\": {\"x\": 0, \"y\": -20, \"z\": 0}}")] string properties,
+            [ToolParam("Report what would change without writing anything", Required = false)] bool dry_run = false)
         {
             if (string.IsNullOrWhiteSpace(properties))
                 return Response.Error("PROPERTIES_REQUIRED");
@@ -103,6 +110,9 @@ namespace KitWright.Editor.Tools.Builtins
             JObject parsed;
             try { parsed = JsonParse.Object(properties); }
             catch (Exception ex) { return Response.Error("INVALID_PROPERTIES_JSON", new { message = ex.Message }); }
+
+            if (dry_run)
+                return PreviewWrite(target, singleton, parsed);
 
             var results = ComponentSerializer.WriteProperties(target, parsed, $"Set {singleton}");
 
@@ -124,6 +134,29 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // --- Helpers ---
+
+        private static object PreviewWrite(UnityEngine.Object target, string singleton, JObject parsed)
+        {
+            var paths = new HashSet<string>(parsed.Properties().Select(p => p.Name));
+            var current = ComponentSerializer.ReadProperties(target, out _, out _, paths.Contains, descend: true, includeHidden: true)
+                .GroupBy(p => p.Name).ToDictionary(g => g.Key, g => g.First());
+
+            var fields = new List<object>();
+            var notFound = new List<string>();
+            foreach (var property in parsed.Properties())
+            {
+                if (current.TryGetValue(property.Name, out var snapshot))
+                    fields.Add(new { field = property.Name, type = snapshot.Type, current = snapshot.Value, requested = property.Value });
+                else
+                    notFound.Add(property.Name);
+            }
+
+            var data = new { singleton, dry_run = true, fields, notFound };
+            if (fields.Count == 0)
+                return Response.Error("PROPERTY_SET_FAILED", data,
+                    "None of these paths is on the page. Call get_project_settings with the same singleton for the real names.");
+            return Response.Success($"Would write {fields.Count} of {parsed.Count} field(s) on {singleton}; nothing was written.", data);
+        }
 
         // Settings pages are native singletons outside the AssetDatabase, keyed by the class name in ProjectSettings/*.asset.
         private static UnityEngine.Object ResolveSettingsSingleton(string singleton, out object error)

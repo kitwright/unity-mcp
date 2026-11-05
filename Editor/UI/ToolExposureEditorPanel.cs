@@ -956,7 +956,7 @@ namespace KitWright.Editor.MCP.Server
                 case "minimal":
                     return "Minimal defaults to a tiny essential set (execute_code + a few reads). Select tools below and click Save to override that list.";
                 case "extended":
-                    return "Extended defaults to every tool except niche families (addressables, terrain, docs, reflection, assembly, snapshots). Select tools below and click Save to override.";
+                    return "Extended defaults to core plus every tool except niche categories (Terrain, Addressable, Assembly Definition, Nav Mesh, Lighting, Timeline, Profiling). Select tools below and click Save to override.";
                 case "full":
                     return "Full defaults to every registered MCP tool. Select tools below and click Save to make full expose only that custom list.";
                 default:

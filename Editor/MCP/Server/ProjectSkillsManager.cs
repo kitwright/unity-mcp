@@ -42,7 +42,7 @@ namespace KitWright.Editor.MCP.Server
         {
             new SkillDefinition(
                 "unity-mcp-workflow",
-                "1.0.1",
+                "1.0.2",
                 "Unity MCP Workflow",
                 "Efficient workflow for using Unity MCP to edit, import, compile, inspect, and test Unity projects.",
                 true,
@@ -57,7 +57,7 @@ namespace KitWright.Editor.MCP.Server
                     "Use the `find_method` parameter on GameObject/Component tools to choose how a target is resolved: `by_id`, `by_name`, `by_path`, `by_tag`, `by_layer`, `by_component`, or `by_id_or_name_or_path`. Default auto-detect picks `by_id` for integers, `by_path` for slashed strings, otherwise `by_name`.",
                     "When a GameObject has multiple components of the same type, target a specific one with `component_instance_id` instead of the type name to avoid hitting the wrong component.",
                     "Set component fields with `set_component_properties`: it now writes through SerializedObject, so `[SerializeField] private` fields are reachable. Pass Object references as JSON `{\"fileID\": <instanceId>}` (preferred) or `{\"assetPath\": \"Assets/...\"}`. The response reports per-field success/failure.",
-                    "Inspect editor-level state through dedicated tools: `get_selection`, `set_selection`, `get_prefab_stage`, `get_active_tool`, `get_windows`, `get_tags`, `get_layers`, `get_build_settings`. Do not write `execute_code` snippets just to read this.",
+                    "Inspect editor-level state through dedicated tools: `get_selection`, `set_selection`, `get_prefab_stage`, `get_active_tool`, `get_windows`, `get_tags_layers`, `get_build_settings`. Do not write `execute_code` snippets just to read this.",
                     "When no specialized MCP tool covers an editor action, try `execute_menu_item` (e.g. 'GameObject/2D Object/Sprite', 'Window/Layouts/Default', 'Edit/Undo') before falling back to `execute_code`. A path ending in '...' is refused because that is the editor's convention for an item that opens a modal dialog and freezes the editor; pass `allow_modal=true` only for a path you know opens an ordinary dockable window.",
                     "When Tool Exposure uses the default `core` profile, rely on the focused workflow tools: `execute_code`, recompilation, Play Mode control, hierarchy, console logs, screenshots, input simulation, and performance inspection.",
                     "When Tool Exposure uses the default `full` profile, all registered MCP tools are available. Prefer specific tools for simple scene, asset, GameObject, component, prefab, camera, UI, package, animation, file, or visual-feedback operations.",
@@ -68,7 +68,7 @@ namespace KitWright.Editor.MCP.Server
                     "Batch related Unity-side changes in one guarded `execute_code` snippet. Null-guard every lookup, return explicit missing path/object/component messages, and include concise before/after values.",
                     "`execute_code` now refreshes the asset database and waits for compilation to finish before compiling the snippet, so external file edits are picked up automatically. For other tools that depend on the latest assemblies (e.g. `get_compilation_errors`), still call `request_recompile` after external file edits.",
                     "After code or resource edits, exit Play Mode if needed and call `request_recompile` first: it is the call that imports the edits, and unless it reports that Unity started importing or recompiling, its answer already carries the compile errors. Only when it reports that, call `wait_for_compilation(force_refresh=false)`, whose answer carries them too. Do not follow either call with `get_compilation_errors`. Never call `wait_for_compilation(force_refresh=false)` without a `request_recompile` before it: on its own it reads the state from before the edits.",
-                    "When editing several `.cs` files, write them all with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.",
+                    "When editing several `.cs` files, write them all with your own file tools, then call `request_recompile` once. `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.",
                     "Group independent reads into one `batch_execute` call (`commands`: a JSON array of `{\"name\", \"params\"}` objects) instead of one round-trip per read.",
                     "Call `wait_for_compilation` before Play Mode, screenshots, or conclusions when a previous edit has not yet been confirmed.",
                     "`enter_play_mode` and a recompile both reload the domain. In broker mode (the default) the broker holds requests across the reload and delivers them once Unity is back, so make the next call directly — no poll loop; a call answered with \"Unity is recompiling scripts, so this tool did not run\" is simply repeated. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog, tens of KB per probe.",
@@ -1129,7 +1129,7 @@ $@"{ManagedMarker}
 - Inspect Unity objects through MCP before changing user-named scene or prefab targets. Carry the returned `instanceId` into follow-up calls (`find_method=by_id`) instead of re-resolving by name.
 - Tool returns are structured JSON (`{{success, message, data}}` / `{{success: false, code, error, data}}`). Branch on `code`, not free-form text.
 - Set component fields with `set_component_properties` — it picks up `[SerializeField] private` fields and accepts Object references as `{{""fileID"": <instanceId>}}` or `{{""assetPath"": ""Assets/...""}}`.
-- Read editor state through dedicated tools (`get_selection`, `get_prefab_stage`, `get_tags`, `get_layers`, `get_build_settings`); use `execute_menu_item` before falling back to ad-hoc `execute_code`.
+- Read editor state through dedicated tools (`get_selection`, `get_prefab_stage`, `get_tags_layers`, `get_build_settings`); use `execute_menu_item` before falling back to ad-hoc `execute_code`.
 - Never edit `.unity`, `.prefab`, or `.asset` files with shell text tools or patches; use Unity MCP / Editor APIs for scenes, prefabs, and ScriptableObject assets.
 - Save only the scene or prefab assets intentionally modified, then read back exact values.
 - With default `core` exposure, use the focused workflow tools. With default `full` exposure, prefer specific MCP tools for simple editor operations.
@@ -1137,7 +1137,7 @@ $@"{ManagedMarker}
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
 - After code or resource edits, exit Play Mode if needed and call `request_recompile` first; it returns the compile errors unless it reports that Unity started importing or recompiling. Only then call `wait_for_compilation(force_refresh=false)`, which returns them too. Do not follow either with `get_compilation_errors`, and never use `force_refresh=false` without a `request_recompile` before it: on its own it reads the state from before the edits.
-- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
+- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
 - Group independent reads into one `batch_execute` call instead of one round-trip each.
 - `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
 - `enter_play_mode` and a recompile reload the domain. In broker mode (the default) requests are held across the reload, so make the next call directly, with no poll loop. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog.
@@ -1178,7 +1178,7 @@ $@"{ManagedMarker}
 - Inspect Unity objects through MCP before changing user-named scene or prefab targets. Carry the returned `instanceId` into follow-up calls (`find_method=by_id`) instead of re-resolving by name.
 - Tool returns are structured JSON (`{{success, message, data}}` / `{{success: false, code, error, data}}`). Branch on `code`, not free-form text.
 - Set component fields with `set_component_properties` — it picks up `[SerializeField] private` fields and accepts Object references as `{{""fileID"": <instanceId>}}` or `{{""assetPath"": ""Assets/...""}}`.
-- Read editor state through `get_selection`, `get_prefab_stage`, `get_tags`, `get_layers`, `get_build_settings`; try `execute_menu_item` before writing ad-hoc `execute_code`.
+- Read editor state through `get_selection`, `get_prefab_stage`, `get_tags_layers`, `get_build_settings`; try `execute_menu_item` before writing ad-hoc `execute_code`.
 - Never edit `.unity`, `.prefab`, or `.asset` files with shell text tools or patches; use Unity MCP / Editor APIs for scenes, prefabs, and ScriptableObject assets.
 - Save only the scene or prefab assets intentionally modified, then read back exact values.
 - With default `core` exposure, use the focused workflow tools. With default `full` exposure, prefer specific MCP tools for simple editor operations.
@@ -1186,7 +1186,7 @@ $@"{ManagedMarker}
 - In `execute_code`, null-guard every lookup and return explicit missing path/object/component messages; do not run self-healing fallback loops.
 - For Unity object references, do not use `??=` for lazy rebinding; use explicit `if (field == null) field = Resolve();`.
 - After code or resource edits, exit Play Mode if needed and call `request_recompile` first; it returns the compile errors unless it reports that Unity started importing or recompiling. Only then call `wait_for_compilation(force_refresh=false)`, which returns them too. Do not follow either with `get_compilation_errors`, and never use `force_refresh=false` without a `request_recompile` before it: on its own it reads the state from before the edits.
-- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
+- Editing several `.cs` files: write them with your own file tools, then call `request_recompile` once. `patch_script`, `edit_script_members` and `write_file` each refresh the asset database.
 - Group independent reads into one `batch_execute` call instead of one round-trip each.
 - `request_recompile` is rejected while Unity is in Play Mode. Call `exit_play_mode` first, then retry.
 - `enter_play_mode` and a recompile reload the domain. In broker mode (the default) requests are held across the reload, so make the next call directly, with no poll loop. If the connection is refused instead (direct mode), poll the JSON-RPC `ping` method over HTTP (with native tools only, `get_reload_recovery_status`) until it answers. Never probe with `tools/list`: it returns the whole tool catalog.
@@ -1539,7 +1539,7 @@ After external C# or asset file edits:
 4. Do not follow step 2 or 3 with `get_compilation_errors`. Read `get_console_logs` errors before continuing.
 5. If a domain reload drops or interrupts the request, call `get_reload_recovery_status` when available, re-scan the MCP endpoint if needed, then continue from step 3.
 
-Editing several `.cs` files: write all of them with your own file tools, then run this sequence once. `create_script`, `edit_script`, `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.
+Editing several `.cs` files: write all of them with your own file tools, then run this sequence once. `patch_script`, `edit_script_members` and `write_file` each refresh the asset database, so writing N files through them starts up to N imports and compiles.
 
 Do not treat a disconnected, interrupted, or domain-reload-recovered request as a successful compile or edit. It only means the state is unknown until compilation checks and MCP readback confirm the final values.
 

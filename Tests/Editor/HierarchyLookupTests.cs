@@ -152,20 +152,6 @@ namespace KitWright.Editor.Tests
             CollectionAssert.AreEquivalent(new[] { "<empty>", missing },
                 partial["data"]["unresolved"].Select(t => (string)t).ToArray());
         }
-
-        [Test]
-        public void AddComponentToMany_ReportsTokensThatMatchedNothing()
-        {
-            var target = Make(Unique("KwAddTarget"));
-            var missing = Unique("KwMissing");
-
-            var added = JObject.FromObject(
-                ComponentBatchFunctions.AddComponentToMany($"{target.name},{missing}", "Rigidbody"));
-
-            Assert.IsTrue((bool)added["success"], added.ToString());
-            Assert.IsNotNull(target.GetComponent<Rigidbody>());
-            CollectionAssert.AreEqual(new[] { missing }, added["data"]["unresolved"].Select(t => (string)t).ToArray());
-        }
 #endif
 
         [Test]
@@ -243,7 +229,7 @@ namespace KitWright.Editor.Tests
             try
             {
                 var plain = Refused("create_game_object", "name", name, "find_method", "by_nmae");
-                var primitive = Refused("create_primitive", "name", name, "primitive_type", "Cube", "find_method", "by_nmae");
+                var primitive = Refused("create_game_object", "name", name, "primitive", "Cube", "find_method", "by_nmae");
 
                 Assert.AreEqual("INVALID_PARAM", (string)plain["code"], plain.ToString());
                 Assert.AreEqual("INVALID_PARAM", (string)primitive["code"], primitive.ToString());

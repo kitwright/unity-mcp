@@ -47,16 +47,6 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void BakeNavmeshSurfaces_IsTheCliSpellingOfTheSameTool()
-        {
-            EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
-
-            var task = UnityCliNavMeshSurfaceFunctions.BakeNavmeshSurfaces();
-
-            Assert.AreEqual("NO_NAVMESH_SURFACES", Json(task.Result).Value<string>("code"));
-        }
-
-        [Test]
         public void BakeNavMeshSurfaces_RefusesAnUnsavedSceneBeforeBaking()
         {
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);

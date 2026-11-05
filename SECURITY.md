@@ -42,7 +42,7 @@ These are the properties a report can hold us to:
 
 ## What Doesn't Count
 
-- Tools that intentionally modify the Unity project — `execute_code`, `create_script`, and
+- Tools that intentionally modify the Unity project — `execute_code`, `write_file`, and
   `delete_asset` do exactly what they say, and any client that reaches the server can call them
 - Issues that require the attacker to already run code as the user on the same machine. The server
   authenticates no client: every local process that clears the `Origin` check and the project pin can

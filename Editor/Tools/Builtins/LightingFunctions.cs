@@ -14,7 +14,8 @@ namespace KitWright.Editor.Tools.Builtins
     internal static class LightingFunctions
     {
         [Description("Read the active scene's environment lighting: ambient (mode/light/intensity), skybox material, " +
-                     "fog (enabled/mode/color/density), the active LightingSettings asset (if any), and whether a lightmap bake is running.")]
+                     "fog (enabled/mode/color/density), the active LightingSettings asset (if any), whether a lightmap bake is running " +
+                     "(is_running), and last_completed_utc: when the last lightmap bake finished in this editor session (null if none did).")]
         [ReadOnlyTool]
         public static object GetLightingSettings()
         {
@@ -197,6 +198,7 @@ namespace KitWright.Editor.Tools.Builtins
                 lighting_settings = lightingSettings,
                 lighting_settings_error = lightingSettingsError,
                 is_running = Lightmapping.isRunning,
+                last_completed_utc = BakeControlFunctions.LightmapBakeCompletedUtc?.ToString("o"),
             };
         }
 

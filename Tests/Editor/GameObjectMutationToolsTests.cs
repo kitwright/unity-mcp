@@ -95,16 +95,41 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void SetComponentEnabledFlipsTheComponentWithoutTouchingTheObject()
+        public void SetComponentPropertiesEnabledFlipsTheComponentWithoutTouchingTheObject()
         {
-            Ok("set_component_enabled", "target", Subject, "component_type", "Camera", "enabled", "false");
+            Ok("set_component_properties", "target", Subject, "component", "Camera", "properties", "{\"enabled\": false}");
             Assert.IsFalse(subject.GetComponent<Camera>().enabled);
             Assert.IsTrue(subject.activeSelf, "Disabling a component is not deactivating the object.");
 
-            Ok("set_component_enabled", "target", Subject, "component_type", "Camera", "enabled", "true");
+            Ok("set_component_properties", "target", Subject, "component", "Camera", "properties", "{\"enabled\": true}");
             Assert.IsTrue(subject.GetComponent<Camera>().enabled);
 
-            Refused("set_component_enabled", "target", Subject, "component_type", "Rigidbody", "enabled", "true");
+            Refused("set_component_properties", "target", Subject, "component", "Rigidbody", "properties", "{\"enabled\": true}");
+        }
+
+        [Test]
+        public void AddComponentTakesAScriptPathAndRefusesOneThatIsNotThere()
+        {
+            Assert.AreEqual("SCRIPT_NOT_FOUND",
+                Code("add_component", "target", Subject, "component_type", "Assets/KwNoSuchScript.cs"));
+        }
+
+        [Test]
+        public void CreateGameObjectMakesAPrimitiveWhereItIsAskedFor()
+        {
+            var made = Ok("create_game_object", "name", Orphan, "primitive", "Cube", "parent", Subject,
+                "position", "1,2,3", "scale", "2,2,2");
+
+            var cube = GameObject.Find(Orphan);
+            Assert.IsNotNull(cube);
+            Assert.AreSame(subject.transform, cube.transform.parent);
+            Assert.AreEqual(new Vector3(1f, 2f, 3f), cube.transform.position);
+            Assert.AreEqual(new Vector3(2f, 2f, 2f), cube.transform.localScale);
+            Assert.IsNotNull(cube.GetComponent<MeshFilter>());
+            StringAssert.Contains("MeshRenderer", made["data"]["components"].ToString());
+
+            Assert.AreEqual("UNKNOWN_PRIMITIVE", Code("create_game_object", "name", Copy, "primitive", "Teapot"));
+            Assert.IsNull(GameObject.Find(Copy), "A refused create must not leave the object in the scene.");
         }
 
         [Test]
@@ -117,9 +142,8 @@ namespace KitWright.Editor.Tests
             Refused("remove_component", "target", Subject, "component_type", "Transform");
         }
 
-        // create_primitive already resolved its parent first, and carries a comment saying why. Its
-        // sibling did not: the object was created, then the parent looked up, so a name nobody owns
-        // came back as PARENT_NOT_FOUND with an orphan left at the scene root.
+        // The object used to be created before the parent was looked up, so a name nobody owns came
+        // back as PARENT_NOT_FOUND with an orphan left at the scene root.
         [Test]
         public void CreateGameObjectRefusedForItsParentLeavesNoOrphanBehind()
         {

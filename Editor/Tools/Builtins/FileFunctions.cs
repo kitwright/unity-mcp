@@ -13,7 +13,7 @@ namespace KitWright.Editor.Tools.Builtins
         private const int MaxReadChars = 10000;
 
         [Description("Read the contents of a file. Returns the content plus the sha256 of the file as it was read; " +
-                     "pass that sha256 back to write_file or edit_script so a rewrite is rejected if someone changed " +
+                     "pass that sha256 back to write_file so a rewrite is rejected if someone changed " +
                      "the file in between. A file longer than the read cap comes back truncated AND WITHOUT a sha256 (pass offset to read on), " +
                      "because rewriting a whole file from a truncated copy would delete the tail — patch it with " +
                      "patch_script or edit_script_members instead.")]
@@ -74,17 +74,21 @@ namespace KitWright.Editor.Tools.Builtins
                 content = chunk
             },
             (nextOffset.HasValue ? $"Pass offset={nextOffset} for the next part. " : "That is the end of the file. ") +
-            "No sha256 is issued for a partial read, so write_file/edit_script will refuse a whole-file rewrite. " +
+            "No sha256 is issued for a partial read, so write_file will refuse a whole-file rewrite. " +
             "Use patch_script or edit_script_members to change part of it.");
         }
 
-        [Description("Write content to a file, creating it or overwriting it whole. " +
-                     "Overwriting an existing file requires expected_sha256 (from read_file) so a concurrent edit " +
-                     "is not silently discarded; creating a new file does not, since there is nothing to lose.")]
+        [Description("Write content to a file (a script, a shader, any text file), creating it or overwriting it whole. " +
+                     "Overwriting an existing file requires expected_sha256 so a concurrent edit is not silently discarded; " +
+                     "creating a new file does not, since there is nothing to lose. Rewriting an existing .cs file keeps its " +
+                     "line endings and is refused with SYNTAX_REGRESSION if it would leave a structurally sound file broken. " +
+                     "For a smaller change to a script prefer patch_script or edit_script_members.")]
         public static string WriteFile(
             [ToolParam("Path to the file, inside the project; a path outside it is refused")] string path,
             [ToolParam("Content to write")] string content,
-            [ToolParam("SHA256 from read_file. Required when the file already exists; the write is rejected with STALE_FILE if it changed since.", Required = false)]
+            [ToolParam("SHA256 of the content you based the rewrite on: from read_file, or from get_script_sha for a file " +
+                       "you read in parts with offset (read_file issues none for a partial read). Required when the file " +
+                       "already exists; the write is rejected with STALE_FILE if it changed since.", Required = false)]
             string expected_sha256 = null)
         {
             var fullPath = PathSafety.ResolveProjectPath(path);
@@ -95,10 +99,19 @@ namespace KitWright.Editor.Tools.Builtins
                 if (string.IsNullOrEmpty(expected_sha256))
                     return ToolResultFormatter.Error("SHA_REQUIRED", new { path },
                         "This file already exists and write_file replaces it whole. Call read_file and pass its " +
-                        "sha256 as expected_sha256, so an edit made since you read it is not discarded.");
+                        "sha256 as expected_sha256, so an edit made since you read it is not discarded. If read_file " +
+                        "reported the file as truncated, use patch_script or edit_script_members instead.");
 
-                var staleError = CodeFunctions.CheckPrecondition(path, File.ReadAllText(fullPath), expected_sha256);
+                var original = File.ReadAllText(fullPath);
+                var staleError = CodeFunctions.CheckPrecondition(path, original, expected_sha256);
                 if (staleError != null) return staleError;
+
+                if (fullPath.EndsWith(".cs", System.StringComparison.OrdinalIgnoreCase))
+                {
+                    content = CodeFunctions.MatchLineEndings(content, original);
+                    var syntaxError = CodeFunctions.CheckSyntaxRegression(path, original, content);
+                    if (syntaxError != null) return syntaxError;
+                }
             }
 
             var directory = Path.GetDirectoryName(fullPath);

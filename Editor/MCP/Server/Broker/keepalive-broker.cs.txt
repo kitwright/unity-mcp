@@ -25,7 +25,7 @@ namespace KitWright.UnityMcp.Broker
         private const int PullTimeoutMs = 25000;
         private const int RequestReadTimeoutMs = 30000;
         // Must stay above the editor's largest per-tool budget ([LongRunningTool], currently 1800s
-        // for build_player) so the editor answers first instead of this 504 racing a running build.
+        // for switch_build_target) so the editor answers first instead of this 504 racing a running build.
         private const long HoldDeadlineMs = 1920000;
         private const long ReloadGraceMs = 45000;
         private const long IdleExitMs = 600000;

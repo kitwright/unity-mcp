@@ -30,7 +30,7 @@
 
 | 工具 | 参数 | 返回值 | 说明 |
 |---|---|---|---|
-| `get_frame_timing` | `sample_frames`(int,可选,默认 1,限制在 1–30) | CPU/GPU 平均帧时间(ms)+ 估算 FPS | 使用 `UnityEngine.FrameTimingManager`。**不需要**先调用 `profiler_start`。如果暂时没有可用的计时样本,会回退到 `Time.unscaledDeltaTime`。 |
+| `get_performance_snapshot` | `sample_frames`(int,可选,默认 1,限制在 1–30) | CPU/GPU 平均帧时间(ms)+ 估算 FPS | 使用 `UnityEngine.FrameTimingManager`。**不需要**先调用 `profiler_start`。如果暂时没有可用的计时样本,会回退到 `Time.unscaledDeltaTime`。 |
 | `get_counters` | `names`(string,可选,逗号分隔) | 每个计数器一行:`last`、`current`、`unit` | 读取 `profiler_start` 启动的常驻 recorder。没有会话时只读 Memory 类计数器(一次性读取,recorder 随后释放)并给出提示;此时按名字请求 Render 类计数器会返回 `UNKNOWN_COUNTERS`,因为它们需要先 `profiler_start` 并等几帧。 |
 
 #### 默认计数器
@@ -97,7 +97,7 @@ Memory/Gfx Used Memory, Memory/Total Used Memory
 实现过程中,每个工具都是单独针对一个真实运行的 Unity Editor,通过 `execute_code` 反射调用 `ProfilerFunctions` 的静态方法来编译验证的(当时这些工具还没作为具名 MCP 工具注册进当前会话——详见下方的[MCP 工具发现的一个坑点](#mcp-工具发现的一个坑点))。覆盖范围包括:
 
 - `profiler_start` → `profiler_status` → `profiler_stop` 完整生命周期,确认 recorder 数量(9)以及 stop 后干净归零(0 个活跃 recorder)。
-- `get_frame_timing` 在 Edit Mode(发现一个真实的坑:Editor 空闲、没有持续重绘时,`FrameTimingManager` 可能返回几百毫秒的陈旧样本)和 Play Mode(稳定合理,~20ms CPU / ~2-3ms GPU)下分别采样 1–15 帧。
+- `get_performance_snapshot(sample_frames)` 在 Edit Mode(发现一个真实的坑:Editor 空闲、没有持续重绘时,`FrameTimingManager` 可能返回几百毫秒的陈旧样本)和 Play Mode(稳定合理,~20ms CPU / ~2-3ms GPU)下分别采样 1–15 帧。
 - `get_counters` 默认计数器集合,以及带逗号加空格边界情况的 `names` 过滤(`"Draw Calls Count, Triangles Count"`)——发现并修复了一个真实 bug:过滤逻辑在匹配前没有去除空格。
 - `get_object_memory` 分别针对真实项目里的一个贴图资源、一个真实场景 GameObject(核对 `Total (incl. all child components)` 的汇总逻辑)、以及一个不存在的路径(干净报错,不抛异常)。
 - `memory_take_snapshot` → `memory_list_snapshots` → `memory_compare_snapshots`,在两次快照之间分配约 400MB 的 `Texture2D`,确认增量方向正确——发现并修复了一个真实 bug:`ReadCounterOrZero` 辅助方法读的是 `ProfilerRecorder.LastValue`(Memory 类 recorder 的这个字段恒为 `0`),而不是 `CurrentValue`。同时发现并修复了一个真实的路径穿越 bug:`memory_compare_snapshots` 的 `path_a`/`path_b` 在加清洗守卫之前直接未经处理传给 `Path.Combine`(`../secret` 能逃出快照目录)。
@@ -109,7 +109,7 @@ Memory/Gfx Used Memory, Memory/Total Used Memory
 把这些工具注册进 MCP server 之后(见下方说明),全部 13 个工具改用**真正的一等 MCP 工具调用**(不是反射)重新完整测试了一遍,针对一个真实运行、处于 Play Mode 的 Unity Editor 连续执行:
 
 ```
-profiler_start → profiler_status(9个recorder,运行中) → get_frame_timing(5)
+profiler_start → profiler_status(9个recorder,运行中) → get_performance_snapshot(sample_frames=5)
   (Avg CPU 25.85ms / Avg GPU 2.77ms / ~38.7 FPS)
 → get_counters()(Render:0,符合文档说明;Memory:真实非零值)
 → get_counters(names="Draw Calls Count, Triangles Count")(确认空格 trim 修复生效)

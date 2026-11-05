@@ -27,7 +27,7 @@ namespace KitWright.Editor.Tools.Builtins
             var (fullPath, relativePath) = ResolvePaths(name, path);
 
             if (File.Exists(fullPath))
-                return Response.Error("SHADER_EXISTS", new { path = relativePath, hint = "use update_shader to modify" });
+                return Response.Error("SHADER_EXISTS", new { path = relativePath, hint = "use write_file (with expected_sha256 from read_file) to modify" });
             if (Shader.Find(name) != null)
                 return Response.Error("SHADER_NAME_TAKEN", new { name });
 
@@ -43,105 +43,6 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 return Response.Error("CREATE_FAILED", new { path = relativePath, message = e.Message });
             }
-        }
-
-        [Description("Read the source of a .shader file in the project.")]
-        [ReadOnlyTool]
-        public static object ReadShader(
-            [ToolParam("Shader file name without extension")] string name,
-            [ToolParam("Folder under Assets/ the file lives in (default 'Shaders')", Required = false)] string path = "Shaders")
-        {
-            var (fullPath, relativePath) = ResolvePaths(name, path);
-            if (!File.Exists(fullPath))
-                return Response.Error("SHADER_NOT_FOUND", new { path = relativePath });
-
-            try
-            {
-                return Response.Success($"Shader '{name}.shader' read.", new { path = relativePath, contents = File.ReadAllText(fullPath) });
-            }
-            catch (Exception e)
-            {
-                return Response.Error("READ_FAILED", new { path = relativePath, message = e.Message });
-            }
-        }
-
-        [Description("Overwrite the source of an existing .shader file. Fails if the file does not exist.")]
-        public static object UpdateShader(
-            [ToolParam("Shader file name without extension")] string name,
-            [ToolParam("New full shader source")] string contents,
-            [ToolParam("Folder under Assets/ the file lives in (default 'Shaders')", Required = false)] string path = "Shaders")
-        {
-            var (fullPath, relativePath) = ResolvePaths(name, path);
-            if (!File.Exists(fullPath))
-                return Response.Error("SHADER_NOT_FOUND", new { path = relativePath, hint = "use create_shader to add a new shader" });
-            if (string.IsNullOrEmpty(contents))
-                return Response.Error("CONTENTS_REQUIRED", new { message = "contents is required for update" });
-
-            try
-            {
-                AtomicFile.WriteAllText(fullPath, contents);
-                AssetDatabase.ImportAsset(relativePath);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                return Response.Success($"Shader '{name}.shader' updated.", new { path = relativePath });
-            }
-            catch (Exception e)
-            {
-                return Response.Error("UPDATE_FAILED", new { path = relativePath, message = e.Message });
-            }
-        }
-
-        [Description("Delete a .shader file by moving it to the OS trash (Recycle Bin). Not an Editor undo step, but the file can be restored by hand from the trash.")]
-        public static object DeleteShader(
-            [ToolParam("Shader file name without extension. The file is moved to the OS trash, so it can be recovered by hand.")] string name,
-            [ToolParam("Folder under Assets/ the file lives in (default 'Shaders')", Required = false)] string path = "Shaders")
-        {
-            var (fullPath, relativePath) = ResolvePaths(name, path);
-            if (!File.Exists(fullPath))
-                return Response.Error("SHADER_NOT_FOUND", new { path = relativePath });
-
-            try
-            {
-                if (!AssetDatabase.MoveAssetToTrash(relativePath))
-                {
-                    // A .shader written outside the Editor has no AssetDatabase entry to move until it is imported.
-                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
-                    if (!AssetDatabase.MoveAssetToTrash(relativePath))
-                        return Response.Error("DELETE_FAILED", new
-                        {
-                            path = relativePath,
-                            message = "the file exists on disk but is not in the AssetDatabase, so it cannot be moved to the trash",
-                            hint = "import it first (AssetDatabase.ImportAsset / Assets > Refresh), then retry delete_shader"
-                        });
-                }
-                return Response.Success($"Shader '{name}.shader' moved to OS trash.", new { path = relativePath });
-            }
-            catch (Exception e)
-            {
-                return Response.Error("DELETE_FAILED", new { path = relativePath, message = e.Message });
-            }
-        }
-
-        [Description("List shader files (.shader) in the project. Optionally filter by a name substring. " +
-                     "A page cut short by count reports a next_cursor to pass back as cursor for the rest.")]
-        [ReadOnlyTool]
-        public static object ListShaders(
-            [ToolParam("Case-insensitive substring to filter shader paths by", Required = false)] string filter = null,
-            [ToolParam("Maximum number of results", Required = false)] int count = 100,
-            [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0)
-        {
-            count = Mathf.Clamp(count, 1, 500);
-            var guids = AssetDatabase.FindAssets("t:Shader");
-            var matches = guids
-                .Select(AssetDatabase.GUIDToAssetPath)
-                .Where(p => p.EndsWith(".shader", StringComparison.OrdinalIgnoreCase))
-                .Where(p => string.IsNullOrEmpty(filter) || p.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
-                .OrderBy(p => p)
-                .ToList();
-            var paths = Paging.Page(matches, cursor, count);
-            var nextCursor = Paging.Next(cursor, paths.Count, matches.Count);
-
-            var message = $"Found {matches.Count} shader file(s).{Paging.Suffix(cursor, paths.Count, matches.Count)}";
-            return Response.Success(message, new { count = paths.Count, total = matches.Count, next_cursor = nextCursor, shaders = paths });
         }
 
         [Description("Get metadata for a shader loaded in the project (by shader name as declared in the Shader \"...\" line): supported flag, render queue, LOD, and its exposed properties with types.")]
@@ -183,9 +84,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrEmpty(relativeDir))
                 relativeDir = "Shaders";
 
-            // Resolved before any caller touches the disk: the folder, and the name that read/update/
-            // delete never validate, can both carry "..". A rooted folder (a drive letter survives the
-            // '/' trim) stays unprefixed so it is refused instead of glued under Assets/.
+            // Resolved before the disk is touched: the folder can carry "..". A rooted folder (a drive
+            // letter survives the '/' trim) stays unprefixed so it is refused instead of glued under Assets/.
             var fileName = $"{name}.shader";
             var relativePath = Path.IsPathRooted(relativeDir)
                 ? $"{relativeDir}/{fileName}"

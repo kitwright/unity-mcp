@@ -119,22 +119,18 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void EditScript_RequiresTheShaBeforeItWillReplaceAFile()
+        public void WriteFile_RewritesAFileTooLongForOneReadWithTheShaFromGetScriptSha()
         {
-            // Deliberately not a .cs file: dropping one under Assets/ triggers a script
-            // compilation and domain reload, which kills the test run this assertion is in.
-            // edit_script's precondition does not care about the extension.
-            var path = _folder + "/Script_" + Guid.NewGuid().ToString("N") + ".txt";
-            var original = "public class Probe { }";
-            FileFunctions.WriteFile(path, original);
+            // read_file issues no sha for a part, so a file read whole in parts is rewritten with
+            // get_script_sha's, which proves the same thing: the file has not changed since.
+            var path = _folder + "/Long_" + Guid.NewGuid().ToString("N") + ".txt";
+            FileFunctions.WriteFile(path, new string('x', 10500));
 
-            var noSha = CodeFunctions.EditScript(path, "public class Probe { void Added() { } }", null);
-            StringAssert.Contains("SHA_REQUIRED", noSha);
-            Assert.AreEqual(original, File.ReadAllText(ProjectPath(path)));
+            var sha = (string)Newtonsoft.Json.Linq.JObject.Parse(Json(CodeFunctions.GetScriptSha(path)))["data"]["sha256"];
+            var applied = FileFunctions.WriteFile(path, "short", sha);
 
-            var applied = CodeFunctions.EditScript(path, "public class Probe { void Added() { } }", ShaOf(path));
-            StringAssert.Contains("Updated script", applied);
-            StringAssert.Contains("Added", File.ReadAllText(ProjectPath(path)));
+            StringAssert.Contains("Written", applied);
+            Assert.AreEqual("short", File.ReadAllText(ProjectPath(path)));
         }
 
         private static string ProjectPath(string assetPath)

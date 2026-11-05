@@ -27,7 +27,7 @@ namespace KitWright.Editor.Tests
                 var lighting = Ok("set_lighting_settings", "fog", "false");
                 StringAssert.Contains("discarded", (string)lighting["message"]);
 
-                Ok("set_material_property", "path", ObjectName, "name", "_Color", "value", "1,0,0,1");
+                Ok("set_material_properties", "material", ObjectName, "properties", "{\"_Color\":[1,0,0,1]}");
             }
             finally
             {

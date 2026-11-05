@@ -40,8 +40,10 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Start a player build and return at once; poll build_status until it is completed. The editor is busy while " +
                      "the build runs, so other tools answer only afterwards, but build_status always answers. Requires confirm=true " +
-                     "(dry_run validates without building). Same target, scenes and output-folder rules as build_player. " +
-                     "options names BuildOptions flags (e.g. 'Development,AllowDebugging'); leaving it empty builds with a " +
+                     "(dry_run validates without building). By default builds the enabled scenes from Build Settings to the active " +
+                     "build target. An output folder inside a system directory, or that is the project root, contains the project, or is " +
+                     "Assets, ProjectSettings, Library, Packages, UserSettings, Temp or Logs, is refused (OUTPUT_PATH_REFUSED). " +
+                     "options names BuildOptions flags (e.g. 'Development' for a development build, 'Development,AllowDebugging'); leaving it empty builds with a " +
                      "detailed report. profile_name builds with a Unity 6 Build Profile without activating it.")]
         public static object Build(
             [ToolParam("Target platform (windows64, android, ios, webgl, ...). Empty = active build target.", Required = false)] string target = null,

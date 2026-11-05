@@ -143,10 +143,10 @@ namespace KitWright.Editor.Tests
                 var createName = "InvokerInvalidPrimitive_" + suffix;
                 var createResult = invoker.Invoke(new FunctionCall
                 {
-                    FunctionName = "create_primitive",
+                    FunctionName = "create_game_object",
                     Parameters = new Dictionary<string, string>
                     {
-                        ["primitive_type"] = "Cube",
+                        ["primitive"] = "Cube",
                         ["name"] = createName,
                         ["position"] = "1,2"
                     }
@@ -174,10 +174,10 @@ namespace KitWright.Editor.Tests
                 var invoker = new FunctionInvoker();
                 var created = invoker.Invoke(new FunctionCall
                 {
-                    FunctionName = "create_primitive",
+                    FunctionName = "create_game_object",
                     Parameters = new Dictionary<string, string>
                     {
-                        ["primitive_type"] = "Cube",
+                        ["primitive"] = "Cube",
                         ["name"] = childName,
                         ["rotation"] = "0,90,0",
                         ["parent"] = parent.name
@@ -191,10 +191,10 @@ namespace KitWright.Editor.Tests
 
                 var missingParent = invoker.Invoke(new FunctionCall
                 {
-                    FunctionName = "create_primitive",
+                    FunctionName = "create_game_object",
                     Parameters = new Dictionary<string, string>
                     {
-                        ["primitive_type"] = "Cube",
+                        ["primitive"] = "Cube",
                         ["name"] = orphanName,
                         ["parent"] = "NoSuchParent_" + suffix
                     }
@@ -293,7 +293,7 @@ namespace KitWright.Editor.Tests
                     typeof(FunctionInvoker).Assembly
                 });
 
-                Assert.IsTrue(ToolRegistry.MethodCache.ContainsKey("create_script"),
+                Assert.IsTrue(ToolRegistry.MethodCache.ContainsKey("write_file"),
                     "One unloadable assembly must not remove the builtin tools scanned after it.");
             }
             finally

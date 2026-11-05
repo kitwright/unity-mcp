@@ -40,7 +40,6 @@ namespace KitWright.Editor.Tests
             ["show_dialog"] = "opens a modal dialog, which owns the editor loop until someone clicks it",
             ["wait_for_compilation"] = "blocks for its whole budget by design",
             ["fetch_docs"] = "reaches the network",
-            ["search_manual"] = "reaches the network",
             ["memory_open_snapshot_in_profiler"] = "opens the Profiler window and loads a snapshot into it",
             ["capture_simulator_view"] = "opens the Device Simulator window and switches the Game View to it",
             ["frame_debugger_get_events"] = "enables the frame debugger, which pins rendering until it is turned off"

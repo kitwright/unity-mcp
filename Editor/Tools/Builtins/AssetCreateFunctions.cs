@@ -14,7 +14,8 @@ namespace KitWright.Editor.Tools.Builtins
     {
         [Description("Create an asset of any UnityEngine.Object type that can be built without arguments: a ScriptableObject, a " +
                      "Material (shader optional), an AnimationClip, a PhysicsMaterial... Components and GameObjects are not assets and " +
-                     "are refused. Refuses to replace an existing asset unless overwrite=true. create_scriptable_object also sets properties.")]
+                     "are refused. Refuses to replace an existing asset unless overwrite=true. Missing folders are created. " +
+                     "Fill a ScriptableObject's fields afterwards with set_scriptable_object_properties.")]
         public static object CreateAsset(
             [ToolParam("Asset path under Assets/, with the extension that suits the type (e.g. Assets/Data/Config.asset, Assets/Art/Wall.mat)")] string path,
             [ToolParam("Type name, short or fully qualified (e.g. 'Material', 'MyGame.GameConfig')")] string type,
@@ -40,7 +41,7 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 var shaderAsset = string.IsNullOrWhiteSpace(shader) ? DefaultShader() : Shader.Find(shader.Trim());
                 if (shaderAsset == null)
-                    return Response.Error("SHADER_NOT_FOUND", new { shader }, "list_shaders shows the shader names.");
+                    return Response.Error("SHADER_NOT_FOUND", new { shader }, "Pass the name from the Shader \"...\" declaration; find_assets with 't:Shader' lists the shader files.");
 
                 instance = new Material(shaderAsset);
             }
