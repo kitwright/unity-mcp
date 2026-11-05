@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Shader")]
+    [ToolProvider("Materials & Shaders")]
     internal static class ShaderFunctions
     {
         private static readonly Regex NameRegex = new Regex(@"^[a-zA-Z_][a-zA-Z0-9_]*$");

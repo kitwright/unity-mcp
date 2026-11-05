@@ -17,7 +17,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// active tool, and build settings. These tools fill the gap that previously forced agents
     /// to write <c>execute_code</c> snippets just to inspect the editor.
     /// </summary>
-    [ToolProvider("EditorState")]
+    [ToolProvider("Editor")]
     internal static class EditorStateFunctions
     {
         [Description("Get high-level editor runtime state: which project this editor has open, play mode, paused, compiling, updating, time-since-startup, time scale. " +
@@ -119,6 +119,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Get info about the currently open prefab stage (if any). Returns prefab asset path, root instance id, and dirty state.")]
         [ReadOnlyTool]
+        [ToolProvider("Prefab")]
         public static object GetPrefabStage()
         {
             var stage = PrefabStageUtility.GetCurrentPrefabStage();
@@ -192,6 +193,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("List every defined tag in TagManager.")]
         [ReadOnlyTool]
+        [ToolProvider("ProjectSettings")]
         public static object GetTags()
         {
             var tags = UnityEditorInternal.InternalEditorUtility.tags;
@@ -199,6 +201,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Add a new tag to TagManager (no-op if it already exists).")]
+        [ToolProvider("ProjectSettings")]
         public static object AddTag(
             [ToolParam("Tag name to add")] string tag)
         {
@@ -219,6 +222,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Remove a tag from TagManager. Warning: does not check whether any GameObject is still using the tag.")]
+        [ToolProvider("ProjectSettings")]
         public static object RemoveTag(
             [ToolParam("Tag name to remove")] string tag)
         {
@@ -257,6 +261,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("List all 32 layer slots with their names (empty for unused slots).")]
         [ReadOnlyTool]
+        [ToolProvider("ProjectSettings")]
         public static object GetLayers()
         {
             var layers = new List<object>(32);
@@ -269,6 +274,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Add a new layer to the first empty user slot (8-31). Errors if no slot is free; a no-op success if the layer already exists.")]
+        [ToolProvider("ProjectSettings")]
         public static object AddLayer(
             [ToolParam("Layer name to add")] string layer)
         {
@@ -296,6 +302,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Remove a user layer (slot 8-31) by name. Built-in layers (0-7) cannot be removed.")]
+        [ToolProvider("ProjectSettings")]
         public static object RemoveLayer(
             [ToolParam("Layer name to remove")] string layer)
         {
@@ -322,6 +329,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("List all sorting layers (2D render order) with their names.")]
         [ReadOnlyTool]
+        [ToolProvider("ProjectSettings")]
         public static object GetSortingLayers()
         {
             // Read from TagManager, not from SortingLayer.layers. That property is a native cache which
@@ -371,6 +379,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Add a new sorting layer (used to order 2D sprites/renderers). Errors if the name already exists.")]
+        [ToolProvider("ProjectSettings")]
         public static object AddSortingLayer(
             [ToolParam("Sorting layer name to add")] string name)
         {
@@ -415,6 +424,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Rename an existing sorting layer. The built-in 'Default' layer cannot be renamed, and the new name must not already be a sorting layer.")]
+        [ToolProvider("ProjectSettings")]
         public static object RenameSortingLayer(
             [ToolParam("Current sorting layer name")] string old_name,
             [ToolParam("New name")] string new_name)
@@ -447,6 +457,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Remove a sorting layer by name. The built-in 'Default' layer cannot be removed.")]
+        [ToolProvider("ProjectSettings")]
         public static object RemoveSortingLayer(
             [ToolParam("Sorting layer name to remove")] string name)
         {
@@ -472,6 +483,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Get build settings: enabled scenes (in build order), active build target, scripting backend.")]
         [ReadOnlyTool]
+        [ToolProvider("Build")]
         public static object GetBuildSettings()
         {
             var scenes = EditorBuildSettings.scenes

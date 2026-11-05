@@ -7,7 +7,7 @@ using UnityEditor;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Editor")]
+    [ToolProvider("Asset")]
     internal static class AuthoringRootFunctions
     {
         [Description("Report the authoring root: the folder under Assets/ that bare asset paths (no Assets/ prefix) resolve against and " +

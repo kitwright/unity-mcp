@@ -10,7 +10,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// Read and dismiss the modal dialog holding the editor. Both run off the editor thread,
     /// since a modal is exactly when the editor thread cannot answer.
     /// </summary>
-    [ToolProvider("EditorDialog")]
+    [ToolProvider("Editor")]
     internal static class EditorDialogFunctions
     {
         [Description("Report the modal dialog currently blocking the Unity editor: its title, message and button " +

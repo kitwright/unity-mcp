@@ -20,7 +20,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// tracks whether copy_component ran this domain so the paste tools can fail fast with a clear
     /// code instead of silently pasting stale/empty data.
     /// </summary>
-    [ToolProvider("ComponentBatch")]
+    [ToolProvider("GameObject")]
     internal static class ComponentBatchFunctions
     {
         // Best-effort marker: set by CopyComponent, reset on domain reload (same lifetime as the

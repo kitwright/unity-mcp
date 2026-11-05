@@ -375,42 +375,28 @@ Unity 在 2026 年 7 月发布了 Unity CLI 与实验性的 `com.unity.pipeline`
 ## 内置工具
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity 当前提供 **388 个工具函数，覆盖 63 个模块**（`core` profile 暴露其中 53 个）。
+KitWright MCP for Unity 当前提供 **388 个工具函数，覆盖 36 个模块**（`core` profile 暴露其中 53 个）。
 
 | 模块 | 工具数 | 模块 | 工具数 |
 |------|--------|------|--------|
-| **UnityCli** | 47 | **Volume** | 5 |
-| **UnitySettings** | 21 | **Camera** | 4 |
-| **EditorState** | 18 | **Compilation** | 4 |
-| **GameObject** | 15 | **LodConstraint** | 4 |
-| **Animation** | 14 | **Testing** | 4 |
-| **Profiler** | 13 | **Texture** | 4 |
-| **Scene** | 13 | **CodeReload** | 3 |
-| **Lighting** | 10 | **ComponentBatch** | 3 |
-| **NavMesh** | 10 | **ComponentProperty** | 3 |
-| **Prefab** | 10 | **Docs** | 3 |
-| **Asset** | 9 | **Physics** | 3 |
-| **Build** | 8 | **ScriptableObject** | 3 |
-| **Editor** | 8 | **Sprite** | 3 |
-| **Terrain** | 8 | **Undo** | 3 |
-| **AssemblyDefinition** | 7 | **Wait** | 3 |
-| **InputSimulation** | 7 | **AssetImport** | 2 |
-| **Prefs** | 7 | **Audit** | 2 |
-| **SpriteAtlas** | 7 | **EditorDialog** | 2 |
-| **UI** | 7 | **EditorWindowInteraction** | 2 |
-| **Visual** | 7 | **Material** | 2 |
-| **Addressable** | 6 | **Performance** | 2 |
-| **Audio** | 6 | **ProjectSettings** | 2 |
-| **Code** | 6 | **References** | 2 |
-| **InputActions** | 6 | **Batch** | 1 |
-| **Package** | 6 | **Hierarchy** | 1 |
-| **Shader** | 6 | **Interop** | 1 |
-| **File** | 5 | **MenuItem** | 1 |
-| **MemorySnapshot** | 5 | **Mesh** | 1 |
-| **SceneView** | 5 | **Particle** | 1 |
-| **Screenshot** | 5 | **Reflection** | 1 |
-| **Script** | 5 | **ToolExposure** | 1 |
-| **Timeline** | 5 |  |  |
+| **ProjectSettings** | 32 | **Terrain** | 8 |
+| **GameObject** | 29 | **AssemblyDefinition** | 7 |
+| **Editor** | 26 | **File** | 7 |
+| **Profiling** | 23 | **InputSimulation** | 7 |
+| **Asset** | 20 | **Prefs** | 7 |
+| **NavMesh** | 17 | **UI** | 7 |
+| **Animation** | 15 | **Addressable** | 6 |
+| **Rendering** | 15 | **Audio** | 6 |
+| **Sprites & Textures** | 14 | **Code** | 6 |
+| **Build** | 12 | **InputActions** | 6 |
+| **Materials & Shaders** | 12 | **Screenshot** | 6 |
+| **Prefab** | 12 | **Testing** | 6 |
+| **Lighting** | 11 | **Console** | 5 |
+| **Compilation** | 10 | **SceneView** | 5 |
+| **Scene** | 10 | **Timeline** | 5 |
+| **ExecuteCode** | 9 | **Docs** | 4 |
+| **Package** | 9 | **MCP** | 3 |
+| **PlayMode** | 8 | **Physics** | 3 |
 
 > 📖 每个工具及其说明见 [TOOLS.md](TOOLS.md)。
 <!-- tools-summary:end -->

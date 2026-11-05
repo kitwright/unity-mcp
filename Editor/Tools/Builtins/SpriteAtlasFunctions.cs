@@ -13,7 +13,7 @@ using Object = UnityEngine.Object;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("SpriteAtlas")]
+    [ToolProvider("Sprites & Textures")]
     internal static class SpriteAtlasFunctions
     {
         private const int MaxAtlasPadding = 1024;

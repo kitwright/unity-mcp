@@ -5,7 +5,7 @@ using UnityEditor;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Undo")]
+    [ToolProvider("Editor")]
     internal static class UndoFunctions
     {
         [Description("Perform a single Undo step. NOTE: operates on the shared Editor's global undo stack — this reverts whatever was last done in the Editor, including the user's own actions; use with care.")]

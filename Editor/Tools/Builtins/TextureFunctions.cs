@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Texture")]
+    [ToolProvider("Sprites & Textures")]
     internal static class TextureFunctions
     {
         private const int MaxDimension = 4096;

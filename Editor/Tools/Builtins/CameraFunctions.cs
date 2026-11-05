@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Camera")]
+    [ToolProvider("Rendering")]
     internal static class CameraFunctions
     {
         private const float MaxOrthographicSize = 100000f;

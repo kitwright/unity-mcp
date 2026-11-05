@@ -27,7 +27,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// (core engine API, Unity 2022.2+); opening in the Memory Profiler window uses
     /// reflection into the optional com.unity.memoryprofiler package.
     /// </summary>
-    [ToolProvider("MemorySnapshot")]
+    [ToolProvider("Profiling")]
     internal static class MemorySnapshotFunctions
     {
         private const string DefaultStorageDirName = "MemoryCaptures";

@@ -20,7 +20,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// pages by property path; these take the handful of fields the CLI names. Every set_ tool needs confirm=true and offers
     /// dry_run, and none of them is undoable.
     /// </summary>
-    [ToolProvider("UnitySettings")]
+    [ToolProvider("ProjectSettings")]
     internal static class UnityCliSettingsFunctions
     {
         // ---- Physics ----
@@ -419,6 +419,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Set EditorUserBuildSettings fields: {developmentBuild, allowDebugging, connectWithProfiler, buildScriptsOnly, " +
                      "symlinkSources, il2CppCodeGeneration: OptimizeSpeed|OptimizeSize} as a JSON object. Scenes are add_scene_to_build, " +
                      "the target is switch_build_target. Needs confirm=true; dry_run previews.")]
+        [ToolProvider("Build")]
         public static object SetBuildSettings(
             [ToolParam("JSON object of the fields to change")] string settings,
             [ToolParam("Apply the change", Required = false)] bool confirm = false,

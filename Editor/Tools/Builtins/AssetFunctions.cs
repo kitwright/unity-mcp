@@ -15,6 +15,7 @@ namespace KitWright.Editor.Tools.Builtins
     internal static class AssetFunctions
     {
         [Description("Create a new material with a specified color")]
+        [ToolProvider("Materials & Shaders")]
         public static string CreateMaterial(
             [ToolParam("Name of the material")] string name,
             [ToolParam("Color as 'r,g,b,a' or hex '#RRGGBB'", Required = false)] string color = "1,1,1,1",
@@ -97,6 +98,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Assign a material to a GameObject's renderer")]
+        [ToolProvider("Materials & Shaders")]
         public static string AssignMaterial(
             [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string game_object_name,
             [ToolParam("Path to the material asset")] string material_path)

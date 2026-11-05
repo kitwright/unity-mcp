@@ -271,6 +271,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Enter play mode in the editor. Entry is asynchronous: the reply means it was requested, so read " +
                      "get_editor_state (isPlaying) before relying on it. Refused while the scripts have compile errors, " +
                      "and while an exit from play mode is still in flight.")]
+        [ToolProvider("PlayMode")]
         public static string EnterPlayMode()
         {
             // The flag describes the last finished compile, so it means nothing while a newer one runs.
@@ -285,6 +286,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Exit play mode in the editor. Refused while an entry into play mode is still in flight.")]
+        [ToolProvider("PlayMode")]
         public static string ExitPlayMode()
         {
             var reply = ExitPlayModeReply(EditorApplication.isPlaying, EditorApplication.isPlayingOrWillChangePlaymode);
@@ -334,6 +336,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Pause or resume play mode. Requires being in play mode. Use step_frame to advance one frame while paused.")]
+        [ToolProvider("PlayMode")]
         public static string SetPaused(
             [ToolParam("true to pause, false to resume")] bool paused)
         {
@@ -345,6 +348,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Advance play mode by exactly one frame. Auto-pauses if running. Requires being in play mode. Useful for frame-by-frame debugging.")]
+        [ToolProvider("PlayMode")]
         public static string StepFrame()
         {
             if (!EditorApplication.isPlaying)
@@ -358,6 +362,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Set the game time scale. Use 0 to pause, 1 for normal speed, " +
                      "2 for double speed, etc. Useful for testing or slow-motion debugging. Requires being in play mode: " +
                      "outside it Time.timeScale is the project's TimeManager setting, which this tool does not change.")]
+        [ToolProvider("PlayMode")]
         public static string SetTimeScale(
             [ToolParam("Time scale value (0=paused, 1=normal, 2=double speed, etc.)")] float scale)
         {

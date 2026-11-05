@@ -12,7 +12,7 @@ using UnityEngine.UI;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Performance")]
+    [ToolProvider("Profiling")]
     internal static class PerformanceFunctions
     {
         [Description("Get a lightweight performance snapshot of the current Unity session. " +

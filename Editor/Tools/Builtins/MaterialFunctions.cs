@@ -10,7 +10,7 @@ using UnityEngine.Rendering;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Material")]
+    [ToolProvider("Materials & Shaders")]
     internal static class MaterialFunctions
     {
         [Description("Inspect a Material: shader name, enabled keywords, render queue, and every shader property " +

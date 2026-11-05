@@ -63,8 +63,7 @@ namespace KitWright.Editor.Tools
 
             // Generate from method name
             var name = method.Name;
-            var provider = method.DeclaringType?.GetCustomAttribute<ToolProviderAttribute>();
-            var category = provider?.Category ?? "";
+            var category = ToolProviderAttribute.CategoryOf(method) ?? "";
 
             return $"{(string.IsNullOrEmpty(category) ? "" : category + ": ")}{InsertSpaces(name)}";
         }

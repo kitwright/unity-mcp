@@ -14,7 +14,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// machinery used for components — picks up [SerializeField] private fields,
     /// supports Object references, returns per-field success.
     /// </summary>
-    [ToolProvider("ScriptableObject")]
+    [ToolProvider("Asset")]
     internal static class ScriptableObjectFunctions
     {
         [Description("Create a new ScriptableObject asset of the given type at the given path. " +

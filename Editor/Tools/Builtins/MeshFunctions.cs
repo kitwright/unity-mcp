@@ -8,7 +8,7 @@ using UnityEngine.Rendering;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Mesh")]
+    [ToolProvider("Rendering")]
     internal static class MeshFunctions
     {
         [Description("Inspect a Mesh. Resolves the mesh from EITHER an asset path (e.g. 'Assets/Models/foo.fbx' — " +

@@ -300,12 +300,9 @@ namespace KitWright.Editor.Tools
             if (string.Equals((string)name, BatchToolName, StringComparison.OrdinalIgnoreCase))
                 return BatchBudgetSeconds(BatchCommandNames(parameters), fallback);
 
-            if (string.Equals((string)name, ExecuteCodeToolName, StringComparison.OrdinalIgnoreCase) ||
-                string.Equals((string)name, ReplayExecuteCodeToolName, StringComparison.OrdinalIgnoreCase))
-            {
-                var requested = ExecuteCodeTimeoutSeconds(parameters);
+            var requested = TimeoutArgumentSeconds((string)name, parameters);
+            if (requested >= 0)
                 return requested > 0 ? Math.Max(requested + ExecuteCodeBudgetMarginSeconds, fallback) : fallback;
-            }
 
             var budget = LongRunningSeconds((string)name);
             return budget > fallback ? budget : fallback;
@@ -339,16 +336,35 @@ namespace KitWright.Editor.Tools
         internal static int ClampExecuteCodeTimeout(long seconds) =>
             (int)Math.Min(Math.Max(seconds, 0), MaxExecuteCodeTimeoutSeconds);
 
+        // -1: not a tool that takes a run timeout. eval / eval_file take theirs in milliseconds, as the Unity CLI does.
+        private static int TimeoutArgumentSeconds(string toolName, IDictionary<string, object> parameters)
+        {
+            switch (toolName.ToLowerInvariant())
+            {
+                case ExecuteCodeToolName:
+                case ReplayExecuteCodeToolName:
+                case "execute_code_file":
+                    return ExecuteCodeTimeoutSeconds(parameters);
+                case "eval":
+                case "eval_file":
+                    return ExecuteCodeTimeoutSeconds(parameters, "timeout", 1000);
+                default:
+                    return -1;
+            }
+        }
+
         // Absent, zero or unreadable all mean "no request": the ordinary ceiling stays.
-        internal static int ExecuteCodeTimeoutSeconds(IDictionary<string, object> parameters)
+        internal static int ExecuteCodeTimeoutSeconds(
+            IDictionary<string, object> parameters, string argument = "timeout_seconds", long unitsPerSecond = 1)
         {
             if (!(parameters.TryGetValue("arguments", out var arguments) && arguments is IDictionary<string, object> args) ||
-                !args.TryGetValue("timeout_seconds", out var value) || value == null)
+                !args.TryGetValue(argument, out var value) || value == null)
                 return 0;
 
             try
             {
-                return ClampExecuteCodeTimeout(Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture));
+                var units = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+                return ClampExecuteCodeTimeout(units / unitsPerSecond + (units % unitsPerSecond > 0 ? 1 : 0));
             }
             catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
             {

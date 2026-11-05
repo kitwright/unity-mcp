@@ -13,7 +13,7 @@ using KitWright.Editor.Tools.Helpers;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Reflection")]
+    [ToolProvider("Docs")]
     internal static class ReflectionFunctions
     {
         internal const BindingFlags DeclaredMembers =

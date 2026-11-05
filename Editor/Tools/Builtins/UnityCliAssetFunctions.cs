@@ -21,7 +21,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// KitWright already does where it can; the few that were missing (the typed material write, the serialized-field read, the
     /// curve write with tangents, the Unity Search query) are implemented here.
     /// </summary>
-    [ToolProvider("UnityCli")]
+    [ToolProvider("Asset")]
     internal static class UnityCliAssetFunctions
     {
         private const int MaxSearchResults = 200;
@@ -31,6 +31,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Read a UTF-8 text file under Assets/ (or the authoring root) and return its contents.")]
         [ReadOnlyTool]
+        [ToolProvider("File")]
         public static object ReadTextFile(
             [ToolParam("File path; the Assets/ prefix is optional")] string path,
             [ToolParam("Refuse a file larger than this many bytes. Default 1048576.", Required = false)] int max_bytes = 1048576)
@@ -50,6 +51,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Write UTF-8 text to a file under Assets/ (or the authoring root), then import it. Replacing a file needs confirm=true; " +
                      "dry_run reports what would be written.")]
+        [ToolProvider("File")]
         public static object WriteTextFile(
             [ToolParam("File path with its extension; the Assets/ prefix is optional")] string path,
             [ToolParam("The full text to write")] string contents,
@@ -111,6 +113,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Introspect a shader's declared properties (name, description, type, range, flags). Pass the shader's name or a material to read it from.")]
         [ReadOnlyTool]
+        [ToolProvider("Materials & Shaders")]
         public static object GetShaderProperties(
             [ToolParam("Shader name, e.g. 'Universal Render Pipeline/Lit'", Required = false)] string shader = null,
             [ToolParam("Material path or GUID to read the shader from", Required = false)] string material = null)
@@ -132,6 +135,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Set shader properties on a material: properties is a JSON object of property name (with its leading underscore) to value " +
                      "(number; color as [r,g,b,a] or '#RRGGBB[AA]'; vector as [x,y,z,w]; texture as a path/GUID or null). It can also reassign the " +
                      "shader, set the render queue (-1 inherits) and switch keywords. Unknown names are reported, not fatal. dry_run reports only.")]
+        [ToolProvider("Materials & Shaders")]
         public static object SetMaterialProperties(
             [ToolParam("Material path or GUID")] string material,
             [ToolParam("JSON object of property name to value", Required = false)] string properties = null,
@@ -225,6 +229,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Read the serialized fields of a component or asset: name, type and value. target is a GameObject (with component naming the " +
                      "component), a component, or an asset path/GUID. field reads one property; format 'value' returns only values.")]
         [ReadOnlyTool]
+        [ToolProvider("GameObject")]
         public static object GetSerializedFields(
             [ToolParam("GameObject identifier, or an asset path/GUID")] string target,
             [ToolParam("Component type on the GameObject, e.g. 'Rigidbody'", Required = false)] string component = null,
@@ -271,6 +276,7 @@ namespace KitWright.Editor.Tools.Builtins
 #if KITWRIGHT_ANIMATION
         [Description("Add or replace one float curve on an Animation Clip: keys is a JSON array of {time, value, inTangent?, outTangent?, " +
                      "weightedMode?: None|In|Out|Both}; omitted tangents are flat (0), not Auto. dry_run validates only.")]
+        [ToolProvider("Animation")]
         public static object SetAnimationCurve(
             [ToolParam("Animation Clip path or GUID")] string clip,
             [ToolParam("Component type the property lives on, e.g. 'Transform'")] string type,
@@ -332,6 +338,7 @@ namespace KitWright.Editor.Tools.Builtins
         // ---- Screenshot, search ----
 
         [Description("Capture the Scene or Game view as a PNG. output is a path inside the project; without it the image is returned inline.")]
+        [ToolProvider("Screenshot")]
         public static string Screenshot(
             [ToolParam("'game' (default) or 'scene'", Required = false)] string view = "game",
             [ToolParam("Width in pixels; 0 uses the view's", Required = false)] int width = 0,
@@ -366,6 +373,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Add a package by name@version, git URL or 'file:' path. Returns at once (poll package_status) unless wait=true. Needs " +
                      "confirm=true; dry_run previews. A recompile or domain reload follows.")]
+        [ToolProvider("Package")]
         public static async Task<object> PackageAdd(
             [ToolParam("'com.unity.foo@1.2.3', a git URL or 'file:../Path'")] string identifier,
             [ToolParam("Apply the change", Required = false)] bool confirm = false,
@@ -389,6 +397,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Remove a package by name. Returns at once (poll package_status) unless wait=true. Needs confirm=true; dry_run previews. " +
                      "A recompile or domain reload follows.")]
+        [ToolProvider("Package")]
         public static async Task<object> PackageRemove(
             [ToolParam("Package name, e.g. com.unity.foo")] string name,
             [ToolParam("Apply the change", Required = false)] bool confirm = false,
@@ -415,6 +424,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("List packages: scope 'installed' (default), 'available' (the registry) or 'all'. include_indirect adds transitive dependencies; " +
                      "offline queries the local cache for available and all.")]
         [ReadOnlyTool]
+        [ToolProvider("Package")]
         public static async Task<object> PackageList(
             [ToolParam("installed (default), available or all", Required = false)] string scope = "installed",
             [ToolParam("Include transitive dependencies. Default true.", Required = false)] bool include_indirect = true,

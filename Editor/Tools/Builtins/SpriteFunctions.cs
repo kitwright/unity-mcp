@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Sprite")]
+    [ToolProvider("Sprites & Textures")]
     internal static class SpriteFunctions
     {
         private const int MaxSliceCells = 10000;

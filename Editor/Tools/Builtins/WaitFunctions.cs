@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Wait")]
+    [ToolProvider("Editor")]
     internal static class WaitFunctions
     {
         private const int MaxJobs = 32;

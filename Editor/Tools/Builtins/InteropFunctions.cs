@@ -7,7 +7,7 @@ using KitWright.Editor.Tools.Helpers;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Interop")]
+    [ToolProvider("Compilation")]
     internal static class InteropFunctions
     {
         [Description("Report the status of known third-party code-patching plugins (currently: SingularityGroup Hot Reload). " +

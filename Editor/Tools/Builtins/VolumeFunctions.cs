@@ -15,7 +15,7 @@ using UnityEngine.Rendering;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Volume")]
+    [ToolProvider("Rendering")]
     [RequiresPackage("com.unity.render-pipelines.universal")]
     internal static class VolumeFunctions
     {

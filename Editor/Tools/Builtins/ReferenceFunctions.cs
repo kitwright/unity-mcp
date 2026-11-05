@@ -12,7 +12,7 @@ using Object = UnityEngine.Object;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("References")]
+    [ToolProvider("Asset")]
     internal static class ReferenceFunctions
     {
         private const long YieldEveryMs = 50;

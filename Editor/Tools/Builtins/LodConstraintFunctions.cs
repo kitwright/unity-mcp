@@ -11,7 +11,7 @@ using UnityEngine.Animations;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("LodConstraint")]
+    [ToolProvider("Rendering")]
     internal static class LodConstraintFunctions
     {
         // ----- LOD -----

@@ -8,7 +8,7 @@ using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 namespace KitWright.Editor.Tools.Builtins
 {
     /// <summary>bake_nav_mesh_surfaces under the Unity CLI's spelling.</summary>
-    [ToolProvider("UnityCli")]
+    [ToolProvider("NavMesh")]
     internal static class UnityCliNavMeshSurfaceFunctions
     {
         [Description("Bake every NavMeshSurface in the loaded scenes (AI Navigation package), like bake_nav_mesh_surfaces. Waits for the bakes.")]

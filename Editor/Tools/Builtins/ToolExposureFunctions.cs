@@ -10,7 +10,7 @@ using KitWright.Editor.Tools.Helpers;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("ToolExposure")]
+    [ToolProvider("MCP")]
     internal static class ToolExposureFunctions
     {
         [Description("Switch the MCP tool profile exposed to clients: 'minimal', 'core', 'extended' or 'full'. " +

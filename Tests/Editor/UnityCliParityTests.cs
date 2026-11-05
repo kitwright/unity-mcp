@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using KitWright.Editor.Tools;
 using KitWright.Editor.Tools.Builtins;
+using KitWright.Editor.Tools.Helpers;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
@@ -190,6 +191,70 @@ namespace KitWright.Editor.Tests
             Error(UnityCliEditorFunctions.RunScript(file, "ParityRun.Nope").Result, "ENTRY_NOT_FOUND");
             Error(UnityCliEditorFunctions.RunScript(Folder + "/Nope.cs").Result, "FILE_NOT_FOUND");
             Error(UnityCliEditorFunctions.EvalFile(Folder + "/Nope.cs").Result, "FILE_NOT_FOUND");
+            Assert.IsNull(run["data"]["warnings"], "a clean file reports no warnings, not even the compiler's reference notes");
+        }
+
+        [Test]
+        public void RunScript_ReportsFailuresWithTheirStack_EvenFromAFaultedTask()
+        {
+            var file = Folder + "/Fail.cs";
+            File.WriteAllText(file,
+                "public static class ParityFail {\n" +
+                "  public static int Throws() { throw new System.InvalidOperationException(\"sync boom\"); }\n" +
+                "  public static async System.Threading.Tasks.Task Faults() { throw new System.ArgumentException(\"task boom\"); }\n" +
+                "}");
+
+            foreach (var entry in new[] { "ParityFail.Throws", "ParityFail.Faults" })
+            {
+                var json = Json(UnityCliEditorFunctions.RunScript(file, entry).Result);
+                Assert.IsFalse(json.Value<bool>("success"), entry + " must not read as a success: " + json);
+                Assert.AreEqual("RUN_FAILED", json.Value<string>("code"), entry);
+                Assert.IsNotEmpty(json["data"].Value<string>("type"), entry);
+                Assert.IsNotEmpty(json["data"].Value<string>("stack"), entry);
+            }
+        }
+
+        [Test]
+        public void RunScript_TakesAndReturnsUnityObjects()
+        {
+            var file = Folder + "/Objects.cs";
+            File.WriteAllText(file,
+                "public static class ParityObjects {\n" +
+                "  public static string Name(UnityEngine.GameObject go) => go.name;\n" +
+                "  public static UnityEngine.GameObject Same(UnityEngine.GameObject go) => go;\n" +
+                "}");
+            var go = new GameObject("kw-parity-run-object");
+            try
+            {
+                var id = ObjectIdCodec.GetSerializableId(go);
+                Assert.AreEqual("kw-parity-run-object",
+                    (string)Success(UnityCliEditorFunctions.RunScript(file, "ParityObjects.Name", "[\"" + id + "\"]").Result)["data"]["result"]);
+
+                var same = Success(UnityCliEditorFunctions.RunScript(file, "ParityObjects.Same", "[\"" + id + "\"]").Result)["data"]["result"];
+                Assert.AreEqual(id, (string)same["instanceId"]);
+                Assert.AreEqual("GameObject", (string)same["type"]);
+
+                Error(UnityCliEditorFunctions.RunScript(file, "ParityObjects.Name", "[\"999999999:1\"]").Result, "INVALID_ARGUMENT");
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
+        [Test]
+        public void RunScript_ReportsWarningsOnTheFileLine_PastItsDefines()
+        {
+            var file = Folder + "/Warn.cs";
+            File.WriteAllText(file,
+                "public static class ParityWarn {\n" +
+                "  public static int Go() { int unused = 1; return 2; }\n" +
+                "}");
+
+            var run = Success(UnityCliEditorFunctions.RunScript(file, "ParityWarn.Go", defines: "[\"KW_PARITY_A\"]").Result);
+            var warning = run["data"]["warnings"].Single();
+            Assert.AreEqual("CS0219", (string)warning["code"]);
+            Assert.AreEqual(2, (int)warning["line"], "the prepended #define line is not the file's");
         }
 
         [UnityTest]

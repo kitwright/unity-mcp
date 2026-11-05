@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Script")]
+    [ToolProvider("ExecuteCode")]
     internal static class ScriptExecutionFunctions
     {
         private const string HistorySessionKey = "KitWright.MCP.ExecuteCode.History";
@@ -444,7 +444,8 @@ namespace KitWright.Editor.Tools.Builtins
             LoopBudgetGuard.Begin(loopBudget ?? LoopBudgetGuard.DefaultBudget);
             try
             {
-                return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts);
+                var warnings = compilation.Warnings.Select(placement.ToSnippet).Where(placement.IsInSnippet).ToList();
+                return ExecuteCompiledAssembly(compilation.Assembly, className, compilation.CompilerName, compilation.Attempts, warnings);
             }
             finally
             {
@@ -456,7 +457,8 @@ namespace KitWright.Editor.Tools.Builtins
             Assembly compiledAssembly,
             string className,
             string compilerName,
-            List<ScriptCompilerAttempt> compilerAttempts)
+            List<ScriptCompilerAttempt> compilerAttempts,
+            List<ScriptCompilationError> warnings)
         {
             // Prefer IKitWrightCommand path: any class in the compiled assembly that implements it
             Type commandType = null;
@@ -471,7 +473,7 @@ namespace KitWright.Editor.Tools.Builtins
                 // Fall through to legacy Run() path
             }
             if (commandType != null)
-                return ExecuteAsCommand(commandType, compilerName);
+                return ExecuteAsCommand(commandType, compilerName, warnings);
 
             // Legacy path: class with `static Run()`
             var type = compiledAssembly.GetType(className);
@@ -485,12 +487,10 @@ namespace KitWright.Editor.Tools.Builtins
 
             try
             {
-                var result = method.Invoke(null, null);
-                return Response.Success("Executed (legacy Run()).", new
-                {
-                    result = result?.ToString() ?? "OK",
-                    compiler = compilerName
-                });
+                var result = method.Invoke(null, null)?.ToString() ?? "OK";
+                return Response.Success("Executed (legacy Run()).", warnings.Count == 0
+                    ? (object)new { result, compiler = compilerName }
+                    : new { result, compiler = compilerName, warnings = Capped(warnings), warning_count = warnings.Count });
             }
             catch (TargetInvocationException ex)
             {
@@ -500,7 +500,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static object ExecuteAsCommand(Type commandType, string compilerName)
+        private static object ExecuteAsCommand(Type commandType, string compilerName, List<ScriptCompilationError> warnings)
         {
             IKitWrightCommand instance;
             try { instance = (IKitWrightCommand)Activator.CreateInstance(commandType); }
@@ -530,18 +530,38 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             var message = DescribeCommandOutcome(ctx.Logs, out var loggedErrors, out var firstError);
-            return Response.Success(message, new
-            {
-                compiler = compilerName,
-                logged_error_count = loggedErrors,
-                first_logged_error = firstError,
-                logs = ctx.Logs,
-                created = ctx.CreatedInstanceIds,
-                modified = ctx.ModifiedInstanceIds,
-                destroyed = ctx.DestroyedInstanceIds,
-                returnValue = ctx.ReturnValue
-            });
+            // Two shapes so a clean snippet's answer does not grow a warnings field on every call.
+            return Response.Success(message, warnings.Count == 0
+                ? (object)new
+                {
+                    compiler = compilerName,
+                    logged_error_count = loggedErrors,
+                    first_logged_error = firstError,
+                    logs = ctx.Logs,
+                    created = ctx.CreatedInstanceIds,
+                    modified = ctx.ModifiedInstanceIds,
+                    destroyed = ctx.DestroyedInstanceIds,
+                    returnValue = ctx.ReturnValue
+                }
+                : new
+                {
+                    compiler = compilerName,
+                    logged_error_count = loggedErrors,
+                    first_logged_error = firstError,
+                    logs = ctx.Logs,
+                    created = ctx.CreatedInstanceIds,
+                    modified = ctx.ModifiedInstanceIds,
+                    destroyed = ctx.DestroyedInstanceIds,
+                    returnValue = ctx.ReturnValue,
+                    warnings = Capped(warnings),
+                    warning_count = warnings.Count
+                });
         }
+
+        private const int MaxWarnings = 20;
+
+        internal static List<ScriptCompilationError> Capped(List<ScriptCompilationError> warnings) =>
+            warnings.Count > MaxWarnings ? warnings.GetRange(0, MaxWarnings) : warnings;
 
         // A snippet that only logs errors still ran, so success stays true — but the message has to
         // say so up front, or the caller reads "Command executed." and assumes a clean run.
@@ -613,11 +633,13 @@ namespace KitWright.Editor.Tools.Builtins
         {
             private readonly int _linesBefore;
             private readonly int _firstLineIndent;
+            private readonly int _snippetLines;
 
-            private SnippetPlacement(int linesBefore, int firstLineIndent)
+            private SnippetPlacement(int linesBefore, int firstLineIndent, int snippetLines)
             {
                 _linesBefore = linesBefore;
                 _firstLineIndent = firstLineIndent;
+                _snippetLines = snippetLines;
             }
 
             internal static SnippetPlacement Of(string snippet, string compiled)
@@ -631,8 +653,14 @@ namespace KitWright.Editor.Tools.Builtins
                 for (var i = 0; i < at; i++)
                     if (compiled[i] == '\n')
                         linesBefore++;
-                return new SnippetPlacement(linesBefore, at - lineStart);
+                var snippetLines = snippet.TrimEnd('\r', '\n').Count(c => c == '\n') + 1;
+                return new SnippetPlacement(linesBefore, at - lineStart, snippetLines);
             }
+
+            // The wrapper adds code after a bare body too (its trailing "return null;" is unreachable behind the
+            // snippet's own return, CS0162), so a mapped line past the snippet is not the caller's either.
+            internal bool IsInSnippet(ScriptCompilationError mapped) =>
+                mapped.line >= 1 && (_snippetLines == 0 || mapped.line <= _snippetLines);
 
             // Lines inside the generated wrapper come back as 0: there is no snippet line to point at.
             internal ScriptCompilationError ToSnippet(ScriptCompilationError error)

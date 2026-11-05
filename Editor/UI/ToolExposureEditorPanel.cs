@@ -973,8 +973,7 @@ namespace KitWright.Editor.MCP.Server
         {
             if (ToolRegistry.MethodCache.TryGetValue(toolName, out var method))
             {
-                var provider = method.DeclaringType?.GetCustomAttribute<ToolProviderAttribute>();
-                return FormatCategory(provider?.Category ?? method.DeclaringType?.Name ?? "Other");
+                return FormatCategory(ToolProviderAttribute.CategoryOf(method) ?? method.DeclaringType?.Name ?? "Other");
             }
 
             if (ToolRegistry.ManualTools.ContainsKey(toolName))

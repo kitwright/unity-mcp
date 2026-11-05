@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("AssetImport")]
+    [ToolProvider("Asset")]
     internal static class AssetImportFunctions
     {
         // The default (non-platform-specific) texture platform key.

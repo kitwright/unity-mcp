@@ -1,12 +1,14 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
+using System.Reflection;
 
 namespace KitWright.Editor.Tools
 {
     /// Marks a static class whose public static methods are exposed as MCP tools.
     /// Public so project and third-party editor assemblies can declare their own tools;
     /// <see cref="ToolRegistry"/> scans every loaded assembly, not just this package.
-    [AttributeUsage(AttributeTargets.Class)]
+    /// On a method of such a class it only moves that tool to another category.
+    [AttributeUsage(AttributeTargets.Class | AttributeTargets.Method)]
     public class ToolProviderAttribute : Attribute
     {
         public string Category { get; }
@@ -15,6 +17,9 @@ namespace KitWright.Editor.Tools
         {
             Category = category;
         }
+
+        internal static string CategoryOf(MethodInfo method) =>
+            (method.GetCustomAttribute<ToolProviderAttribute>() ?? method.DeclaringType?.GetCustomAttribute<ToolProviderAttribute>())?.Category;
     }
 
     /// The package id a tool needs at runtime, on the provider class or on a single method.

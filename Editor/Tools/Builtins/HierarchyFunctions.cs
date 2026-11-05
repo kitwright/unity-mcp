@@ -8,7 +8,7 @@ using UnityEngine.SceneManagement;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Hierarchy")]
+    [ToolProvider("GameObject")]
     internal static class HierarchyFunctions
     {
         [Description("Browse the scene hierarchy tree. Returns a tree-like view of GameObjects " +

@@ -18,7 +18,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// package already publish their commands as menu items, so an agent can drive most
     /// editor functionality through this without us writing wrappers.
     /// </summary>
-    [ToolProvider("MenuItem")]
+    [ToolProvider("Editor")]
     internal static class MenuItemFunctions
     {
         // Menu items that quit the editor, open or switch the project, or irreversibly wipe PlayerPrefs or the

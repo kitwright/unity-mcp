@@ -14,7 +14,7 @@ using UnityEngine.AI;
 namespace KitWright.Editor.Tools.Builtins
 {
     /// <summary>The NavMesh tools under the Unity CLI's spelling (navmesh, one word); KitWright's own are bake_nav_mesh and its family.</summary>
-    [ToolProvider("UnityCli")]
+    [ToolProvider("NavMesh")]
     internal static class UnityCliNavMeshFunctions
     {
         // Legacy agent settings live in the NavMeshProjectSettings page, whose first entry is the default agent.

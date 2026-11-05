@@ -10,7 +10,7 @@ using UnityEngine.UIElements;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("EditorWindowInteraction")]
+    [ToolProvider("Editor")]
     internal static class EditorWindowInteractionFunctions
     {
         private const string WindowParamText = "Window title (e.g. 'Inspector', 'MCP Server') or window type name (e.g. 'ConsoleWindow'). Case-insensitive. " +

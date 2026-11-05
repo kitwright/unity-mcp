@@ -14,7 +14,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// Project Auditor scans, in their own assembly so the package builds without com.unity.project-auditor.
     /// A scan builds the player's code and can run for minutes, so audit returns at once and audit_status reports.
     /// </summary>
-    [ToolProvider("Audit")]
+    [ToolProvider("Profiling")]
     internal static class AuditFunctions
     {
         private const string StateKey = "KitWright.Audit.State";

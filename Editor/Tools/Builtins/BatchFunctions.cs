@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.DI;
@@ -14,7 +15,7 @@ using UnityEditor;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Batch")]
+    [ToolProvider("MCP")]
     internal static class BatchFunctions
     {
         [Description("Run multiple MCP tool calls sequentially in a single request, on the main thread, saving round-trips. " +
@@ -24,11 +25,17 @@ namespace KitWright.Editor.Tools.Builtins
                      "standing in for it in results (N counts the response's images from 0). " +
                      "The scene changes the whole batch makes collapse into a single Undo step, so the user can revert " +
                      "the batch with one Ctrl+Z instead of one per command. File writes, asset imports and play-mode " +
-                     "changes are outside Unity's undo system and are not reverted by it.")]
+                     "changes are outside Unity's undo system and are not reverted by it. " +
+                     "rollback_on_error=true also reverts that step when the batch stops on a failure or its time budget.")]
         public static async Task<object> BatchExecute(
             [ToolParam("JSON array of commands, e.g. [{\"name\":\"create_primitive\",\"params\":{\"primitive_type\":\"Cube\"}},{\"name\":\"get_hierarchy\",\"params\":{}}]")] string commands,
             [ToolParam("Stop the batch when a call fails (default true). If false, remaining calls still run.", Required = false)] bool stop_on_error = true,
-            [ToolParam("Name shown in Unity's Edit > Undo menu for the collapsed step.", Required = false)] string undo_label = null)
+            [ToolParam("Name shown in Unity's Edit > Undo menu for the collapsed step.", Required = false)] string undo_label = null,
+            [ToolParam("Revert the batch's Undo-tracked scene changes when it stops on a failure or its time budget (default false). " +
+                       "File, asset, settings and Play Mode changes are not reverted. With stop_on_error=false only the time budget " +
+                       "stops the batch, so only that rolls it back. Edits made in the Editor while the batch runs are reverted with it. " +
+                       "undo/redo commands are refused; execute_menu_item 'Edit/Undo' or Undo.PerformUndo in execute_code are not " +
+                       "caught and can pop an Undo step from before the batch.", Required = false)] bool rollback_on_error = false)
         {
             JArray parsed;
             try
@@ -40,20 +47,48 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("INVALID_COMMANDS", new { message = ex.Message, expected = "a JSON array of {name, params} objects" });
             }
 
+            return await Run(parsed, stop_on_error, undo_label, rollback_on_error, resolveReferences: false);
+        }
+
+        // batch_execute has shipped without references, so only the CLI-shape batch resolves them: a "$5.99"
+        // label a client already sends must still arrive as text.
+        internal static async Task<object> Run(
+            JArray parsed, bool stop_on_error, string undo_label, bool rollback_on_error, bool resolveReferences)
+        {
             if (parsed.Count == 0)
                 return Response.Error("EMPTY_BATCH", new { message = "commands array is empty" });
             if (parsed.Count > 100)
                 return Response.Error("BATCH_TOO_LARGE", new { count = parsed.Count, max = 100 });
 
+            var names = parsed.Select(command => (command as JObject)?["name"]?.ToString()).ToList();
+            var ids = resolveReferences ? parsed.Select(command => ReadId(command as JObject)).ToArray() : null;
+            if (ids != null && !TryValidateIds(ids, out var idError))
+                return idError;
+
+            if (rollback_on_error)
+            {
+                // An undo while the batch's group is still empty pops the user's group from before the batch, and
+                // RevertAllDownToGroup cannot bring it back.
+                for (int i = 0; i < names.Count; i++)
+                {
+                    if (string.Equals(names[i], nameof(UndoFunctions.Undo), System.StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(names[i], nameof(UndoFunctions.Redo), System.StringComparison.OrdinalIgnoreCase))
+                        return Response.Error("BATCH_UNDO_IN_ROLLBACK", new { index = i, name = names[i] },
+                            "undo and redo cannot run in a batch that rolls back on error. Drop them, or set rollback_on_error=false.");
+                }
+            }
+
             var invoker = new FunctionInvoker();
             var results = new List<object>();
+            var resultTokens = new JToken[parsed.Count];
+            var succeeded = new bool[parsed.Count];
             bool aborted = false;
             bool timedOut = false;
+            var wasPlaying = IsPlaying();
 
             // The request is cut off at the ceiling, after which the client has its timeout and
             // every command still to come would run unseen. Stopping short of it leaves the batch to
             // answer for itself. A command already running cannot be stopped, hence the margin.
-            var names = parsed.Select(command => (command as JObject)?["name"]?.ToString()).ToList();
             var budgetSeconds = ToolRegistry.BatchBudgetSeconds(names, MCPServerService.ToolCallTimeoutMs / 1000);
             var clock = Stopwatch.StartNew();
 
@@ -109,10 +144,23 @@ namespace KitWright.Editor.Tools.Builtins
                         continue;
                     }
 
+                    var paramsToken = parsed[i]["params"];
+                    if (ids != null)
+                    {
+                        paramsToken = ResolveReferences(paramsToken, ids, i, resultTokens, succeeded, out var unresolved);
+                        if (unresolved != null)
+                        {
+                            results.Add(new { index = i, name, result = JToken.Parse(ToolResultFormatter.Error("UNRESOLVED_REFERENCE", unresolved,
+                                "A $ref.path value must name an earlier operation that succeeded (by id or index) and a path its result has.")) });
+                            if (stop_on_error) { aborted = true; break; }
+                            continue;
+                        }
+                    }
+
                     var fc = new FunctionCall
                     {
                         FunctionName = name,
-                        Parameters = ExtractParams(parsed[i]["params"])
+                        Parameters = ExtractParams(paramsToken)
                     };
 
                     // Await instead of blocking: async tools pump their state
@@ -125,6 +173,8 @@ namespace KitWright.Editor.Tools.Builtins
                     bool ok = IsSuccess(raw, resultToken);
 
                     results.Add(new { index = i, name, result = resultToken });
+                    resultTokens[i] = resultToken as JToken;
+                    succeeded[i] = ok;
 
                     if (!ok && stop_on_error) { aborted = true; break; }
                 }
@@ -138,22 +188,164 @@ namespace KitWright.Editor.Tools.Builtins
                 Undo.CollapseUndoOperations(undoGroup);
             }
 
-            var payload = new { count = results.Count, total = parsed.Count, aborted, results };
+            bool rolledBack = false;
+            string rollbackSkipped = null;
+            if (aborted && rollback_on_error)
+            {
+                // Entering or leaving Play Mode resets the undo stack around the transition, so the batch's group
+                // may no longer be the one this id names.
+                if (IsPlaying() != wasPlaying)
+                {
+                    rollbackSkipped = "play_mode_changed";
+                }
+                else
+                {
+                    Undo.RevertAllDownToGroup(undoGroup);
+                    rolledBack = true;
+                }
+            }
+
+            object payload = rollback_on_error
+                ? (object)new { count = results.Count, total = parsed.Count, aborted, rolled_back = rolledBack, rollback_skipped = rollbackSkipped, results }
+                : new { count = results.Count, total = parsed.Count, aborted, results };
+            var reverted = rolledBack
+                ? "The whole batch was reverted (its Undo-tracked scene changes; file, asset, settings and Play Mode changes were not). "
+                : rollbackSkipped != null ? "Not rolled back: Play Mode changed during the batch. " : string.Empty;
 
             if (timedOut)
                 return Response.Error("BATCH_TIMED_OUT", payload,
                     $"Batch stopped after {results.Count} of {parsed.Count} command(s): it ran " +
-                    $"{clock.Elapsed.TotalSeconds:0}s of its {budgetSeconds}s budget, and the rest did not run. " +
-                    "Send the remaining commands as another batch.");
+                    $"{clock.Elapsed.TotalSeconds:0}s of its {budgetSeconds}s budget, and the rest did not run. " + reverted +
+                    (rolledBack ? "Resend the whole batch, or split it into smaller ones." : "Send the remaining commands as another batch."));
 
             // An aborted batch has to read as a failure: MCPRequestHandler derives isError from this
             // envelope's success field, so reporting true hands the caller - a parent batch, or the
             // client itself - a green light for steps whose setup never ran.
             return aborted
                 ? Response.Error("BATCH_ABORTED", payload,
-                    $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error. " +
-                    "Inspect results for the failing step; pass stop_on_error=false to run past failures.")
+                    $"Batch stopped after {results.Count} of {parsed.Count} command(s) due to an error. " + reverted +
+                    (rolledBack ? "Fix the failing step and resend the whole batch." : "Inspect results for the failing step; pass stop_on_error=false to run past failures."))
                 : Response.Success($"Batch executed {results.Count} command(s).", payload);
+        }
+
+        // \z, not $: $ also matches before a trailing newline, which would let "a\n" through as an id.
+        private static readonly Regex IdPattern = new Regex(@"^[A-Za-z_][A-Za-z0-9_-]*\z");
+
+        // The path has to start with an identifier, so a price such as "$0.99" stays text.
+        private static readonly Regex ReferencePattern = new Regex(@"^\$(?<ref>[A-Za-z_][A-Za-z0-9_-]*|\d+)\.(?<path>[A-Za-z_]\S*)\z");
+
+        private static string ReadId(JObject command)
+        {
+            var token = command?["id"];
+            return token == null || token.Type == JTokenType.Null ? null : token.ToString();
+        }
+
+        private static bool TryValidateIds(IReadOnlyList<string> ids, out object error)
+        {
+            var seen = new HashSet<string>(System.StringComparer.Ordinal);
+            for (int i = 0; i < ids.Count; i++)
+            {
+                if (ids[i] == null)
+                    continue;
+
+                if (!IdPattern.IsMatch(ids[i]))
+                {
+                    error = Response.Error("INVALID_ID", new { index = i, id = ids[i], expected = IdPattern.ToString() });
+                    return false;
+                }
+
+                if (!seen.Add(ids[i]))
+                {
+                    error = Response.Error("DUPLICATE_ID", new { index = i, id = ids[i] });
+                    return false;
+                }
+            }
+
+            error = null;
+            return true;
+        }
+
+        internal static JToken ResolveReferences(
+            JToken token, IReadOnlyList<string> ids, int current, IReadOnlyList<JToken> results, IReadOnlyList<bool> succeeded,
+            out object unresolved)
+        {
+            unresolved = null;
+            switch (token)
+            {
+                case JObject obj:
+                {
+                    var copy = new JObject();
+                    foreach (var property in obj.Properties())
+                    {
+                        var value = ResolveReferences(property.Value, ids, current, results, succeeded, out unresolved);
+                        if (unresolved != null)
+                            return null;
+                        copy[property.Name] = value;
+                    }
+                    return copy;
+                }
+                case JArray array:
+                {
+                    var copy = new JArray();
+                    foreach (var item in array)
+                    {
+                        var value = ResolveReferences(item, ids, current, results, succeeded, out unresolved);
+                        if (unresolved != null)
+                            return null;
+                        copy.Add(value);
+                    }
+                    return copy;
+                }
+                case JValue value when value.Type == JTokenType.String:
+                {
+                    var text = (string)value;
+                    if (text.StartsWith("$$", System.StringComparison.Ordinal) && ReferencePattern.IsMatch(text.Substring(1)))
+                        return new JValue(text.Substring(1));
+
+                    var match = ReferencePattern.Match(text);
+                    if (!match.Success)
+                        return value;
+
+                    var reference = match.Groups["ref"].Value;
+                    var path = match.Groups["path"].Value;
+                    var found = Lookup(reference, path, ids, current, results, succeeded);
+                    if (found == null)
+                        unresolved = new { reference, path };
+                    return found;
+                }
+                default:
+                    return token;
+            }
+        }
+
+        private static JToken Lookup(
+            string reference, string path, IReadOnlyList<string> ids, int current, IReadOnlyList<JToken> results, IReadOnlyList<bool> succeeded)
+        {
+            var index = char.IsDigit(reference[0])
+                ? (int.TryParse(reference, out var n) ? n : -1)
+                : IndexOf(ids, reference);
+            if (index < 0 || index >= current || !succeeded[index] || !(results[index] is JObject result))
+                return null;
+
+            try
+            {
+                // Results are {success, message, data}: "$0.instanceId" reads data, "$0.data.instanceId" the envelope.
+                var found = (result["data"] as JContainer)?.SelectToken(path) ?? result.SelectToken(path);
+                // A JSON null would be dropped as an absent param, and the callee's "missing" error hides the cause.
+                return found == null || found.Type == JTokenType.Null ? null : found.DeepClone();
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        private static int IndexOf(IReadOnlyList<string> ids, string id)
+        {
+            for (int i = 0; i < ids.Count; i++)
+                if (string.Equals(ids[i], id, System.StringComparison.Ordinal))
+                    return i;
+            return -1;
         }
 
         // Settable so a test can reach the deadline without running for minutes.

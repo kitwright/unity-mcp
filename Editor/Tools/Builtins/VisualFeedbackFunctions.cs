@@ -13,7 +13,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Visual")]
+    [ToolProvider("Editor")]
     internal static class VisualFeedbackFunctions
     {
         [Description("Select a GameObject in the scene hierarchy and inspector")]
@@ -61,6 +61,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Log a message to the Unity console")]
         [ReadOnlyTool]
+        [ToolProvider("Console")]
         public static string LogMessage(
             [ToolParam("Message to log")] string message,
             [ToolParam("Log type: info, warning, error", Required = false)] string log_type = "info")
@@ -118,6 +119,7 @@ namespace KitWright.Editor.Tools.Builtins
                      "Reading from the cache, a page cut short by count reports a next_cursor to pass back as cursor " +
                      "for the older entries.")]
         [ReadOnlyTool]
+        [ToolProvider("Console")]
         public static string GetConsoleLogs(
             [ToolParam("Filter by log type: 'all', 'log', 'warning', 'error'", Required = false)] string log_type = "all",
             [ToolParam("Maximum number of entries to return", Required = false)] int count = 30,
@@ -304,6 +306,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Clear the Unity Editor console. Removes all Debug.Log/Warning/Error entries from the Console window and the live log cache.")]
+        [ToolProvider("Console")]
         public static object ClearConsole()
         {
             var logsRepository = RootScopeServices.Services?.GetService(typeof(UnityLogsRepository)) as UnityLogsRepository;

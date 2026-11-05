@@ -10,7 +10,7 @@ using UnityEngine;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Particle")]
+    [ToolProvider("Rendering")]
     internal static class ParticleFunctions
     {
         private const float MaxSimulateSeconds = 60f;

@@ -8,7 +8,7 @@ using KitWright.Editor.Tools.Helpers;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Script")]
+    [ToolProvider("ExecuteCode")]
     internal static class EvalReportFunctions
     {
         private const int RepeatedPatternThreshold = 2;

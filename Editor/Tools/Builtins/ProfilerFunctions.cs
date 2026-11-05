@@ -11,7 +11,7 @@ using UnityEngine.Profiling;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    [ToolProvider("Profiler")]
+    [ToolProvider("Profiling")]
     internal static class ProfilerFunctions
     {
         // High-signal counters default list: (category, statName) - verified on Unity 6000.3.13f1.

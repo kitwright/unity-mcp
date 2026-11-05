@@ -14,7 +14,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// package, so these tools call its commands by reflection instead of carrying a second engine. Without the package they answer
     /// PACKAGE_NOT_INSTALLED. The package's command classes are internal, hence the reflection.
     /// </summary>
-    [ToolProvider("CodeReload")]
+    [ToolProvider("Compilation")]
     [RequiresPackage("com.unity.pipeline")]
     internal static class CodeReloadFunctions
     {

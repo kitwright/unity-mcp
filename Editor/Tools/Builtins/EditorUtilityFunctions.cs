@@ -84,6 +84,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Copy an external file (a texture, model, audio clip...) into the project and import it. The source is an " +
                      "absolute path anywhere on disk; the destination is an asset path under Assets/. Refuses to replace an " +
                      "existing asset unless confirm=true.")]
+        [ToolProvider("Asset")]
         public static object ImportAsset(
             [ToolParam("Absolute filesystem path of the file to import")] string source,
             [ToolParam("Destination asset path under Assets/, with extension (e.g. Assets/Art/Wall.png)")] string path,
@@ -120,6 +121,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Edit a prefab asset in isolation, without opening a prefab stage, and save it back: rename one child and/or " +
                      "set one child's active state. Children are named by their path under the prefab root ('Body/Head'). " +
                      "Both children are resolved before anything is written, so a bad name leaves the prefab untouched.")]
+        [ToolProvider("Prefab")]
         public static object SavePrefabContents(
             [ToolParam("Path to the .prefab asset")] string prefab_path,
             [ToolParam("Path of a child to rename, relative to the prefab root", Required = false)] string rename_child = null,
@@ -170,9 +172,11 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Run the C# in a .cs file inside the project exactly as execute_code would run it (same templates, safety " +
                      "checks and Undo grouping). Useful for a long snippet kept in a file, e.g. under a folder outside Assets/ " +
                      "so writing it triggers no import.")]
+        [ToolProvider("ExecuteCode")]
         public static async Task<object> ExecuteCodeFile(
             [ToolParam("Path of the .cs file, relative to the project root or absolute inside it")] string file_path,
-            [ToolParam("Same as execute_code's safety_checks. If omitted, the MCP Settings window default is used.", Required = false)] bool? safety_checks = null)
+            [ToolParam("Same as execute_code's safety_checks. If omitted, the MCP Settings window default is used.", Required = false)] bool? safety_checks = null,
+            [ToolParam("Same as execute_code's timeout_seconds (up to 1680): raises the call ceiling and the snippet's loop budget. 0 (default) keeps both.", Required = false)] int timeout_seconds = 0)
         {
             var resolved = PathSafety.ResolveProjectPath(file_path);
             if (!File.Exists(resolved))
@@ -181,7 +185,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (new FileInfo(resolved).Length > MaxCodeFileBytes)
                 return Response.Error("FILE_TOO_LARGE", new { file_path, max_bytes = MaxCodeFileBytes });
 
-            return await ScriptExecutionFunctions.ExecuteCode(File.ReadAllText(resolved), safety_checks);
+            return await ScriptExecutionFunctions.ExecuteCode(File.ReadAllText(resolved), safety_checks, timeout_seconds: timeout_seconds);
         }
     }
 }

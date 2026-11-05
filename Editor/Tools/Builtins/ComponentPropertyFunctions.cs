@@ -15,7 +15,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// <c>{"fileID": instanceId}</c>, returns per-field success so agents can
     /// recover from partial writes.
     /// </summary>
-    [ToolProvider("ComponentProperty")]
+    [ToolProvider("GameObject")]
     internal static class ComponentPropertyFunctions
     {
         [Description("List components on a GameObject. Each entry includes its instanceId so subsequent " +

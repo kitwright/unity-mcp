@@ -20,7 +20,7 @@ namespace KitWright.Editor.Tools.Builtins
     /// GameObject, scene, play-mode, script and batch tools under the Unity CLI's names and parameter shapes, so a client written
     /// against that server finds them here. Where KitWright already had the capability under another name, these call it.
     /// </summary>
-    [ToolProvider("UnityCli")]
+    [ToolProvider("Editor")]
     internal static class UnityCliEditorFunctions
     {
         private static readonly string[] Primitives = { "cube", "sphere", "capsule", "cylinder", "plane", "quad" };
@@ -28,6 +28,7 @@ namespace KitWright.Editor.Tools.Builtins
         // ---- GameObjects ----
 
         [Description("Create an empty GameObject or a built-in primitive (cube, sphere, capsule, cylinder, plane, quad) in the active scene.")]
+        [ToolProvider("GameObject")]
         public static object CreateGameobject(
             [ToolParam("Name; defaults to 'GameObject' or the primitive's name", Required = false)] string name = null,
             [ToolParam("Parent GameObject identifier", Required = false)] string parent = null,
@@ -40,6 +41,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Create N empty GameObjects or primitives in one call, as one Undo step. positions, rotations and scales are JSON arrays of " +
                      "[x,y,z] with one entry per object. With count > 1 the names are Name1..NameN.")]
+        [ToolProvider("GameObject")]
         public static object CreateGameobjects(
             [ToolParam("How many to create. Default 1.", Required = false)] int count = 1,
             [ToolParam("Base name", Required = false)] string name = null,
@@ -94,10 +96,12 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Delete a GameObject (undoable).")]
+        [ToolProvider("GameObject")]
         public static object DeleteGameobject([ToolParam("Identifier of the GameObject")] string target) =>
             GameObjectFunctions.DeleteGameObject(target);
 
         [Description("Rename a GameObject.")]
+        [ToolProvider("GameObject")]
         public static object RenameGameobject(
             [ToolParam("Identifier of the GameObject")] string target,
             [ToolParam("New name")] string name) =>
@@ -105,6 +109,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Find GameObjects in the loaded scenes by exact name, tag, component type and/or exact hierarchy path; the filters combine.")]
         [ReadOnlyTool]
+        [ToolProvider("GameObject")]
         public static object FindGameobjects(
             [ToolParam("Exact name", Required = false)] string name = null,
             [ToolParam("Tag", Required = false)] string tag = null,
@@ -148,6 +153,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Create a new scene and save it under the given path (the Assets/ prefix and .unity are optional). template 'default' adds a " +
                      "Main Camera and a Directional Light; additive opens it next to the open scenes. An unsaved open scene is refused unless additive.")]
+        [ToolProvider("Scene")]
         public static object CreateScene(
             [ToolParam("Scene path, e.g. Scenes/Level1")] string path,
             [ToolParam("Open it additively. Default false.", Required = false)] bool additive = false,
@@ -176,6 +182,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Add a scene to the Build Settings list (idempotent). The Assets/ prefix and .unity are optional. enabled sets its checkbox.")]
+        [ToolProvider("Build")]
         public static object AddSceneToBuild(
             [ToolParam("Scene path")] string path,
             [ToolParam("Enable it in the build list. Default true.", Required = false)] bool enabled = true)
@@ -197,6 +204,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         [Description("Remove a scene from the Build Settings list (idempotent).")]
+        [ToolProvider("Build")]
         public static object RemoveSceneFromBuild([ToolParam("Scene path")] string path)
         {
             if (!UnityCliPaths.Resolve(path, ".unity", out var scene, out _, out var error))
@@ -210,6 +218,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("List the open scenes with their loaded, active and dirty state.")]
         [ReadOnlyTool]
+        [ToolProvider("Scene")]
         public static object ListOpenScenes()
         {
             var active = SceneManager.GetActiveScene();
@@ -227,6 +236,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Return the GameObject tree of an open scene (the active one when path is omitted); every node carries an instance id and a hierarchy path.")]
         [ReadOnlyTool]
+        [ToolProvider("GameObject")]
         public static object GetSceneHierarchy(
             [ToolParam("Path of the open scene; the Assets/ prefix and .unity are optional", Required = false)] string path = null)
         {
@@ -250,12 +260,15 @@ namespace KitWright.Editor.Tools.Builtins
         // ---- Editor and play mode ----
 
         [Description("Enter Play Mode.")]
+        [ToolProvider("PlayMode")]
         public static object EditorPlay() => Response.Success(GameObjectlessResult(SceneFunctions.EnterPlayMode()));
 
         [Description("Exit Play Mode.")]
+        [ToolProvider("PlayMode")]
         public static object EditorStop() => Response.Success(GameObjectlessResult(SceneFunctions.ExitPlayMode()));
 
         [Description("Toggle the pause state of Play Mode.")]
+        [ToolProvider("PlayMode")]
         public static object EditorPause() => Response.Success(GameObjectlessResult(SceneFunctions.SetPaused(!EditorApplication.isPaused)));
 
         [Description("Detailed Editor status: project, Play Mode, compiling, updating.")]
@@ -265,6 +278,7 @@ namespace KitWright.Editor.Tools.Builtins
         [Description("Report the last script compile: 'compiling' while one runs, else 'idle'; compilation_failed says whether the current " +
                      "assemblies have compile errors. Start one with recompile.")]
         [ReadOnlyTool]
+        [ToolProvider("Compilation")]
         public static object RecompileStatus()
         {
             var compiling = EditorApplication.isCompiling || EditorApplication.isUpdating;
@@ -277,6 +291,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Force a script recompile. focus=true brings the Editor to the foreground first (Windows only). Poll recompile_status or " +
                      "pass nothing and read the answer, which waits up to 30 s.")]
+        [ToolProvider("Compilation")]
         public static async Task<object> Recompile(
             [ToolParam("Bring the Editor to the foreground first. Default false.", Required = false)] bool focus = false)
         {
@@ -306,21 +321,26 @@ namespace KitWright.Editor.Tools.Builtins
         // ---- Scripts ----
 
         [Description("Evaluate C# code, like execute_code. timeout is in milliseconds.")]
+        [ToolProvider("ExecuteCode")]
         public static Task<object> Eval(
             [ToolParam("C# code to evaluate")] string code,
             [ToolParam("Timeout in milliseconds. Default 5000.", Required = false)] int timeout = 5000) =>
             ScriptExecutionFunctions.ExecuteCode(code, null, false, SecondsBeyondDefault(timeout));
 
         [Description("Evaluate C# code read from a .cs file inside the project, like execute_code_file.")]
+        [ToolProvider("ExecuteCode")]
         public static Task<object> EvalFile(
             [ToolParam("Path of the .cs file")] string file,
             [ToolParam("Timeout in milliseconds. Default 5000.", Required = false)] int timeout = 5000) =>
-            EditorUtilityFunctions.ExecuteCodeFile(file);
+            EditorUtilityFunctions.ExecuteCodeFile(file, timeout_seconds: SecondsBeyondDefault(timeout));
 
         [Description("Compile a project .cs file in memory (no domain reload) and run a named static entry point. entry is Namespace.Type.Method, " +
                      "Type.Method or Method; by default the single public static method, else one named Main. args is a JSON array coerced " +
-                     "to the parameters (primitives, enum names, string[]). dry_run compiles only. defines are prepended as #define lines; " +
+                     "to the parameters (primitives, enum names, string[]; a UnityEngine.Object parameter takes an instanceId as tools return " +
+                     "it, or an Assets/ or Packages/ path). A UnityEngine.Object result comes back as {instanceId, name, type}; compiler " +
+                     "warnings, if any, as warnings. dry_run compiles only. defines are prepended as #define lines; " +
                      "mode 'hotpatch' applies [CodeReload] edits instead (needs com.unity.pipeline). The same safety checks as execute_code apply.")]
+        [ToolProvider("ExecuteCode")]
         public static async Task<object> RunScript(
             [ToolParam("Path of the .cs file, relative to the project root")] string file,
             [ToolParam("Entry point", Required = false)] string entry = null,
@@ -337,7 +357,8 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.Equals(mode, "hotpatch", StringComparison.OrdinalIgnoreCase))
                 return CodeReloadFunctions.ReloadFile(file);
 
-            var source = string.Concat(Defines(defines).Select(d => "#define " + d + "\n")) + System.IO.File.ReadAllText(path);
+            var defineList = Defines(defines).ToList();
+            var source = string.Concat(defineList.Select(d => "#define " + d + "\n")) + System.IO.File.ReadAllText(path);
             if (ExecuteCodeSafetyPolicy.TryFindViolation(source, true, out var pattern, out var reason, out var alternative))
                 return Response.Error("SAFETY_CHECK_BLOCKED", new { pattern, reason, alternative });
 
@@ -358,34 +379,71 @@ namespace KitWright.Editor.Tools.Builtins
             if (!TryArguments(method, args, out var values, out var argError))
                 return argError;
 
+            object result;
             try
             {
-                var result = method.Invoke(null, values);
-                if (result is Task task)
-                {
-                    var finished = await Task.WhenAny(task, Task.Delay(Math.Max(1000, timeout_ms)));
-                    if (finished != task)
-                        return Response.Error("RUN_TIMEOUT", new { timeout_ms }, "The entry's task is still running detached.");
-
-                    result = task.GetType().IsGenericType ? task.GetType().GetProperty("Result").GetValue(task) : null;
-                }
-
-                return Response.Success($"Ran {method.DeclaringType.Name}.{method.Name}.", new { result = result == null ? null : JToken.FromObject(result) });
+                result = method.Invoke(null, values);
             }
             catch (TargetInvocationException ex)
             {
-                return Response.Error("RUN_FAILED", new { message = (ex.InnerException ?? ex).Message });
+                return RunFailed(ex.InnerException ?? ex);
             }
+
+            if (result is Task task)
+            {
+                var finished = await Task.WhenAny(task, Task.Delay(Math.Max(1000, timeout_ms)));
+                if (finished != task)
+                    return Response.Error("RUN_TIMEOUT", new { timeout_ms }, "The entry's task is still running detached.");
+                // A faulted non-generic Task has no Result to throw from, so it would otherwise read as a success.
+                if (task.IsFaulted)
+                    return RunFailed(task.Exception.GetBaseException());
+                if (task.IsCanceled)
+                    return RunFailed(new TaskCanceledException(task));
+
+                result = task.GetType().IsGenericType ? task.GetType().GetProperty("Result")?.GetValue(task) : null;
+            }
+
+            JToken resultToken;
+            try
+            {
+                resultToken = result == null ? null
+                    : result is UnityEngine.Object unityObject
+                        ? JToken.FromObject(new { instanceId = ObjectIdCodec.GetSerializableId(unityObject), name = unityObject.name, type = unityObject.GetType().Name })
+                        : JToken.FromObject(result);
+            }
+            catch (Exception ex) when (ex is Newtonsoft.Json.JsonException || ex is InvalidOperationException || ex is NotSupportedException)
+            {
+                return Response.Error("RUN_FAILED", new { stage = "serialize", type = ex.GetType().Name, message = ex.Message },
+                    "The entry ran, but its return value could not be turned into JSON. Return a string or a plain object.");
+            }
+
+            var ran = $"Ran {method.DeclaringType.Name}.{method.Name}.";
+            var warnings = compilation.Warnings
+                .Select(w => new ScriptCompilationError { line = w.line - defineList.Count, column = w.column, text = w.text, code = w.code })
+                .Where(w => w.line >= 1)
+                .ToList();
+            return Response.Success(ran, warnings.Count == 0
+                ? (object)new { result = resultToken }
+                : new { result = resultToken, warnings = ScriptExecutionFunctions.Capped(warnings), warning_count = warnings.Count });
         }
+
+        private static object RunFailed(Exception ex) =>
+            Response.Error("RUN_FAILED", new { type = ex.GetType().Name, message = ex.Message, stack = ex.StackTrace });
 
         // ---- Batch ----
 
         [Description("Run several tools in one request. operations is a JSON array of {id?, command, params}; on_error 'abort' (default) stops at " +
                      "the first failure, 'continue' runs them all. dry_run validates the command names without running anything. Same engine " +
-                     "as batch_execute (one Undo step); references to earlier results ($id.field) are not substituted.")]
+                     "as batch_execute (one Undo step). With transactional=true and on_error 'abort', a failure (or the time budget) reverts the " +
+                     "batch's Undo-tracked scene changes (not file, asset, settings or Play Mode changes), and undo/redo operations are refused. " +
+                     "A string param whose whole value is \"$<id or index>.<path>\" is replaced by that earlier operation's result, read " +
+                     "under its data first (\"$0.instanceId\"), then the whole result (\"$0.data.instanceId\"); the path starts with a letter " +
+                     "or '_', so \"$0.99\" stays text, and \"$$<id>.<path>\" passes \"$<id>.<path>\" through literally. A reference to a later, " +
+                     "failed or unknown operation, or a path that is not there, fails that operation with UNRESOLVED_REFERENCE.")]
+        [ToolProvider("MCP")]
         public static async Task<object> Batch(
-            [ToolParam("JSON array of {id?, command, params}")] string operations,
-            [ToolParam("Group every operation into one Undo step. Default true.", Required = false)] bool transactional = true,
+            [ToolParam("JSON array of {id?, command, params}; id matches ^[A-Za-z_][A-Za-z0-9_-]*$ and is unique")] string operations,
+            [ToolParam("Group every operation into one Undo step and roll it back on failure. Default true.", Required = false)] bool transactional = true,
             [ToolParam("'abort' (default) or 'continue'", Required = false)] string on_error = "abort",
             [ToolParam("Validate only", Required = false)] bool dry_run = false)
         {
@@ -400,28 +458,35 @@ namespace KitWright.Editor.Tools.Builtins
                 if (string.IsNullOrWhiteSpace(command) || ToolRegistry.GetMethod(command) == null)
                     return Response.Error("UNKNOWN_COMMAND", new { command }, "Every operation needs a command naming a registered tool.");
 
-                commands.Add(new JObject { ["name"] = command, ["params"] = item["params"] ?? new JObject() });
+                var op = new JObject { ["name"] = command, ["params"] = item["params"] ?? new JObject() };
+                if (item["id"] != null && item["id"].Type != JTokenType.Null)
+                    op["id"] = item["id"];
+                commands.Add(op);
             }
 
             if (dry_run)
                 return Response.Success($"{commands.Count} operation(s) are valid; nothing ran.", new { count = commands.Count, dry_run = true });
 
-            return await BatchFunctions.BatchExecute(commands.ToString(), !string.Equals(on_error, "continue", StringComparison.OrdinalIgnoreCase),
-                transactional ? "batch" : null);
+            var abort = !string.Equals(on_error, "continue", StringComparison.OrdinalIgnoreCase);
+            return await BatchFunctions.Run(commands, abort, transactional ? "batch" : null,
+                rollback_on_error: transactional && abort, resolveReferences: true);
         }
 
         // ---- Tests, console, performance ----
 
         [Description("Cancel the running test execution.")]
+        [ToolProvider("Testing")]
         public static object CancelTests() => TestRunnerFunctions.CancelTestRun();
 
         [Description("Status of the running or last test execution.")]
         [ReadOnlyTool]
+        [ToolProvider("Testing")]
         public static Task<object> TestStatus() => TestRunnerFunctions.GetTestJob(null, 0);
 
         [Description("Read the captured console output. level is the lowest severity (log, warn, error); tail is how many entries. The CLI's " +
                      "follow cursor (since) is not kept: use get_console_logs with since_seconds to read only what is new.")]
         [ReadOnlyTool]
+        [ToolProvider("Console")]
         public static string Console(
             [ToolParam("Lowest severity: log (default), warn or error", Required = false)] string level = "log",
             [ToolParam("How many recent entries. Default 100.", Required = false)] int tail = 100)
@@ -432,6 +497,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Console counters without the entries: whether compilation failed and how many errors, warnings and logs the Editor console holds.")]
         [ReadOnlyTool]
+        [ToolProvider("Console")]
         public static object ConsoleStatus()
         {
             int errors = 0, warnings = 0, logs = 0;
@@ -457,11 +523,13 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Read render, memory and frame-timing stats.")]
         [ReadOnlyTool]
+        [ToolProvider("Profiling")]
         public static string GetPerformanceStats() => PerformanceFunctions.GetPerformanceSnapshot();
 
         // ---- Bakes ----
 
         [Description("Start an asynchronous lightmap bake of the open scene(s), like bake_lightmaps. dry_run only reports whether a bake could start.")]
+        [ToolProvider("Lighting")]
         public static object BakeLighting(
             [ToolParam("Accepted for parity; a bake overwrites existing lightmap data", Required = false)] bool confirm = false,
             [ToolParam("Do not bake; report whether one could start", Required = false)] bool dry_run = false)
@@ -582,7 +650,26 @@ namespace KitWright.Editor.Tools.Builtins
                     continue;
                 }
 
-                try { values[i] = supplied[i].ToObject(parameters[i].ParameterType); }
+                var parameterType = parameters[i].ParameterType;
+                if (typeof(UnityEngine.Object).IsAssignableFrom(parameterType) &&
+                    (supplied[i].Type == JTokenType.String || supplied[i].Type == JTokenType.Integer))
+                {
+                    var handle = supplied[i].ToString();
+                    var found = handle.StartsWith("Assets/", StringComparison.Ordinal) || handle.StartsWith("Packages/", StringComparison.Ordinal)
+                        ? AssetDatabase.LoadAssetAtPath(handle, parameterType)
+                        : ObjectIdCodec.ToObject(handle);
+                    if (found == null || !parameterType.IsInstanceOfType(found))
+                    {
+                        error = Response.Error("INVALID_ARGUMENT", new { parameter = parameters[i].Name, expected = parameterType.Name, value = handle },
+                            "Pass an object's instanceId as a tool returned it, or an Assets/ or Packages/ path.");
+                        return false;
+                    }
+
+                    values[i] = found;
+                    continue;
+                }
+
+                try { values[i] = supplied[i].ToObject(parameterType); }
                 catch (Exception ex)
                 {
                     error = Response.Error("INVALID_ARGUMENT", new { parameter = parameters[i].Name, expected = parameters[i].ParameterType.Name, message = ex.Message });

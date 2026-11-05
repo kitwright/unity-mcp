@@ -43,16 +43,19 @@ namespace KitWright.Editor.Tools.Scripting
         public string CompilerName { get; private set; }
         public Assembly Assembly { get; private set; }
         public List<ScriptCompilationError> Errors { get; private set; }
+        public List<ScriptCompilationError> Warnings { get; private set; } = new List<ScriptCompilationError>();
         public string Message { get; private set; }
         public List<ScriptCompilerAttempt> Attempts { get; private set; }
 
-        public static ScriptCompilationResult Success(string compilerName, Assembly assembly)
+        public static ScriptCompilationResult Success(string compilerName, Assembly assembly,
+            List<ScriptCompilationError> warnings = null)
         {
             return new ScriptCompilationResult
             {
                 Status = ScriptCompilationStatus.Success,
                 CompilerName = compilerName,
                 Assembly = assembly,
+                Warnings = warnings ?? new List<ScriptCompilationError>(),
                 Message = "Compiled successfully."
             };
         }
@@ -285,6 +288,7 @@ namespace KitWright.Editor.Tools.Scripting
 
                 var stdout = new StringBuilder();
                 var stderr = new StringBuilder();
+                string compilerOutput;
                 var psi = new ProcessStartInfo
                 {
                     FileName = compilerHostPath,
@@ -340,10 +344,10 @@ namespace KitWright.Editor.Tools.Scripting
                     stdoutClosed.Wait(OutputDrainMilliseconds);
                     stderrClosed.Wait(OutputDrainMilliseconds);
 
-                    var compilerOutput = (stdout.ToString() + stderr.ToString()).Trim();
+                    compilerOutput = (stdout.ToString() + stderr.ToString()).Trim();
                     if (process.ExitCode != 0)
                     {
-                        var errors = ParseDiagnostics(compilerOutput);
+                        var errors = ParseDiagnostics(compilerOutput, "error");
                         if (errors.Count == 0)
                         {
                             errors.Add(new ScriptCompilationError
@@ -366,7 +370,7 @@ namespace KitWright.Editor.Tools.Scripting
 
                 var assemblyBytes = File.ReadAllBytes(outputPath);
                 var assembly = Assembly.Load(assemblyBytes);
-                return ScriptCompilationResult.Success(Name, assembly);
+                return ScriptCompilationResult.Success(Name, assembly, ParseDiagnostics(compilerOutput, "warning"));
             }
             finally
             {
@@ -422,6 +426,8 @@ namespace KitWright.Editor.Tools.Scripting
             sb.AppendLine("-optimize-");
             sb.AppendLine("-debug-");
             sb.AppendLine("-unsafe-");
+            // Assembly-unification notes from ~450 mixed netstandard/Mono references; Unity's own rsp mutes them too.
+            sb.AppendLine("-nowarn:1701,1702");
             sb.AppendLine("-out:" + QuoteResponseFileValue(outputPath));
 
             foreach (var reference in GetReferencePaths(ScriptCompilerReferences.GetLoadedPaths(), monoLibRoot))
@@ -516,7 +522,7 @@ namespace KitWright.Editor.Tools.Scripting
                 references[fileName] = path;
         }
 
-        private static List<ScriptCompilationError> ParseDiagnostics(string output)
+        private static List<ScriptCompilationError> ParseDiagnostics(string output, string severity)
         {
             var errors = new List<ScriptCompilationError>();
             if (string.IsNullOrEmpty(output))
@@ -536,7 +542,7 @@ namespace KitWright.Editor.Tools.Scripting
                 if (!match.Success)
                     match = withoutLocation.Match(line);
                 if (!match.Success ||
-                    !string.Equals(match.Groups["severity"].Value, "error", StringComparison.OrdinalIgnoreCase))
+                    !string.Equals(match.Groups["severity"].Value, severity, StringComparison.OrdinalIgnoreCase))
                 {
                     continue;
                 }

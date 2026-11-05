@@ -22,6 +22,7 @@ SUMMARY_START = "<!-- tools-summary:start -->"
 SUMMARY_END = "<!-- tools-summary:end -->"
 
 PROVIDER_RE = re.compile(r'\[ToolProvider\("([^"]+)"\)\][\s\S]{0,200}?class\s+(\w+)')
+METHOD_PROVIDER_RE = re.compile(r'\[ToolProvider\("([^"]+)"\)\]')
 METHOD_RE = re.compile(r'^ {8}public static (?:async )?[\w\.\<\>\[\]\,\s\?]+? (\w+)\s*\(', re.M)
 STRING_RE = re.compile(r'"((?:[^"\\]|\\.)*)"')
 
@@ -76,7 +77,9 @@ def collect():
         module = class_to_module[declared[0]]
         for m in METHOD_RE.finditer(text):
             name = snake_case(m.group(1))
-            modules.setdefault(module, {})[name] = description_of(attribute_block(text, m.start()))
+            block = attribute_block(text, m.start())
+            moved = METHOD_PROVIDER_RE.search(block)
+            modules.setdefault(moved.group(1) if moved else module, {})[name] = description_of(block)
     return dict(sorted(modules.items(), key=lambda kv: (-len(kv[1]), kv[0])))
 
 
