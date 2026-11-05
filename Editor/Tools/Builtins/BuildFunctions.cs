@@ -97,7 +97,7 @@ namespace KitWright.Editor.Tools.Builtins
 
         private const int MaxReportedBuildErrors = 5;
 
-        private static string[] CollectBuildErrors(BuildReport report)
+        internal static string[] CollectBuildErrors(BuildReport report)
         {
             if (report?.steps == null)
                 return Array.Empty<string>();
@@ -168,6 +168,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (EditorUserBuildSettings.activeBuildTarget == buildTarget)
                 return Response.Success($"Active build target already {buildTarget}.");
 
+            BuildAsyncFunctions.RecordSwitchRequest(buildTarget);
             bool accepted = EditorUserBuildSettings.SwitchActiveBuildTarget(group, buildTarget);
             var active = EditorUserBuildSettings.activeBuildTarget;
             switch (ClassifySwitch(accepted, buildTarget, active))

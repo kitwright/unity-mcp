@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Services;
@@ -34,6 +35,9 @@ namespace KitWright.Editor.Tools.Builtins
         // interrupts the call; get_reload_recovery_status says how it ended.
         private static async Task<string> Outcome(Request request, string what)
         {
+            lastRequest = request;
+            lastRequestWhat = what;
+
             for (var i = 0; i < 80 && !request.IsCompleted; i++)
                 await Task.Delay(250);
 
@@ -79,6 +83,111 @@ namespace KitWright.Editor.Tools.Builtins
                     "That package runs this server; removing it ends the connection mid-call. Remove it from the Package Manager window if you mean to.");
 
             return await Outcome(Client.Remove(name), $"removal of '{name}'");
+        }
+
+        private static Request lastRequest;
+        private static string lastRequestWhat;
+        internal static void Track(Request request, string what)
+        {
+            lastRequest = request;
+            lastRequestWhat = what;
+        }
+
+        private static DateTime? resolveRequestedUtc;
+        private static DateTime? resolveCompletedUtc;
+
+        [InitializeOnLoadMethod]
+        private static void TrackResolveCompletion() =>
+            Events.registeredPackages += _ =>
+            {
+                if (resolveRequestedUtc != null)
+                    resolveCompletedUtc = DateTime.UtcNow;
+            };
+
+        [Description("Resolve and refresh every package in Packages/manifest.json (Client.Resolve): re-fetch and re-link. Returns at once; " +
+                     "package_status reports it. It may reload the domain, and it needs the registries in the manifest: an internal " +
+                     "registry that sits behind a VPN makes it hang for over a minute and then fail. Unity already resolves when " +
+                     "manifest.json changes, so call it only to pick up a change Unity did not notice.")]
+        public static object PackageResolve()
+        {
+            resolveRequestedUtc = DateTime.UtcNow;
+            resolveCompletedUtc = null;
+            lastRequest = null;
+            lastRequestWhat = "resolve";
+
+            Client.Resolve();
+            return Response.Success("Started resolving the packages. Poll package_status.", new { requestedUtc = resolveRequestedUtc.Value.ToString("o") });
+        }
+
+        [Description("Status of the last install_package or remove_package: idle, in_progress, completed or failed, with the installed " +
+                     "package or the error. Use it when one of them answered that it was still running after 20s. A domain reload " +
+                     "forgets the request, and installing or removing usually causes one: then it reads idle, and list_packages " +
+                     "shows whether the manifest changed.")]
+        [ReadOnlyTool]
+        public static object PackageStatus()
+        {
+            if (lastRequest == null && lastRequestWhat == "resolve" && resolveRequestedUtc != null)
+            {
+                var done = resolveCompletedUtc != null;
+                return Response.Success($"The last package request (resolve) is {(done ? "completed" : "in_progress")}.", new
+                {
+                    status = done ? "completed" : "in_progress",
+                    request = "resolve",
+                    requestedUtc = resolveRequestedUtc.Value.ToString("o"),
+                    completedUtc = resolveCompletedUtc?.ToString("o")
+                });
+            }
+
+            if (lastRequest == null)
+                return Response.Success("No package request is tracked.", new { status = "idle" });
+
+            var status = !lastRequest.IsCompleted ? "in_progress"
+                : lastRequest.Status == StatusCode.Failure ? "failed"
+                : "completed";
+
+            return Response.Success($"The last package request ({lastRequestWhat}) is {status}.", new
+            {
+                status,
+                request = lastRequestWhat,
+                package = (lastRequest as AddRequest)?.Result?.packageId,
+                error = lastRequest.Error?.message
+            });
+        }
+
+        [Description("Search the package registry. A package name (e.g. 'com.unity.timeline') returns that package; an empty " +
+                     "query lists every available package, at most 200. offline searches the local cache only. Waits up to 60s " +
+                     "for the registry, which may need a VPN or network access.")]
+        [ReadOnlyTool]
+        public static async Task<object> PackageSearch(
+            [ToolParam("Package name to search for. Omit to list all available packages.", Required = false)] string query = "",
+            [ToolParam("Search the local cache only. Default false.", Required = false)] bool offline = false)
+        {
+            var name = (query ?? string.Empty).Trim();
+            var request = name.Length == 0 ? Client.SearchAll(offline) : Client.Search(name, offline);
+
+            for (var i = 0; i < 240 && !request.IsCompleted; i++)
+                await Task.Delay(250);
+
+            if (!request.IsCompleted)
+                return Response.Error("PACKAGE_REQUEST_TIMEOUT", new { query = name },
+                    "The registry did not answer within 60s. Try offline=true, or check the network connection.");
+
+            if (request.Status == StatusCode.Failure)
+                return Response.Error("PACKAGE_REQUEST_FAILED",
+                    new { query = name, message = request.Error?.message, error_code = request.Error?.errorCode.ToString() });
+
+            const int limit = 200;
+            var packages = request.Result;
+            var listed = packages.Take(limit).Select(p => new
+            {
+                name = p.name,
+                displayName = p.displayName,
+                version = p.version,
+                description = p.description != null && p.description.Length > 200 ? p.description.Substring(0, 200) : p.description
+            }).ToArray();
+
+            return Response.Success($"{packages.Length} package(s) found.",
+                new { total = packages.Length, truncated = packages.Length > limit, packages = listed });
         }
 
         [Description("List the packages the project depends on directly: the whole of Packages/manifest.json. " +

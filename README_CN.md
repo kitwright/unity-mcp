@@ -375,39 +375,42 @@ Unity 在 2026 年 7 月发布了 Unity CLI 与实验性的 `com.unity.pipeline`
 ## 内置工具
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity 当前提供 **273 个工具函数，覆盖 57 个模块**（`core` profile 暴露其中 53 个）。
+KitWright MCP for Unity 当前提供 **388 个工具函数，覆盖 63 个模块**（`core` profile 暴露其中 53 个）。
 
 | 模块 | 工具数 | 模块 | 工具数 |
 |------|--------|------|--------|
-| **EditorState** | 18 | **Texture** | 4 |
-| **GameObject** | 14 | **Build** | 3 |
-| **Profiler** | 13 | **ComponentBatch** | 3 |
-| **Scene** | 13 | **ComponentProperty** | 3 |
-| **Animation** | 10 | **Docs** | 3 |
-| **Prefab** | 10 | **Lighting** | 3 |
-| **Asset** | 8 | **Package** | 3 |
-| **Terrain** | 8 | **Physics** | 3 |
-| **AssemblyDefinition** | 7 | **ScriptableObject** | 3 |
-| **InputSimulation** | 7 | **Sprite** | 3 |
-| **Prefs** | 7 | **Testing** | 3 |
-| **SpriteAtlas** | 7 | **Undo** | 3 |
-| **UI** | 7 | **AssetImport** | 2 |
-| **Visual** | 7 | **EditorDialog** | 2 |
-| **Addressable** | 6 | **EditorWindowInteraction** | 2 |
-| **Audio** | 6 | **Material** | 2 |
-| **Code** | 6 | **Performance** | 2 |
-| **InputActions** | 6 | **ProjectSettings** | 2 |
-| **NavMesh** | 6 | **References** | 2 |
-| **Shader** | 6 | **Batch** | 1 |
-| **File** | 5 | **Hierarchy** | 1 |
-| **MemorySnapshot** | 5 | **Interop** | 1 |
-| **SceneView** | 5 | **MenuItem** | 1 |
-| **Screenshot** | 5 | **Mesh** | 1 |
-| **Volume** | 5 | **Particle** | 1 |
-| **Camera** | 4 | **Reflection** | 1 |
-| **Compilation** | 4 | **Timeline** | 1 |
-| **LodConstraint** | 4 | **ToolExposure** | 1 |
-| **Script** | 4 |  |  |
+| **UnityCli** | 47 | **Volume** | 5 |
+| **UnitySettings** | 21 | **Camera** | 4 |
+| **EditorState** | 18 | **Compilation** | 4 |
+| **GameObject** | 15 | **LodConstraint** | 4 |
+| **Animation** | 14 | **Testing** | 4 |
+| **Profiler** | 13 | **Texture** | 4 |
+| **Scene** | 13 | **CodeReload** | 3 |
+| **Lighting** | 10 | **ComponentBatch** | 3 |
+| **NavMesh** | 10 | **ComponentProperty** | 3 |
+| **Prefab** | 10 | **Docs** | 3 |
+| **Asset** | 9 | **Physics** | 3 |
+| **Build** | 8 | **ScriptableObject** | 3 |
+| **Editor** | 8 | **Sprite** | 3 |
+| **Terrain** | 8 | **Undo** | 3 |
+| **AssemblyDefinition** | 7 | **Wait** | 3 |
+| **InputSimulation** | 7 | **AssetImport** | 2 |
+| **Prefs** | 7 | **Audit** | 2 |
+| **SpriteAtlas** | 7 | **EditorDialog** | 2 |
+| **UI** | 7 | **EditorWindowInteraction** | 2 |
+| **Visual** | 7 | **Material** | 2 |
+| **Addressable** | 6 | **Performance** | 2 |
+| **Audio** | 6 | **ProjectSettings** | 2 |
+| **Code** | 6 | **References** | 2 |
+| **InputActions** | 6 | **Batch** | 1 |
+| **Package** | 6 | **Hierarchy** | 1 |
+| **Shader** | 6 | **Interop** | 1 |
+| **File** | 5 | **MenuItem** | 1 |
+| **MemorySnapshot** | 5 | **Mesh** | 1 |
+| **SceneView** | 5 | **Particle** | 1 |
+| **Screenshot** | 5 | **Reflection** | 1 |
+| **Script** | 5 | **ToolExposure** | 1 |
+| **Timeline** | 5 |  |  |
 
 > 📖 每个工具及其说明见 [TOOLS.md](TOOLS.md)。
 <!-- tools-summary:end -->

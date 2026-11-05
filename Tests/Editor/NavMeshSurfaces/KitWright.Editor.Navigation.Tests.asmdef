@@ -1,0 +1,37 @@
+{
+    "name": "KitWright.Editor.Navigation.Tests",
+    "rootNamespace": "KitWright.Editor.Tests",
+    "references": [
+        "KitWright.Editor.Navigation",
+        "Unity.AI.Navigation",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "KITWRIGHT_AI_NAVIGATION"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ai.navigation",
+            "expression": "",
+            "define": "KITWRIGHT_AI_NAVIGATION"
+        },
+        {
+            "name": "com.unity.modules.ai",
+            "expression": "",
+            "define": "KITWRIGHT_AI"
+        }
+    ],
+    "noEngineReferences": false
+}

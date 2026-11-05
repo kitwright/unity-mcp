@@ -296,6 +296,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (string.IsNullOrWhiteSpace(path))
                 return false;
 
+            path = AuthoringRoot.Resolve(path);
             var segments = path.Replace('\\', '/').Split('/').Where(s => s.Length > 0).ToArray();
             if (segments.Length < 2)
                 return false;
@@ -313,7 +314,11 @@ namespace KitWright.Editor.Tools.Builtins
                 return false;
 
             normalized = string.Join("/", segments);
-            return true;
+            if (AuthoringRoot.Contains(normalized))
+                return true;
+
+            normalized = null;
+            return false;
         }
 
         internal static bool TryResolveUnderAssetsOrPackages(string path, out string normalized, out string absolutePath)

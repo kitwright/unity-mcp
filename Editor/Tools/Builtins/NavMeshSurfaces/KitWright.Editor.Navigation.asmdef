@@ -1,0 +1,33 @@
+{
+    "name": "KitWright.Editor.Navigation",
+    "rootNamespace": "KitWright.Editor",
+    "references": [
+        "KitWright.Editor",
+        "Unity.AI.Navigation",
+        "Unity.AI.Navigation.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "KITWRIGHT_AI_NAVIGATION"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ai.navigation",
+            "expression": "",
+            "define": "KITWRIGHT_AI_NAVIGATION"
+        },
+        {
+            "name": "com.unity.modules.ai",
+            "expression": "",
+            "define": "KITWRIGHT_AI"
+        }
+    ],
+    "noEngineReferences": false
+}

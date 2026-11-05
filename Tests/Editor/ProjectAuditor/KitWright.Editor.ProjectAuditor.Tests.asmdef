@@ -1,0 +1,31 @@
+{
+    "name": "KitWright.Editor.ProjectAuditor.Tests",
+    "rootNamespace": "KitWright.Editor.Tests",
+    "references": [
+        "KitWright.Editor.ProjectAuditor",
+        "UnityEngine.TestRunner",
+        "UnityEditor.TestRunner"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": true,
+    "precompiledReferences": [
+        "nunit.framework.dll",
+        "Newtonsoft.Json.dll"
+    ],
+    "autoReferenced": false,
+    "defineConstraints": [
+        "KITWRIGHT_PROJECT_AUDITOR"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.project-auditor",
+            "expression": "",
+            "define": "KITWRIGHT_PROJECT_AUDITOR"
+        }
+    ],
+    "noEngineReferences": false
+}

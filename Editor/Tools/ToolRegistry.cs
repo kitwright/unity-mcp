@@ -239,7 +239,10 @@ namespace KitWright.Editor.Tools
         {
             "KitWright.Editor",
             "KitWright.Editor.Bootstrap",
-            "KitWright.Editor.InputSystem"
+            "KitWright.Editor.InputSystem",
+            "KitWright.Editor.Timeline",
+            "KitWright.Editor.Navigation",
+            "KitWright.Editor.ProjectAuditor"
         };
 
         internal static bool IsPackageAssembly(Assembly assembly)

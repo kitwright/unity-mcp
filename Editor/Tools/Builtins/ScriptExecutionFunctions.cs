@@ -274,7 +274,7 @@ namespace KitWright.Editor.Tools.Builtins
         private static HistoryBox NewHistoryBox() =>
             new HistoryBox { lastId = (int)(DateTimeOffset.UtcNow.ToUnixTimeSeconds() - HistoryIdEpochSeconds) };
 
-        private static HistoryBox LoadHistory()
+        internal static HistoryBox LoadHistory()
         {
             var raw = SessionState.GetString(HistorySessionKey, null);
             if (string.IsNullOrEmpty(raw))

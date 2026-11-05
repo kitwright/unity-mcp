@@ -1,0 +1,37 @@
+{
+    "name": "KitWright.Editor.Timeline",
+    "rootNamespace": "KitWright.Editor",
+    "references": [
+        "KitWright.Editor",
+        "Unity.Timeline"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "KITWRIGHT_TIMELINE"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.timeline",
+            "expression": "",
+            "define": "KITWRIGHT_TIMELINE"
+        },
+        {
+            "name": "com.unity.modules.animation",
+            "expression": "",
+            "define": "KITWRIGHT_ANIMATION"
+        },
+        {
+            "name": "com.unity.modules.audio",
+            "expression": "",
+            "define": "KITWRIGHT_AUDIO"
+        }
+    ],
+    "noEngineReferences": false
+}

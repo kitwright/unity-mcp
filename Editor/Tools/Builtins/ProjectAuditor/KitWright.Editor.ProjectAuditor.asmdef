@@ -1,0 +1,27 @@
+{
+    "name": "KitWright.Editor.ProjectAuditor",
+    "rootNamespace": "KitWright.Editor",
+    "references": [
+        "KitWright.Editor",
+        "Unity.ProjectAuditor.Editor"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "KITWRIGHT_PROJECT_AUDITOR"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.project-auditor",
+            "expression": "",
+            "define": "KITWRIGHT_PROJECT_AUDITOR"
+        }
+    ],
+    "noEngineReferences": false
+}
