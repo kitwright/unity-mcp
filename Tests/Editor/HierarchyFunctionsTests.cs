@@ -737,6 +737,33 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void FindGameObjects_OnlyInactiveMatches_SaysHowManyItHid()
+        {
+            var wasDirty = SceneManager.GetActiveScene().isDirty;
+            // A child: an inactive scene root is still found without include_inactive.
+            var parent = new GameObject("__KitWrightInactiveOnlyParent_" + Guid.NewGuid().ToString("N"));
+            var hidden = new GameObject("__KitWrightInactiveOnly_" + Guid.NewGuid().ToString("N"));
+            hidden.transform.SetParent(parent.transform);
+            try
+            {
+                hidden.SetActive(false);
+                var result = JObject.FromObject(GameObjectFunctions.FindGameObjects(hidden.name));
+
+                StringAssert.Contains("Found 0 object(s).", result.Value<string>("message"));
+                StringAssert.Contains("1 inactive match(es) hidden", result.Value<string>("message"));
+                Assert.IsNull(JObject.FromObject(GameObjectFunctions.FindGameObjects(hidden.name, include_inactive: "true"))["data"][0]["components"],
+                    "a listed match carries no null components key");
+            }
+            finally
+            {
+                var scene = parent.scene;
+                UnityEngine.Object.DestroyImmediate(parent);
+                if (!wasDirty && scene.IsValid())
+                    ClearSceneDirtiness(scene);
+            }
+        }
+
+        [Test]
         public void FindGameObjects_MaxCap_ReportsThePreCapTotalAndTheShownCount()
         {
             var name = "__KitWrightCapped_" + Guid.NewGuid().ToString("N");

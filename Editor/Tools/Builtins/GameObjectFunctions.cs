@@ -441,6 +441,14 @@ namespace KitWright.Editor.Tools.Builtins
             var nextCursor = Paging.Next(cursor, page.Count, total);
 
             var message = $"Found {total} object(s).{Paging.Suffix(cursor, page.Count, total)}";
+            if (total == 0 && !inactive)
+            {
+                // "Found 0" read as "no such object" while 39 inactive ones matched.
+                var hidden = ObjectsHelper.FindObjects(query, find_method, findAll: true,
+                    searchInactive: true, searchInChildren: root != null, root: root).Count;
+                if (hidden > 0)
+                    message += $" {hidden} inactive match(es) hidden; include_inactive=true shows them.";
+            }
             // data stays a bare array, so the cursor rides in hint rather than reshaping it.
             return Response.Success(message, GameObjectSerializer.DescribeMany(page),
                 nextCursor > 0 ? $"next_cursor={nextCursor}" : null);

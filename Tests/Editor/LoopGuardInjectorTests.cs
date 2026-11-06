@@ -116,14 +116,14 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(LoopBudgetGuard.Check(false));
         }
 
-        private static void Begin(TimeSpan budget) => Invoke("Begin", budget);
+        private static void Begin(TimeSpan budget) => Invoke("Begin", budget, System.Threading.CancellationToken.None);
 
-        private static void End() => Invoke("End", null);
+        private static void End() => Invoke("End");
 
-        private static void Invoke(string name, object arg)
+        private static void Invoke(string name, params object[] args)
         {
             var method = typeof(LoopBudgetGuard).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Static);
-            method.Invoke(null, arg == null ? new object[0] : new[] { arg });
+            method.Invoke(null, args);
         }
 
         private static int CountOccurrences(string haystack, string needle)

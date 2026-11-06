@@ -46,6 +46,7 @@ namespace KitWright.Editor.Tools.Scripting
         public List<ScriptCompilationError> Warnings { get; private set; } = new List<ScriptCompilationError>();
         public string Message { get; private set; }
         public List<ScriptCompilerAttempt> Attempts { get; private set; }
+        public bool IsHandOff { get; private set; }
 
         public static ScriptCompilationResult Success(string compilerName, Assembly assembly,
             List<ScriptCompilationError> warnings = null)
@@ -84,6 +85,14 @@ namespace KitWright.Editor.Tools.Scripting
             };
         }
 
+        // Not an attempt worth reporting: the next compiler does the same job and its answer is the one that counts.
+        public static ScriptCompilationResult HandOff(string compilerName, string message)
+        {
+            var result = Unavailable(compilerName, message);
+            result.IsHandOff = true;
+            return result;
+        }
+
         public ScriptCompilationResult WithAttempts(List<ScriptCompilerAttempt> attempts)
         {
             Attempts = attempts ?? new List<ScriptCompilerAttempt>();
@@ -103,6 +112,7 @@ namespace KitWright.Editor.Tools.Scripting
         {
             return Compile(code, new IScriptCompiler[]
             {
+                new InProcessRoslynScriptCompiler(),
                 new RoslynCscScriptCompiler(),
                 new CodeDomScriptCompiler()
             });
@@ -131,12 +141,15 @@ namespace KitWright.Editor.Tools.Scripting
                         Builtins.ScriptExecutionFunctions.UnwrapTargetInvocationException(ex).Message);
                 }
 
-                attempts.Add(new ScriptCompilerAttempt
+                if (!result.IsHandOff)
                 {
-                    compiler = compiler.Name,
-                    status = result.Status.ToString(),
-                    message = result.Message
-                });
+                    attempts.Add(new ScriptCompilerAttempt
+                    {
+                        compiler = compiler.Name,
+                        status = result.Status.ToString(),
+                        message = result.Message
+                    });
+                }
 
                 if (result.Status == ScriptCompilationStatus.Success)
                 {

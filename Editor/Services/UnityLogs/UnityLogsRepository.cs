@@ -6,17 +6,40 @@ using System.Globalization;
 using System.Text;
 using System.Text.RegularExpressions;
 using KitWright.Editor.Tools.Helpers;
+using Newtonsoft.Json;
+using UnityEditor;
 using UnityEngine;
 
 namespace KitWright.Editor.Services.UnityLogs
 {
     internal class UnityLogsRepository : IDisposable
     {
-        private const int MaxLogs = 200;
+        // Play Mode spam pushed an error raised before it out of a 200-entry cache, and the console's
+        // Clear on Play had already dropped it too, so a read for errors found none.
+        internal const int MaxLogs = 1000;
+        private const int MaxStoredMessageChars = 2048;
+        private const int PersistedStackTraces = 200;
+        private const int MaxStoredStackChars = 4096;
+        private const string StateKey = "KitWright.UnityLogs.State";
+
+        // Seqs start at the session's start in unix seconds x 1e6, so they keep rising across Editor
+        // restarts and a cursor from an older session is recognisable without a session parameter.
+        private const long SeqPerSecond = 1000000;
 
         private readonly List<LogEntry> _logs = new List<LogEntry>();
         private readonly object _lock = new object();
         private bool _isListening;
+        private long _sessionBase;
+        private long _nextSeq;
+        private int _errorCount;
+        private int _warningCount;
+        private int _logCount;
+
+        public UnityLogsRepository()
+        {
+            _sessionBase = DateTimeOffset.UtcNow.ToUnixTimeSeconds() * SeqPerSecond;
+            _nextSeq = _sessionBase + 1;
+        }
 
         public void StartListening()
         {
@@ -24,6 +47,11 @@ namespace KitWright.Editor.Services.UnityLogs
                 return;
 
             _isListening = true;
+            // A blob that no longer parses only costs the old entries; throwing here would stop the listener.
+            try { Restore(SessionState.GetString(StateKey, null)); }
+            catch (JsonException) { }
+            SessionState.EraseString(StateKey);
+            AssemblyReloadEvents.beforeAssemblyReload += Persist;
             // Threaded, so a log raised while a modal owns the main thread still reaches subscribers.
             Application.logMessageReceivedThreaded += OnLogReceived;
         }
@@ -34,31 +62,115 @@ namespace KitWright.Editor.Services.UnityLogs
                 return;
 
             _isListening = false;
+            AssemblyReloadEvents.beforeAssemblyReload -= Persist;
             Application.logMessageReceivedThreaded -= OnLogReceived;
+        }
+
+        private void Persist() => SessionState.SetString(StateKey, Snapshot());
+
+        internal string Snapshot()
+        {
+            lock (_lock)
+            {
+                return JsonConvert.SerializeObject(new State
+                {
+                    SessionBase = _sessionBase,
+                    NextSeq = _nextSeq,
+                    Errors = _errorCount,
+                    Warnings = _warningCount,
+                    Logs = _logCount,
+                    Entries = PersistedEntries()
+                });
+            }
+        }
+
+        // A spammed console would hand SessionState several MB on the reload's main thread, mostly stack
+        // traces; only the newest keep theirs, which are the ones a reader still asks for.
+        private List<LogEntry> PersistedEntries()
+        {
+            var keepStacksFrom = _logs.Count - PersistedStackTraces;
+            var entries = new List<LogEntry>(_logs.Count);
+            for (var i = 0; i < _logs.Count; i++)
+            {
+                var entry = _logs[i];
+                entries.Add(i >= keepStacksFrom || string.IsNullOrEmpty(entry.StackTrace)
+                    ? entry
+                    : new LogEntry { Seq = entry.Seq, Message = entry.Message, Type = entry.Type, Timestamp = entry.Timestamp });
+            }
+
+            return entries;
+        }
+
+        internal void Restore(string snapshot)
+        {
+            lock (_lock)
+            {
+                var state = string.IsNullOrEmpty(snapshot) ? null : JsonConvert.DeserializeObject<State>(snapshot);
+                if (state == null)
+                    return;
+
+                _sessionBase = state.SessionBase;
+                _errorCount = state.Errors;
+                _warningCount = state.Warnings;
+                _logCount = state.Logs;
+                _logs.Clear();
+                if (state.Entries != null)
+                    _logs.AddRange(state.Entries);
+                var lastSeq = _logs.Count > 0 ? _logs[_logs.Count - 1].Seq : 0;
+                _nextSeq = Math.Max(state.NextSeq, lastSeq + 1);
+            }
+        }
+
+        // Session totals, counted as entries arrive, so an error that fell out of the cache still shows.
+        internal string CountsSuffix()
+        {
+            lock (_lock)
+                return $", this session: {_errorCount} error(s), {_warningCount} warning(s), {_logCount} log(s)";
         }
 
         public string GetRecentLogs(string logType = "all", int count = 30, int sinceSeconds = 0,
             string filterText = null, bool groupDuplicates = false, bool includeStackTrace = false,
-            bool includeTimestamps = false, int cursor = 0)
+            bool includeTimestamps = false, int cursor = 0, long sinceSeq = 0)
         {
             count = Mathf.Clamp(count, 1, 200);
             var filter = (logType ?? "all").ToLowerInvariant();
             var cutoff = sinceSeconds > 0 ? DateTime.Now.AddSeconds(-sinceSeconds) : (DateTime?)null;
 
             List<LogEntry> snapshot;
+            long latestSeq;
+            long sessionBase;
             lock (_lock)
             {
                 snapshot = new List<LogEntry>(_logs);
+                latestSeq = _nextSeq - 1;
+                sessionBase = _sessionBase;
+            }
+
+            var seqSuffix = string.Empty;
+            if (sinceSeq > 0)
+            {
+                // A cursor from another session (older base, or ahead of everything here) reads from the start.
+                if (sinceSeq < sessionBase || sinceSeq > latestSeq)
+                {
+                    seqSuffix = ", reset: true (since_seq is from another Editor session)";
+                    sinceSeq = 0;
+                }
+                else
+                {
+                    var oldest = snapshot.Count > 0 ? snapshot[0].Seq : latestSeq + 1;
+                    var dropped = Math.Max(0, oldest - sinceSeq - 1);
+                    if (dropped > 0)
+                        seqSuffix = $", dropped: {dropped} entries after since_seq fell out of the cache";
+                    snapshot.RemoveAll(entry => entry.Seq <= sinceSeq);
+                }
             }
 
             if (snapshot.Count == 0)
-                return null;
+                return sinceSeq > 0 ? NothingNew(filter, latestSeq, seqSuffix) : null;
 
             // Every match, not just the first page: the cache is capped at MaxLogs, so collecting
             // the lot is what makes a total (and therefore a cursor) reportable at all.
-            var lines = new List<string>();
-            var stamps = includeTimestamps ? new List<string>() : null;
-
+            var matches = new List<(LogEntry entry, string body)>();
             for (int i = snapshot.Count - 1; i >= 0; i--)
             {
                 var entry = snapshot[i];
@@ -74,9 +186,7 @@ namespace KitWright.Editor.Services.UnityLogs
                 if (!MatchesTextFilter(body, filterText))
                     continue;
 
-                var stackSuffix = includeStackTrace ? FormatStackTrace(entry.StackTrace) : string.Empty;
-                lines.Add($"[{ToLabel(entry.Type)}] {TruncateLine(body)}{stackSuffix}");
-                stamps?.Add(entry.Timestamp.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " ");
+                matches.Add((entry, body));
             }
 
             // null, not a sentence: a non-empty string reads as an answer, and source "auto" returns
@@ -84,16 +194,42 @@ namespace KitWright.Editor.Services.UnityLogs
             // a filter matching nothing in the cache ended the call instead of falling through to
             // the console - which still held the matches. Both callers phrase the empty case
             // themselves.
-            if (lines.Count == 0)
-                return null;
+            if (matches.Count == 0)
+                return sinceSeq > 0 ? NothingNew(filter, latestSeq, seqSuffix) : null;
 
-            var total = lines.Count;
-            var pagedLines = Paging.Page(lines, cursor, count);
-            var pagedStamps = stamps == null ? null : Paging.Page(stamps, cursor, count);
-            // An answer, not null: the cache did hold entries, so falling through to the console
-            // reader here would silently hand back its page one under a cursor that asked for more.
-            if (pagedLines.Count == 0)
-                return $"Console logs (filter: {filter}, source: cache):{Paging.Suffix(cursor, 0, total)}";
+            var total = matches.Count;
+            var readSeq = latestSeq;
+            List<(LogEntry entry, string body)> page;
+            string pageSuffix;
+            if (sinceSeq > 0 && total > count)
+            {
+                // Newest first would show the latest page and skip the older unread ones under a
+                // latest_seq past them, so a follow read takes the oldest unread and moves its seq there.
+                var start = total - count;
+                page = matches.GetRange(start, count);
+                readSeq = page[0].entry.Seq;
+                pageSuffix = $" {start} newer entries left; call again with since_seq={readSeq}.";
+            }
+            else
+            {
+                page = Paging.Page(matches, cursor, count);
+                // An answer, not null: the cache did hold entries, so falling through to the console
+                // reader here would silently hand back its page one under a cursor that asked for more.
+                if (page.Count == 0)
+                    return $"Console logs (filter: {filter}, source: cache):{Paging.Suffix(cursor, 0, total)}";
+                pageSuffix = Paging.Suffix(cursor, page.Count, total);
+            }
+
+            var pagedLines = new List<string>(page.Count);
+            var pagedStamps = includeTimestamps ? new List<string>(page.Count) : null;
+            foreach (var (entry, body) in page)
+            {
+                var stackSuffix = includeStackTrace ? FormatStackTrace(entry.StackTrace) : string.Empty;
+                pagedLines.Add($"[{ToLabel(entry.Type)}] {TruncateLine(body)}{stackSuffix}");
+                pagedStamps?.Add(entry.Timestamp.ToString("HH:mm:ss", CultureInfo.InvariantCulture) + " ");
+            }
+
+            seqSuffix = $", latest_seq: {readSeq}" + seqSuffix + CountsSuffix();
 
             var sb = new StringBuilder();
             var uniqueCount = AppendLines(sb, pagedLines, groupDuplicates, pagedStamps);
@@ -103,10 +239,13 @@ namespace KitWright.Editor.Services.UnityLogs
             var groupSuffix = groupDuplicates && uniqueCount < pagedLines.Count
                 ? $", {uniqueCount} unique"
                 : string.Empty;
-            var pageSuffix = Paging.Suffix(cursor, pagedLines.Count, total);
-            return $"Console logs ({pagedLines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}):" +
+            return $"Console logs ({pagedLines.Count} entries{groupSuffix}, filter: {filter}, source: cache{timeSuffix}{textSuffix}{seqSuffix}):" +
                    $"{pageSuffix}\n{sb}";
         }
+
+        // Never null: with a since_seq the caller asked the cache only, and the console holds no seqs.
+        private string NothingNew(string filter, long latestSeq, string seqSuffix) =>
+            $"No new {filter} entries (latest_seq: {latestSeq}{seqSuffix}{CountsSuffix()})";
 
         // Whitelisted tag names only, so a log containing List<int> or XML survives.
         private static readonly Regex RichTextTag = new Regex(
@@ -260,14 +399,19 @@ namespace KitWright.Editor.Services.UnityLogs
             {
                 _logs.Add(new LogEntry
                 {
-                    Message = message,
-                    StackTrace = stackTrace,
+                    Seq = _nextSeq++,
+                    Message = Cap(message, MaxStoredMessageChars),
+                    StackTrace = Cap(stackTrace, MaxStoredStackChars),
                     Type = type,
                     Timestamp = DateTime.Now
                 });
 
-                while (_logs.Count > MaxLogs)
-                    _logs.RemoveAt(0);
+                if (type == LogType.Warning) _warningCount++;
+                else if (type == LogType.Log) _logCount++;
+                else _errorCount++;
+
+                if (_logs.Count > MaxLogs)
+                    _logs.RemoveRange(0, _logs.Count - MaxLogs);
             }
 
             // Every Unity log lands here, so don't even allocate the async state machine when
@@ -311,8 +455,22 @@ namespace KitWright.Editor.Services.UnityLogs
             StopListening();
         }
 
-        private class LogEntry
+        private static string Cap(string text, int max) =>
+            text == null || text.Length <= max ? text : text.Substring(0, max);
+
+        private sealed class State
         {
+            public long SessionBase { get; set; }
+            public long NextSeq { get; set; }
+            public int Errors { get; set; }
+            public int Warnings { get; set; }
+            public int Logs { get; set; }
+            public List<LogEntry> Entries { get; set; }
+        }
+
+        private sealed class LogEntry
+        {
+            public long Seq { get; set; }
             public string Message { get; set; }
             public string StackTrace { get; set; }
             public LogType Type { get; set; }

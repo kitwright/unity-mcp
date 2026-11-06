@@ -278,6 +278,30 @@ namespace KitWright.Editor.Tests
             }
         }
 
+        [Test]
+        public void LeanEnumValue_IsItsName_AndWritesBack()
+        {
+            var asset = ScriptableObject.CreateInstance<RoundTripFixture>();
+            try
+            {
+                asset.Level = Difficulty.Hard;
+                var snapshot = ComponentSerializer.ReadProperties(asset, out _).First(p => p.Name == "Level");
+                var lean = JObject.FromObject(ComponentPropertyFunctions.Lean(snapshot));
+                Assert.AreEqual("Hard", lean["Value"].ToString());
+                Assert.IsNull(lean["Type"], "an enum's name says what it is");
+
+                asset.Level = Difficulty.Easy;
+                var results = ComponentSerializer.WriteProperties(asset, new JObject { ["Level"] = lean["Value"] });
+
+                Assert.IsTrue(results[0].Success, results[0].Error);
+                Assert.AreEqual(Difficulty.Hard, asset.Level);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(asset);
+            }
+        }
+
         // Settings singletons keep writable fields off the inspector, and NextVisible skips exactly
         // those — so the dump used to omit properties set_project_settings can write.
         [Test]

@@ -52,11 +52,36 @@ namespace KitWright.Editor.Tools.Helpers
             };
         }
 
+        // Describe without the components and children keys, which a list always sent as null: 39 matches
+        // paid for 78 nulls.
         public static List<object> DescribeMany(IEnumerable<GameObject> gos)
         {
             var list = new List<object>();
             foreach (var go in gos)
-                list.Add(Describe(go, includeComponents: false));
+            {
+                if (go == null)
+                    continue;
+                list.Add(new
+                {
+                    instanceId = ObjectIdCodec.GetSerializableId(go),
+                    name = go.name,
+                    path = ObjectsHelper.GetGameObjectPath(go),
+                    activeSelf = go.activeSelf,
+                    activeInHierarchy = go.activeInHierarchy,
+                    tag = go.tag,
+                    layer = LayerMask.LayerToName(go.layer),
+                    isStatic = go.isStatic,
+                    scene = go.scene.IsValid() ? go.scene.name : null,
+                    transform = new
+                    {
+                        position = ToObj(go.transform.position),
+                        localPosition = ToObj(go.transform.localPosition),
+                        eulerAngles = ToObj(go.transform.eulerAngles),
+                        localScale = ToObj(go.transform.localScale)
+                    },
+                    childCount = go.transform.childCount
+                });
+            }
             return list;
         }
 

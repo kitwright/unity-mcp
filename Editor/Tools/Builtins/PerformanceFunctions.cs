@@ -38,6 +38,9 @@ namespace KitWright.Editor.Tools.Builtins
 
                 AppendFrameTiming(sb);
                 AppendMemoryStats(sb);
+                // The last frame a Game view rendered, UI and particles included; the scene sum below counts meshes only.
+                sb.AppendLine($"Rendering (last frame): {UnityStats.batches} batches, {UnityStats.drawCalls} draw calls, " +
+                              $"{UnityStats.setPassCalls} SetPass, {UnityStats.triangles:N0} tris, {UnityStats.vertices:N0} verts");
 
                 if (include_scene_counts)
                 {
@@ -45,7 +48,7 @@ namespace KitWright.Editor.Tools.Builtins
                     sb.AppendLine($"- GameObjects: {counters.GameObjectCount} total, {counters.ActiveGameObjectCount} active");
                     sb.AppendLine($"- Components: {counters.ComponentCount}");
                     sb.AppendLine($"- Renderers: {counters.RendererCount} ({counters.SkinnedMeshRendererCount} skinned)");
-                    sb.AppendLine($"- Triangles: {counters.TriangleCount:N0}");
+                    sb.AppendLine($"- Scene mesh triangles: {counters.TriangleCount:N0}");
                     sb.AppendLine($"- Material Slots: {counters.MaterialSlotCount}");
                     sb.AppendLine($"- Canvases: {counters.CanvasCount}, UI Graphics: {counters.GraphicCount}");
                     sb.AppendLine($"- Colliders: {counters.ColliderCount}, Rigidbodies: {counters.RigidbodyCount}");

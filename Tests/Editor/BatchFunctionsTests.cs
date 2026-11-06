@@ -94,6 +94,52 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(envelope["data"]["aborted"].Value<bool>());
         }
 
+        public static System.Threading.CancellationTokenSource CancelFromSnippet;
+
+        // The second command cancels the call the way a client's notifications/cancelled does, so the
+        // third must not run and the rollback must take back the first.
+        [UnityTest]
+        public IEnumerator BatchExecute_CancelledMidway_RunsNothingMoreAndRollsBack()
+        {
+            var target = new GameObject("kw-batch-cancel-target");
+            CancelFromSnippet = new System.Threading.CancellationTokenSource();
+            try
+            {
+                Task<object> batch;
+                using (KitWright.Editor.MCP.Server.RequestCancellation.Enter(CancelFromSnippet.Token))
+                    batch = BatchFunctions.BatchExecute(
+                        "[{\"name\":\"set_transform\",\"params\":{\"target\":\"kw-batch-cancel-target\",\"position\":\"5,0,0\"}}," +
+                        "{\"name\":\"execute_code\",\"params\":{\"code\":\"KitWright.Editor.Tests.BatchFunctionsTests.CancelFromSnippet.Cancel(); return 1;\",\"skip_refresh\":true}}," +
+                        "{\"name\":\"set_transform\",\"params\":{\"target\":\"kw-batch-cancel-target\",\"position\":\"9,0,0\"}}]",
+                        rollback_on_error: true);
+                yield return WaitForTask(batch);
+
+                var envelope = JObject.Parse(JsonConvert.SerializeObject(batch.Result));
+                Assert.AreEqual("BATCH_CANCELLED", envelope["code"]?.ToString(), envelope.ToString());
+                Assert.AreEqual(2, envelope["data"]["count"].Value<int>());
+                Assert.AreEqual(Vector3.zero, target.transform.position, "the first command was rolled back, the third never ran");
+            }
+            finally
+            {
+                CancelFromSnippet.Dispose();
+                CancelFromSnippet = null;
+                UnityEngine.Object.DestroyImmediate(target);
+            }
+        }
+
+        [UnityTest]
+        public IEnumerator BatchExecute_RollbackBatchWithASceneSwitch_IsRefusedBeforeAnythingRuns()
+        {
+            var batch = BatchFunctions.BatchExecute(
+                "[{\"name\":\"get_editor_state\",\"params\":{}},{\"name\":\"open_scene\",\"params\":{\"scene_path\":\"Assets/x.unity\"}}]",
+                rollback_on_error: true);
+            yield return WaitForTask(batch);
+
+            var envelope = JObject.Parse(JsonConvert.SerializeObject(batch.Result));
+            Assert.AreEqual("NOT_TRANSACTIONAL", envelope["code"]?.ToString(), envelope.ToString());
+            Assert.AreEqual(1, envelope["data"]["index"].Value<int>());
+        }
+
         // Collapsing onto the group that was current when the batch started took in whatever the
         // user had registered in it just before: one Ctrl+Z then reverted their edit with the batch.
         [UnityTest]
@@ -334,7 +380,7 @@ namespace KitWright.Editor.Tests
         {
             var batch = UnityCliEditorFunctions.Batch(
                 "[{\"id\":\"go\",\"command\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-ref\"}}," +
-                "{\"command\":\"add_component\",\"params\":{\"target\":\"$go.instanceId\",\"component_type\":\"BoxCollider\"}}," +
+                "{\"command\":\"add_component\",\"params\":{\"target\":\"$go.instanceId\",\"component_type\":\"Light\"}}," +
                 "{\"command\":\"create_game_object\",\"params\":{\"name\":\"$0.99\"}}]");
             try
             {
@@ -342,7 +388,7 @@ namespace KitWright.Editor.Tests
 
                 Assert.IsTrue(JObject.Parse(JsonConvert.SerializeObject(batch.Result))["success"].Value<bool>(),
                     JsonConvert.SerializeObject(batch.Result));
-                Assert.IsNotNull(GameObject.Find("kw-batch-ref").GetComponent<BoxCollider>());
+                Assert.IsNotNull(GameObject.Find("kw-batch-ref").GetComponent<Light>());
                 Assert.IsNotNull(GameObject.Find("$0.99"), "a price is text, not a reference");
             }
             finally

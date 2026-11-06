@@ -33,7 +33,7 @@ namespace KitWright.Editor.MCP.Server
 
         internal static string NotExposedHint(SettingsController settings) =>
             MCPToolExportPolicy.IsToolAllowed("set_tool_profile", settings, out _)
-                ? "set_tool_profile 'full' exposes it. A profile only shortens the tool list; it does not restrict access."
+                ? "Call set_tool_profile 'full', then retry."
                 : null;
 
         private string WithheldToolError(string toolName, string profileKey) =>
@@ -106,7 +106,7 @@ namespace KitWright.Editor.MCP.Server
                     MutatingToolGate.Release();
             }
 
-            using (ct.Register(Release))
+            using (RequestCancellation.CeilingFor(ct).Register(Release))
             {
                 try
                 {
@@ -193,7 +193,10 @@ namespace KitWright.Editor.MCP.Server
                     }
 
                     PluginDebugLogger.Log($"[KitWright MCP Server] Executing tool: {toolName}");
-                    var result = await _invoker.InvokeAsync(functionCall);
+                    Task<string> invocation;
+                    using (RequestCancellation.Enter(ct))
+                        invocation = _invoker.InvokeAsync(functionCall);
+                    var result = await invocation;
                     if (marksPending)
                         DomainReloadHandler.CompletePendingFunction(_stateController);
 

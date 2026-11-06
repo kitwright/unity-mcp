@@ -2,6 +2,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Threading;
 
 namespace KitWright.Editor.Tools.Scripting
 {
@@ -33,17 +34,21 @@ namespace KitWright.Editor.Tools.Scripting
         private static long _deadlineTimestamp;
         private static int _sinceLastCheck;
         private static TimeSpan _budget;
+        private static CancellationToken _cancellation;
 
-        internal static void Begin(TimeSpan budget)
+        internal static void Begin(TimeSpan budget, CancellationToken cancellation = default)
         {
             _budget = budget;
+            _cancellation = cancellation;
             _deadlineTimestamp = Stopwatch.GetTimestamp() + (long)(budget.TotalSeconds * Stopwatch.Frequency);
             _sinceLastCheck = 0;
         }
 
+        // Clears the token too, so a call cancelled by its client does not stop the next snippet.
         internal static void End()
         {
             _deadlineTimestamp = 0;
+            _cancellation = default;
         }
 
         /// <summary>
@@ -56,6 +61,12 @@ namespace KitWright.Editor.Tools.Scripting
             if (++_sinceLastCheck < CheckStride) return condition;
 
             _sinceLastCheck = 0;
+            // Stays armed: a snippet that catches the exception inside its loop must hit it again, not run on.
+            if (_cancellation.IsCancellationRequested)
+            {
+                throw new OperationCanceledException("The client cancelled this call; the snippet stopped at a loop check.");
+            }
+
             if (Stopwatch.GetTimestamp() <= _deadlineTimestamp) return condition;
 
             _deadlineTimestamp = 0;

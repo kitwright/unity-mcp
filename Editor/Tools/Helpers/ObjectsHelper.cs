@@ -62,11 +62,11 @@ namespace KitWright.Editor.Tools.Helpers
             MethodById, MethodByName, MethodByPath, MethodByTag, MethodByLayer, MethodByComponent, MethodByIdOrNameOrPath
         };
 
-        /// <summary>Tail of every find_method [ToolParam] text: the accepted values and the default.</summary>
-        public const string FindMethodValues = "one of " +
+        /// <summary>Tail of every find_method [ToolParam] text, repeated in 25 tools' schemas: kept short.
+        /// by_id_or_name_or_path is still accepted, only no longer listed.</summary>
+        public const string FindMethodValues = "omit to auto-detect, or " +
             MethodById + ", " + MethodByName + ", " + MethodByPath + ", " + MethodByTag + ", " +
-            MethodByLayer + ", " + MethodByComponent + ", " + MethodByIdOrNameOrPath +
-            "; omit to auto-detect (integer = by_id, contains '/' = by_path, otherwise by_name)";
+            MethodByLayer + ", " + MethodByComponent;
 
         internal static void ValidateFindMethod(string searchMethod)
         {

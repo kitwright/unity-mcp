@@ -55,6 +55,7 @@ namespace KitWright.Editor.Tools.Builtins
         internal static async Task<object> Run(
             JArray parsed, bool stop_on_error, string undo_label, bool rollback_on_error, bool resolveReferences)
         {
+            var cancellation = RequestCancellation.EntryToken;
             if (parsed.Count == 0)
                 return Response.Error("EMPTY_BATCH", new { message = "commands array is empty" });
             if (parsed.Count > 100)
@@ -75,6 +76,10 @@ namespace KitWright.Editor.Tools.Builtins
                         string.Equals(names[i], nameof(UndoFunctions.Redo), System.StringComparison.OrdinalIgnoreCase))
                         return Response.Error("BATCH_UNDO_IN_ROLLBACK", new { index = i, name = names[i] },
                             "undo and redo cannot run in a batch that rolls back on error. Drop them, or set rollback_on_error=false.");
+                    if (names[i] != null && ClearsUndoHistory.Contains(names[i]))
+                        return Response.Error("NOT_TRANSACTIONAL", new { index = i, name = names[i] },
+                            $"{names[i]} clears the Undo history or reloads the domain, so a batch that rolls back on error cannot revert past it. " +
+                            "Run it on its own, or turn the rollback off (rollback_on_error=false, or transactional=false for batch).");
                 }
             }
 
@@ -84,6 +89,7 @@ namespace KitWright.Editor.Tools.Builtins
             var succeeded = new bool[parsed.Count];
             bool aborted = false;
             bool timedOut = false;
+            bool cancelled = false;
             var wasPlaying = IsPlaying();
 
             // The request is cut off at the ceiling, after which the client has its timeout and
@@ -107,6 +113,13 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 for (int i = 0; i < parsed.Count; i++)
                 {
+                    if (cancellation.IsCancellationRequested)
+                    {
+                        cancelled = true;
+                        aborted = true;
+                        break;
+                    }
+
                     if (clock.Elapsed.TotalSeconds > budgetSeconds - DeadlineMarginSeconds)
                     {
                         timedOut = true;
@@ -166,7 +179,10 @@ namespace KitWright.Editor.Tools.Builtins
                     // Await instead of blocking: async tools pump their state
                     // machine on EditorApplication.update — a sync .GetAwaiter().GetResult() here
                     // deadlocks the editor main thread against that update loop.
-                    var raw = await invoker.InvokeAsync(fc);
+                    Task<string> invocation;
+                    using (RequestCancellation.Enter(cancellation))
+                        invocation = invoker.InvokeAsync(fc);
+                    var raw = await invocation;
                     // The bridge adds the Play Mode note to a direct call; this loop never goes through it.
                     raw = MCPExecutionBridge.AppendPlayModeNote(raw, name, IsPlaying());
                     var resultToken = TryParse(raw);
@@ -212,6 +228,10 @@ namespace KitWright.Editor.Tools.Builtins
                 ? "The whole batch was reverted (its Undo-tracked scene changes; file, asset, settings and Play Mode changes were not). "
                 : rollbackSkipped != null ? "Not rolled back: Play Mode changed during the batch. " : string.Empty;
 
+            if (cancelled)
+                return Response.Error("BATCH_CANCELLED", payload,
+                    $"The batch was cancelled (by the client, or by the call's time ceiling) after {results.Count} of {parsed.Count} command(s); the rest did not run. " + reverted);
+
             if (timedOut)
                 return Response.Error("BATCH_TIMED_OUT", payload,
                     $"Batch stopped after {results.Count} of {parsed.Count} command(s): it ran " +
@@ -227,6 +247,20 @@ namespace KitWright.Editor.Tools.Builtins
                     (rolledBack ? "Fix the failing step and resend the whole batch." : "Inspect results for the failing step; pass stop_on_error=false to run past failures."))
                 : Response.Success($"Batch executed {results.Count} command(s).", payload);
         }
+
+        // Hand-written, as the CLI's is: these open a new Undo history or reload the domain mid-batch.
+        private static readonly HashSet<string> ClearsUndoHistory = new HashSet<string>(System.StringComparer.OrdinalIgnoreCase)
+        {
+            "open_scene",
+            "create_scene",
+            "create_new_scene",
+            "close_scene",
+            "recompile",
+            "request_recompile",
+            "install_package",
+            "remove_package",
+            "package_resolve"
+        };
 
         // \z, not $: $ also matches before a trailing newline, which would let "a\n" through as an id.
         private static readonly Regex IdPattern = new Regex(@"^[A-Za-z_][A-Za-z0-9_-]*\z");

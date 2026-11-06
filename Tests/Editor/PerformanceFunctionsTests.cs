@@ -51,7 +51,8 @@ namespace KitWright.Editor.Tests
                 Assert.That(snapshot, Does.Contain("Scene(s): " + activeScene.name + ", " + additiveScene.name));
                 Assert.That(snapshot, Does.Contain("- GameObjects: 2 total, 2 active"));
                 Assert.That(snapshot, Does.Contain("- Renderers: 1"));
-                Assert.That(snapshot, Does.Contain("- Triangles: 12"));
+                Assert.That(snapshot, Does.Contain("- Scene mesh triangles: 12"));
+                Assert.That(snapshot, Does.Contain("Rendering (last frame): "));
 #if KITWRIGHT_PHYSICS
                 // CreatePrimitive only attaches a BoxCollider when the physics module is present.
                 Assert.That(snapshot, Does.Contain("- Colliders: 1"));

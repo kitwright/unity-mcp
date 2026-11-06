@@ -52,7 +52,8 @@ namespace KitWright.Editor.Tools.Builtins
                      "contains (text) or changed (met on the first change from the value first seen; needs no value). " +
                      "value is coerced to the member's type; the text 'null' means null. A met wait answers success; a wait that " +
                      "runs out answers WAIT_TIMEOUT. background=true returns a wait_id at once for wait_status / wait_cancel " +
-                     "(background waits are lost on a domain reload). To screenshot when met, follow with capture_game_view.")]
+                     "(background waits are lost on a domain reload). To capture the frame the condition held on, pass pause_on_met=true, " +
+                     "then call capture_game_view.")]
         [LongRunningTool(660)]
         public static async Task<object> WaitFor(
             [ToolParam("Dotted member path to read")] string member,
@@ -108,7 +109,8 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Success("Waiting in the background.", new { wait_id = job.Id, state = job.State });
             }
 
-            await Run(spec, job);
+            using (MCP.Server.RequestCancellation.EntryToken.Register(job.Cancel.Cancel))
+                await Run(spec, job);
             return Describe(job, spec.Member);
         }
 

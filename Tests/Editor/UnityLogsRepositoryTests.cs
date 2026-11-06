@@ -9,6 +9,80 @@ namespace KitWright.Editor.Tests
 {
     public sealed class UnityLogsRepositoryTests
     {
+        private static long LatestSeq(string header) =>
+            long.Parse(System.Text.RegularExpressions.Regex.Match(header, @"latest_seq: (\d+)").Groups[1].Value);
+
+        private static int SessionErrors(string header) =>
+            int.Parse(System.Text.RegularExpressions.Regex.Match(header, @"this session: (\d+) error").Groups[1].Value);
+
+        // The case the benchmark hit: an error, then enough spam to push it out of the cache. The
+        // session total still has it, and a reader following since_seq is told what it missed.
+        [Test]
+        public void AnErrorPushedOutOfTheCache_IsStillCounted_AndTheGapIsReported()
+        {
+            using (var repository = new UnityLogsRepository())
+            {
+                repository.StartListening();
+                Debug.Log("KitWrightSeqStart");
+                var before = repository.GetRecentLogs(count: 1);
+                var cursor = LatestSeq(before);
+                var errorsBefore = SessionErrors(before);
+
+                UnityEngine.TestTools.LogAssert.Expect(LogType.Error, "KitWrightSeqError");
+                Debug.LogError("KitWrightSeqError");
+                for (var i = 0; i < UnityLogsRepository.MaxLogs + 200; i++)
+                    Debug.Log("KitWrightSeqSpam " + i);
+
+                var after = repository.GetRecentLogs(count: 5, sinceSeq: cursor);
+                Assert.AreEqual(errorsBefore + 1, SessionErrors(after), after);
+                StringAssert.Contains("dropped:", after);
+                // A follow read goes oldest unread first, so nothing between two reads is skipped.
+                StringAssert.Contains("KitWrightSeqSpam 200", after);
+                StringAssert.DoesNotContain("KitWrightSeqSpam 1199", after);
+                StringAssert.Contains("newer entries left", after);
+
+                var next = repository.GetRecentLogs(count: 5, sinceSeq: LatestSeq(after));
+                StringAssert.Contains("KitWrightSeqSpam 205", next);
+                StringAssert.DoesNotContain("KitWrightSeqSpam 204", next);
+            }
+        }
+
+        [Test]
+        public void ASinceSeqFromAnotherSession_ReadsFromTheStart()
+        {
+            using (var repository = new UnityLogsRepository())
+            {
+                repository.StartListening();
+                Debug.Log("KitWrightSeqReset");
+
+                StringAssert.Contains("reset: true", repository.GetRecentLogs(count: 1, sinceSeq: 1));
+            }
+        }
+
+        // A domain reload hands the cache over through Snapshot/Restore; seqs must keep rising after
+        // it, or a reader's cursor would skip everything logged since.
+        [Test]
+        public void AfterARestore_NewEntriesComeAfterTheOldCursor()
+        {
+            using (var first = new UnityLogsRepository())
+            using (var second = new UnityLogsRepository())
+            {
+                first.StartListening();
+                Debug.Log("KitWrightSeqBeforeReload");
+                var cursor = LatestSeq(first.GetRecentLogs(count: 1));
+                first.StopListening();
+
+                second.StartListening();
+                second.Restore(first.Snapshot());
+                Debug.Log("KitWrightSeqAfterReload");
+
+                var read = second.GetRecentLogs(count: 10, sinceSeq: cursor);
+                StringAssert.Contains("KitWrightSeqAfterReload", read);
+                StringAssert.DoesNotContain("KitWrightSeqBeforeReload", read);
+                Assert.Greater(LatestSeq(read), cursor);
+            }
+        }
+
         // A non-empty "nothing matched" sentence made source "auto" stop at the cache, so the
         // console fallback was dead as soon as one log was cached.
         [Test]

@@ -126,11 +126,18 @@ namespace KitWright.Editor.Tools.Builtins
         public static string FindAssets(
             [ToolParam("Search filter (e.g. 't:Material red', 't:Prefab Player', 't:Texture')")] string filter,
             [ToolParam("Maximum paths to return (1-500). Default 50.", Required = false)] int max = 50,
-            [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0)
+            [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0,
+            [ToolParam("Only search under this folder (e.g. 'Assets/Prefabs').", Required = false)] string folder = null)
         {
+            if (!string.IsNullOrEmpty(folder) && !AssetDatabase.IsValidFolder(folder.TrimEnd('/')))
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = nameof(folder), provided = folder },
+                    "folder must be an existing project folder such as 'Assets/Prefabs'.");
+
             // Sorted because AssetDatabase.FindAssets promises no order, and paging an unordered
             // result set silently skips and repeats entries between calls.
-            var paths = AssetDatabase.FindAssets(filter)
+            var paths = (string.IsNullOrEmpty(folder)
+                    ? AssetDatabase.FindAssets(filter)
+                    : AssetDatabase.FindAssets(filter, new[] { folder.TrimEnd('/') }))
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .OrderBy(p => p, StringComparer.Ordinal)
                 .ToList();

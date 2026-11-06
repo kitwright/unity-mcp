@@ -117,7 +117,8 @@ namespace KitWright.Editor.Tools.Builtins
                      "each entry was logged. Unity rich-text markup (<color>, <b>, ...) is stripped from every " +
                      "message, so filter_text matches the readable text rather than the markup. " +
                      "Reading from the cache, a page cut short by count reports a next_cursor to pass back as cursor " +
-                     "for the older entries.")]
+                     "for the older entries. The cache keeps the last 1000 entries across domain reloads; its header gives " +
+                     "latest_seq (pass it back as since_seq to read only what came after) and this session's error/warning totals.")]
         [ReadOnlyTool]
         [ToolProvider("Console")]
         public static string GetConsoleLogs(
@@ -130,7 +131,8 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("Collapse repeated identical messages into one line with a (xN) count", Required = false)] bool group_duplicates = false,
             [ToolParam("Include each entry's stack trace, indented below the message (its own truncation cap, separate from the message's).", Required = false)] bool include_stack_trace = false,
             [ToolParam("Prefix each entry with the HH:mm:ss it was logged (cache/auto only; the Editor console keeps no timestamps).", Required = false)] bool include_timestamps = false,
-            [ToolParam("Resume at this entry index counting back from the newest, as reported by a previous call's next_cursor. Cache source only. 0 starts at the newest.", Required = false)] int cursor = 0)
+            [ToolParam("Resume at this entry index counting back from the newest, as reported by a previous call's next_cursor. Cache source only. 0 starts at the newest.", Required = false)] int cursor = 0,
+            [ToolParam("Only entries logged after this latest_seq from an earlier call (cache only).", Required = false)] long since_seq = 0)
         {
             if (!TryNormalizeLogType(log_type, out var normalizedLogType))
                 return ToolResultFormatter.Error("INVALID_PARAM",
@@ -150,9 +152,13 @@ namespace KitWright.Editor.Tools.Builtins
             if (source != "auto" && source != "cache" && source != "console")
                 return ToolResultFormatter.Error("INVALID_SOURCE", new { source, accepted = new[] { "auto", "cache", "console" } });
 
+            if (since_seq > 0 && source == "console")
+                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "since_seq", source },
+                    "since_seq reads the cache; the Editor console keeps no seqs. Use source 'auto' or 'cache'.");
+
             if (source == "cache" || source == "auto")
             {
-                var cachedLogs = logsRepository?.GetRecentLogs(log_type, count, since_seconds, filter_text, group_duplicates, include_stack_trace, include_timestamps, cursor);
+                var cachedLogs = logsRepository?.GetRecentLogs(log_type, count, since_seconds, filter_text, group_duplicates, include_stack_trace, include_timestamps, cursor, since_seq);
                 if (!string.IsNullOrEmpty(cachedLogs))
                     return cachedLogs;
 

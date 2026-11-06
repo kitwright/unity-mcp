@@ -700,6 +700,88 @@ namespace KitWright.Editor
             }
         }
 
+        // A cancel is only useful if the transport takes the notification while the call it names is
+        // still running, and if the id and session it carries meet the ones the call registered under.
+        [UnityTest]
+        public IEnumerator ACancelNotificationStopsAToolCallStillRunning()
+        {
+            var port = GetFreeTcpPort();
+            var transport = new HttpMCPTransport(port, ProjectIdentityA);
+            var callRegistered = new ManualResetEventSlim();
+            var registrations = new List<IDisposable>();
+            transport.OnRequestReceived += (request, sendResponse) =>
+            {
+                switch (request.Method)
+                {
+                    case "initialize":
+                        HandleInitializeRequest(request, sendResponse, ProjectIdentityA);
+                        break;
+                    case "tools/call":
+                        var cts = new CancellationTokenSource();
+                        lock (registrations)
+                            registrations.Add(RequestCancellation.Register(request.SessionId, request.Id, cts));
+                        cts.Token.Register(() => sendResponse(new MCPResponse
+                        {
+                            Id = request.Id,
+                            Error = new MCPError { Code = -32800, Message = "cancelled" }
+                        }));
+                        callRegistered.Set();
+                        break;
+                    case "notifications/cancelled":
+                        RequestCancellation.Cancel(request.SessionId, request.Params["requestId"]);
+                        sendResponse(null);
+                        break;
+                }
+            };
+
+            try
+            {
+                var startTask = transport.StartAsync();
+                yield return WaitForTask(startTask);
+                Assert.IsTrue(startTask.Result);
+
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(5) })
+                {
+                    var url = "http://127.0.0.1:" + port + "/";
+                    var initTask = client.PostAsync(url, new StringContent(
+                        "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\",\"params\":{}}", Encoding.UTF8, "application/json"));
+                    yield return WaitForTask(initTask, 3f);
+                    var sessionId = string.Join("", initTask.Result.Headers.GetValues("Mcp-Session-Id"));
+
+                    Task<HttpResponseMessage> Post(string body)
+                    {
+                        var message = new HttpRequestMessage(HttpMethod.Post, url)
+                        {
+                            Content = new StringContent(body, Encoding.UTF8, "application/json")
+                        };
+                        message.Headers.Add("Mcp-Session-Id", sessionId);
+                        return client.SendAsync(message);
+                    }
+
+                    var callTask = Post("{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_code\"}}");
+                    var waited = Time.realtimeSinceStartup;
+                    while (!callRegistered.IsSet && Time.realtimeSinceStartup - waited < 3f)
+                        yield return null;
+                    Assert.IsTrue(callRegistered.IsSet, "the tool call never reached the handler");
+                    Assert.IsFalse(callTask.IsCompleted);
+
+                    var cancelTask = Post("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/cancelled\",\"params\":{\"requestId\":7}}");
+                    yield return WaitForTask(cancelTask, 3f);
+                    yield return WaitForTask(callTask, 3f);
+
+                    var readTask = callTask.Result.Content.ReadAsStringAsync();
+                    yield return WaitForTask(readTask, 3f);
+                    StringAssert.Contains("-32800", readTask.Result);
+                }
+            }
+            finally
+            {
+                lock (registrations)
+                    registrations.ForEach(r => r.Dispose());
+                transport.Dispose();
+            }
+        }
+
         [UnityTest]
         public IEnumerator ARequestFromABrowserIsRefusedAndNoResponseInvitesOne()
         {

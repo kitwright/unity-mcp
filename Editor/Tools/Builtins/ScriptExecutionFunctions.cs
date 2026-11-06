@@ -61,6 +61,7 @@ namespace KitWright.Editor.Tools.Builtins
             [ToolParam("If true, skip the pre-compile AssetDatabase.Refresh + wait-for-ready. Use only when the editor is already up to date -- e.g. a read-only inspection snippet. The default refresh can trigger an import/domain reload (from your own OR another actor's pending changes in a shared editor), which is why it is skipped automatically while Play Mode runs. When skipped, external file edits made since the last compile are NOT picked up.", Required = false)] bool skip_refresh = false,
             [ToolParam("Seconds the snippet may run, for work that legitimately outlasts the ~170 s call ceiling (up to 1680). Raises the call ceiling to this plus 120 s and the budget for the snippet's loops from 20 s to this, so a runaway loop is stopped only after this long. 0 (default) keeps both ordinary limits; a value never narrows them.", Required = false)] int timeout_seconds = 0)
         {
+            var cancellation = MCP.Server.RequestCancellation.EntryToken;
             var effectiveSafetyChecks = safety_checks ?? ResolveSafetyChecksDefault();
             if (effectiveSafetyChecks)
             {
@@ -112,7 +113,7 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 var result = RunInSingleUndoGroup(UndoGroupName(code),
                     () => CompileAndExecute(fullCode, actualClassName, effectiveSafetyChecks, SnippetPlacement.Of(code, fullCode),
-                        LoopBudgetFor(timeout_seconds)));
+                        LoopBudgetFor(timeout_seconds), cancellation));
                 AppendHistory(code, IsSuccess(result), SummarizeResult(result));
                 return result;
             }
@@ -394,7 +395,8 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         private static object CompileAndExecute(string code, string className, bool safetyChecks,
-            SnippetPlacement placement = default, TimeSpan? loopBudget = null)
+            SnippetPlacement placement = default, TimeSpan? loopBudget = null,
+            System.Threading.CancellationToken cancellation = default)
         {
             var compilation = ScriptCompilerPipeline.Compile(LoopGuardInjector.Inject(code));
             if (compilation.Status == ScriptCompilationStatus.CompilationFailed)
@@ -441,7 +443,7 @@ namespace KitWright.Editor.Tools.Builtins
                 });
             }
 
-            LoopBudgetGuard.Begin(loopBudget ?? LoopBudgetGuard.DefaultBudget);
+            LoopBudgetGuard.Begin(loopBudget ?? LoopBudgetGuard.DefaultBudget, cancellation);
             try
             {
                 var warnings = compilation.Warnings.Select(placement.ToSnippet).Where(placement.IsInSnippet).ToList();

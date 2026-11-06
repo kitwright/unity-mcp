@@ -423,8 +423,12 @@ namespace KitWright.Editor.MCP.Server
                     return;
                 }
 
-                using (var callCts = new CancellationTokenSource())
+                using (var clientCts = new CancellationTokenSource())
+                using (var ceilingCts = new CancellationTokenSource())
+                using (var callCts = CancellationTokenSource.CreateLinkedTokenSource(clientCts.Token, ceilingCts.Token))
+                using (RequestCancellation.Register(request?.SessionId, request?.Id, clientCts, callCts.Token, ceilingCts.Token))
                 {
+                    var clock = System.Diagnostics.Stopwatch.StartNew();
                     var editorThreadTask = _threadHelper.ExecuteAsyncOnEditorThreadAsync(
                         async () =>
                         {
@@ -441,15 +445,32 @@ namespace KitWright.Editor.MCP.Server
                     var ceilingMs = ToolRegistry.TimeoutSecondsForRequest(
                         request?.Method, request?.Params, ToolCallTimeoutMs / 1000) * 1000;
 
-                    using var delayCts = new CancellationTokenSource();
+                    using var delayCts = CancellationTokenSource.CreateLinkedTokenSource(clientCts.Token);
                     var completed = await Task.WhenAny(editorThreadTask, Task.Delay(ceilingMs, delayCts.Token));
                     delayCts.Cancel();
+                    if (clientCts.IsCancellationRequested)
+                    {
+                        sendResponse(new MCPResponse
+                        {
+                            Id = request?.Id,
+                            Error = new MCPError { Code = -32800, Message = CancelledMessage }
+                        });
+
+                        // The call may still be running: it keeps the mutation gate until it ends or the
+                        // ceiling passes, so the client's next edit cannot land inside a batch's rollback.
+                        var left = ceilingMs - (int)clock.ElapsedMilliseconds;
+                        if (completed != editorThreadTask &&
+                            (left <= 0 || await Task.WhenAny(editorThreadTask, Task.Delay(left)) != editorThreadTask))
+                            ceilingCts.Cancel();
+                        return;
+                    }
+
                     if (completed != editorThreadTask)
                     {
                         // Cancelling drops a work item still waiting in the queue; one already mid-flight
                         // keeps running (a sync method.Invoke can't be aborted), but the client stops
                         // hanging on a request that will never return in time.
-                        callCts.Cancel();
+                        ceilingCts.Cancel();
                         sendResponse(new MCPResponse
                         {
                             Id = request?.Id,
@@ -499,11 +520,15 @@ namespace KitWright.Editor.MCP.Server
             }
         }
 
+        internal const string CancelledMessage =
+            "Request cancelled. A call still waiting did not run; one already running stops at its next loop check or batch " +
+            "step, and what it did before that stays.";
+
         // A bare "timed out" read as "nothing happened", so agents ran the same work a second time
         // behind the first.
         internal static string ToolTimeoutMessage(string toolName, int ceilingMs, bool historyExposed = true)
         {
-            var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled " +
+            var message = $"Tool call timed out after {ceilingMs}ms. A call already running in the editor cannot be cancelled (execute_code and batch_execute stop at their next check) " +
                           "and may still finish, so check what it did before running it again.";
 
             return string.Equals(toolName, "execute_code", StringComparison.OrdinalIgnoreCase) ||

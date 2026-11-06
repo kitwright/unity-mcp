@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.Tools.Helpers;
@@ -45,7 +46,8 @@ namespace KitWright.Editor.Tools.Builtins
                      "Component can be addressed by type name on a GameObject, or directly by component instanceId. " +
                      "On a component with many properties, pass name_filter to return only the ones you need — " +
                      "the response then reports how many were left out, so a filtered read is never mistaken for the whole component. " +
-                     "An enum reads as { name, value } and an object reference carries assetPath, so a read can be fed back to " +
+                     "An enum reads as its name (a [Flags] mask as { name, value }), Type is given only where the value's shape " +
+                     "does not show it, and an object reference carries assetPath, so a read can be fed back to " +
                      "set_component_properties. descend also returns nested and array element properties, capped by max_properties.")]
         [ReadOnlyTool]
         public static object GetComponentProperties(
@@ -86,8 +88,32 @@ namespace KitWright.Editor.Tools.Builtins
                     componentInstanceId = ObjectIdCodec.GetSerializableId(resolved.Component),
                     type = typeName,
                     gameObject = new { instanceId = ObjectIdCodec.GetSerializableId(resolved.Component.gameObject), name = resolved.Component.gameObject.name },
-                    properties = props
+                    properties = props.Select(Lean).ToList()
                 });
+        }
+
+        // The value's own shape already says number, bool, text, vector or colour, so Type is kept only
+        // where it does not (references, structs, arrays). A plain enum reads as its name, which
+        // set_component_properties takes back; a [Flags] mask has no single name and keeps {name, value}.
+        private static readonly HashSet<string> SelfEvidentTypes = new HashSet<string>
+        {
+            "Integer", "Boolean", "Float", "String", "Color", "Enum", "Vector2", "Vector3", "Vector4",
+            "Vector2Int", "Vector3Int", "Rect", "RectInt", "Bounds", "BoundsInt", "Quaternion"
+        };
+
+        internal static object Lean(ComponentSerializer.PropertySnapshot property)
+        {
+            var value = property.Value;
+            if (property.Type == "Enum" && value != null)
+            {
+                var name = JObject.FromObject(value)["name"];
+                if (name != null && name.Type == JTokenType.String)
+                    value = name.ToString();
+            }
+
+            return SelfEvidentTypes.Contains(property.Type)
+                ? (object)new { property.Name, Value = value }
+                : new { property.Name, property.Type, Value = value };
         }
 
         internal static string[] SplitFilterTerms(string filter)

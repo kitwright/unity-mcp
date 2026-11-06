@@ -107,7 +107,7 @@ namespace KitWright.Editor.MCP.Server
                     // Spec MUST: a ping is answered with an empty result, never -32601.
                     "ping" => new MCPResponse { Id = request.Id, Result = new Dictionary<string, object>() },
                     "notifications/initialized" => null,
-                    "notifications/cancelled" => null,
+                    "notifications/cancelled" => HandleCancelled(request),
                     "logging/setLevel" => HandleLoggingSetLevel(request),
                     "tools/list" => HandleToolsList(request),
                     "tools/call" => await HandleToolsCallAsync(request, ct),
@@ -189,6 +189,13 @@ namespace KitWright.Editor.MCP.Server
                 Id = request.Id,
                 Result = new Dictionary<string, object> { ["tools"] = tools }
             };
+        }
+
+        private static MCPResponse HandleCancelled(MCPRequest request)
+        {
+            if (request.Params != null && request.Params.TryGetValue("requestId", out var requestId))
+                RequestCancellation.Cancel(request.SessionId, requestId);
+            return null;
         }
 
         private async Task<MCPResponse> HandleToolsCallAsync(MCPRequest request, CancellationToken ct)

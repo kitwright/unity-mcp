@@ -483,16 +483,18 @@ namespace KitWright.Editor.Tools.Builtins
         [ToolProvider("Testing")]
         public static Task<object> TestStatus() => TestRunnerFunctions.GetTestJob(null, 0);
 
-        [Description("Read the captured console output. level is the lowest severity (log, warn, error); tail is how many entries. The CLI's " +
-                     "follow cursor (since) is not kept: use get_console_logs with since_seconds to read only what is new.")]
+        [Description("Read the captured console output. level is the lowest severity (log, warn, error); tail is how many entries; " +
+                     "since is the latest_seq of an earlier call, to read only what came after it.")]
         [ReadOnlyTool]
         [ToolProvider("Console")]
         public static string Console(
             [ToolParam("Lowest severity: log (default), warn or error", Required = false)] string level = "log",
-            [ToolParam("How many recent entries. Default 100.", Required = false)] int tail = 100)
+            [ToolParam("How many recent entries. Default 100.", Required = false)] int tail = 100,
+            [ToolParam("latest_seq from an earlier call; only later entries", Required = false)] long since = 0)
         {
             var type = (level ?? "log").Trim().ToLowerInvariant();
-            return VisualFeedbackFunctions.GetConsoleLogs(type == "error" ? "error" : type == "warn" || type == "warning" ? "warning" : "all", Math.Max(1, Math.Min(tail, 1000)));
+            return VisualFeedbackFunctions.GetConsoleLogs(type == "error" ? "error" : type == "warn" || type == "warning" ? "warning" : "all",
+                Math.Max(1, Math.Min(tail, 1000)), since_seq: since);
         }
 
         [Description("Console counters without the entries: whether compilation failed and how many errors, warnings and logs the Editor console holds.")]

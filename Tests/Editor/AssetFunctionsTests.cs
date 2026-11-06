@@ -174,6 +174,16 @@ namespace KitWright.Editor.Tests
             StringAssert.Contains("outside 1-500", AssetFunctions.FindAssets("t:Script", max: 9999));
         }
 
+        [Test]
+        public void FindAssets_Folder_LimitsTheSearch_AndRefusesOneThatDoesNotExist()
+        {
+            StringAssert.Contains("INVALID_PARAM", AssetFunctions.FindAssets("t:Script", folder: "Assets/KwNoSuchFolderAnywhere"));
+
+            var paths = PathsIn(AssetFunctions.FindAssets("t:Script ScriptCompilerPipeline", folder: "Packages/com.kitwright.unity.mcp/Editor"));
+            Assert.IsTrue(paths.Any(p => p.EndsWith("ScriptCompilerPipeline.cs")), string.Join("\n", paths));
+            Assert.IsTrue(paths.All(p => p.StartsWith("Packages/com.kitwright.unity.mcp/Editor/")), string.Join("\n", paths));
+        }
+
         private static List<string> PathsIn(string response) =>
             response.Split('\n')
                 .Where(line => line.TrimStart().StartsWith("- "))

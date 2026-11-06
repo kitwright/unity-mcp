@@ -70,6 +70,56 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
+        public void InProcessRoslyn_WarmCompile_TakesUnder60Ms()
+        {
+            var compiler = new InProcessRoslynScriptCompiler();
+            var first = compiler.Compile("public class WarmSmoke0 { public static object Run() { return 1 + 1; } }");
+            if (first.Status == ScriptCompilationStatus.Unavailable && !first.IsHandOff)
+                Assert.Ignore(first.Message);
+
+            var wait = System.Diagnostics.Stopwatch.StartNew();
+            while (!InProcessRoslynScriptCompiler.IsWarm && wait.Elapsed.TotalSeconds < 60)
+                System.Threading.Thread.Sleep(50);
+            Assert.IsTrue(InProcessRoslynScriptCompiler.IsWarm, "the background warm-up never finished");
+
+            var timings = new long[10];
+            for (var i = 0; i < timings.Length; i++)
+            {
+                var watch = System.Diagnostics.Stopwatch.StartNew();
+                var result = compiler.Compile($"public class WarmSmoke{i + 1} {{ public static object Run() {{ return {i} + 1; }} }}");
+                timings[i] = watch.ElapsedMilliseconds;
+                Assert.AreEqual(ScriptCompilationStatus.Success, result.Status, result.Message);
+                Assert.AreEqual(InProcessRoslynScriptCompiler.CompilerName, result.CompilerName);
+            }
+
+            Array.Sort(timings);
+            Assert.Less(timings[timings.Length / 2], 60, "median ms: " + string.Join(",", timings));
+        }
+
+        [Test]
+        public void InProcessRoslyn_SyntaxItDoesNotKnow_CompilesWithCsc()
+        {
+            // A file-scoped namespace is C# 10 syntax and needs no BCL type, so only the compiler version decides.
+            var result = ScriptCompilerPipeline.Compile(
+                "namespace NewerSyntax; public class NewerSyntaxRun { public static object Run() => 4; }");
+
+            Assert.AreEqual(ScriptCompilationStatus.Success, result.Status, result.Message);
+            Assert.AreEqual("Roslyn", result.CompilerName);
+            Assert.AreEqual(1, result.Attempts.Count, "the in-process hand-off is not reported as an attempt");
+            Assert.AreEqual(4, result.Assembly.GetType("NewerSyntax.NewerSyntaxRun").GetMethod("Run").Invoke(null, null));
+        }
+
+        [Test]
+        public void InProcessRoslyn_RealError_IsReportedByCsc()
+        {
+            var result = ScriptCompilerPipeline.Compile("public class RealError { public static int Run() { return \"x\"; } }");
+
+            Assert.AreEqual(ScriptCompilationStatus.CompilationFailed, result.Status);
+            Assert.AreEqual("Roslyn", result.CompilerName);
+            Assert.IsTrue(result.Errors.Any(e => e.code == "CS0029" && e.line == 1), string.Join("; ", result.Errors.Select(e => e.code + " " + e.text)));
+        }
+
+        [Test]
         public void RoslynArguments_DoNotUseTheSharedCompilerServer()
         {
             var arguments = RoslynCscScriptCompiler.BuildCompilerArguments("/unity/DotNetSdkRoslyn/csc.dll", "/tmp/csc.rsp");
@@ -113,7 +163,7 @@ namespace KitWright.Editor.Tests
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
                     Assert.AreEqual("legacy:3", GetProperty<string>(data, "result"));
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                 });
         }
 
@@ -155,7 +205,7 @@ namespace KitWright.Editor.Tests
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
                     Assert.AreEqual("skip-refresh-ok", GetProperty<string>(data, "result"));
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                 },
                 skipRefresh: true);
         }
@@ -170,7 +220,7 @@ namespace KitWright.Editor.Tests
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
                     Assert.AreEqual("modern", GetProperty<string>(data, "result"));
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                 });
         }
 
@@ -184,7 +234,7 @@ namespace KitWright.Editor.Tests
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
                     Assert.AreEqual("two", GetProperty<string>(data, "result"));
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                 });
         }
 
@@ -207,7 +257,7 @@ public class CommandSyntax : IKitWrightCommand
                 {
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                     Assert.AreEqual("two", GetProperty<object>(data, "returnValue"));
 
                     var logs = (IEnumerable)GetProperty<object>(data, "logs");
@@ -237,7 +287,7 @@ public class CommandSyntax : IKitWrightCommand
                 {
                     AssertSuccess(result);
                     var data = GetProperty<object>(result, "data");
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                     Assert.AreEqual("ok", GetProperty<object>(data, "returnValue"));
                 });
         }
@@ -294,7 +344,7 @@ public class CommandSyntax : IKitWrightCommand
                     AssertError(result, "RUNTIME_ERROR");
                     var data = GetProperty<object>(result, "data");
                     Assert.AreEqual("boom from test", GetProperty<string>(data, "message"));
-                    Assert.AreEqual("Roslyn", GetProperty<string>(data, "compiler"));
+                    StringAssert.StartsWith("Roslyn", GetProperty<string>(data, "compiler"));
                 });
         }
 
