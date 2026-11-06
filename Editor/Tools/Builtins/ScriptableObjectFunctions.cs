@@ -10,55 +10,13 @@ using UnityEngine;
 namespace KitWright.Editor.Tools.Builtins
 {
     /// <summary>
-    /// Read, write, and create ScriptableObject assets through the same SerializedObject
+    /// Read and write ScriptableObject assets through the same SerializedObject
     /// machinery used for components — picks up [SerializeField] private fields,
     /// supports Object references, returns per-field success.
     /// </summary>
     [ToolProvider("Asset")]
     internal static class ScriptableObjectFunctions
     {
-        [Description("Create a new ScriptableObject asset of the given type at the given path. " +
-                     "The type must derive from ScriptableObject and must not be abstract. " +
-                     "Follow with set_scriptable_object_properties to fill in fields.")]
-        public static object CreateScriptableObject(
-            [ToolParam("ScriptableObject-derived type name (e.g. 'MyGameConfig' or full 'MyGame.Configs.MyGameConfig')")] string type_name,
-            [ToolParam("Asset path to create (e.g. 'Assets/Configs/NewConfig.asset')")] string asset_path)
-        {
-            if (string.IsNullOrEmpty(type_name))
-                return Response.Error("TYPE_NAME_REQUIRED");
-            if (string.IsNullOrEmpty(asset_path) || !asset_path.StartsWith("Assets/") || !asset_path.EndsWith(".asset"))
-                return Response.Error("INVALID_ASSET_PATH", new { asset_path, hint = "Must start with 'Assets/' and end with '.asset'." });
-            if (asset_path.Contains("..") || asset_path.Contains("\\"))
-                return Response.Error("INVALID_ASSET_PATH", new { asset_path, hint = "Use a normalized Unity asset path under Assets/ without '..' or backslashes." });
-
-            var type = ResolveScriptableObjectType(type_name);
-            if (type == null)
-                return TypeResolver.UnresolvedError(type_name, "TYPE_NOT_FOUND", "type_name");
-            if (type.IsAbstract)
-                return Response.Error("TYPE_IS_ABSTRACT", new { type = type.FullName });
-
-            if (AssetDatabase.LoadAssetAtPath<UnityEngine.Object>(asset_path) != null)
-                return Response.Error("ASSET_ALREADY_EXISTS", new { asset_path });
-
-            var dir = System.IO.Path.GetDirectoryName(asset_path);
-            if (!string.IsNullOrEmpty(dir) && !AssetDatabase.IsValidFolder(dir))
-                return Response.Error("FOLDER_NOT_FOUND", new { folder = dir, hint = "Create the folder first in the Project window or with an existing file/folder workflow." });
-
-            var instance = ScriptableObject.CreateInstance(type);
-            if (instance == null)
-                return Response.Error("CREATE_INSTANCE_FAILED", new { type = type.FullName });
-
-            AssetDatabase.CreateAsset(instance, asset_path);
-            AssetDatabase.SaveAssetIfDirty(instance);
-
-            return Response.Success($"Created {type.Name} asset at {asset_path}.", new
-            {
-                assetPath = asset_path,
-                type = type.FullName,
-                instanceId = ObjectIdCodec.GetSerializableId(instance)
-            });
-        }
-
         [Description("Get all serialized properties of a ScriptableObject asset, including [SerializeField] private fields. " +
                      "Works on any .asset file whose main object derives from ScriptableObject.")]
         [ReadOnlyTool]
@@ -142,37 +100,6 @@ namespace KitWright.Editor.Tools.Builtins
                 };
 
             return new ResolvedScriptableObject { Asset = so };
-        }
-
-        private static Type ResolveScriptableObjectType(string typeName)
-        {
-            var type = TypeResolver.Resolve(typeName);
-            if (type != null && typeof(ScriptableObject).IsAssignableFrom(type))
-                return type;
-
-            // Fallback for a ScriptableObject the TypeCache index does not carry. Collected rather
-            // than returned on first hit: a short name shared by two loaded types used to resolve to
-            // whichever assembly was scanned first, which is the guess TypeResolver refuses to make.
-            Type single = null;
-            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
-            {
-                Type[] types;
-                try { types = asm.GetTypes(); }
-                catch { continue; }
-                foreach (var t in types)
-                {
-                    if (!typeof(ScriptableObject).IsAssignableFrom(t))
-                        continue;
-                    if (t.FullName == typeName)
-                        return t;
-                    if (t.Name != typeName)
-                        continue;
-                    if (single != null && single != t)
-                        return null;
-                    single = t;
-                }
-            }
-            return single;
         }
     }
 }

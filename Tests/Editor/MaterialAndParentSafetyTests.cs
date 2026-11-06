@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using KitWright.Editor.Tools.Builtins;
 using KitWright.Editor.Tools.Helpers;
 using NUnit.Framework;
@@ -15,7 +16,8 @@ namespace KitWright.Editor.Tests
 {
     /// <summary>
     /// set_material_property used to edit and save a package's shared material and a forced type that
-    /// disagreed with the shader, and to store Infinity for 1e40; set_parent answered success for a
+    /// disagreed with the shader, and to store Infinity for 1e40 (set_material_properties, which replaced it,
+    /// keeps those refusals); set_parent answered success for a
     /// reparent Unity refuses. Each test names a call that must now refuse or say what it did, and checks
     /// that nothing changed.
     /// </summary>
@@ -104,7 +106,7 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void SetMaterialProperty_RefusesTheSharedDefaultMaterialOfASceneObject()
+        public void SetMaterialProperties_RefusesTheSharedDefaultMaterialOfASceneObject()
         {
             var cube = Make(GameObject.CreatePrimitive(PrimitiveType.Cube));
             cube.name = Unique("Cube");
@@ -113,17 +115,31 @@ namespace KitWright.Editor.Tests
                 Assert.Ignore("This project's default material is a project asset.");
 
             // A property no shader declares: if the refusal is missing the call cannot edit the shared material.
-            var answer = Refused("set_material_property", "path", cube.name, "name", "_KwNoSuchProperty", "value", "1");
+            var answer = Refused("set_material_properties", "material", cube.name, "properties", "{\"_KwNoSuchProperty\":1}");
 
             Assert.AreEqual("MATERIAL_READ_ONLY", (string)answer["code"]);
         }
 
         [Test]
-        public void SetMaterialProperty_OnAProjectMaterialNamesTheAssetAndSaysEveryRendererChanges()
+        public void SetMaterialProperties_EditsTheRendererMaterialOfASceneObject()
+        {
+            var path = NewMaterial("Renderer");
+            var cube = Make(GameObject.CreatePrimitive(PrimitiveType.Cube));
+            cube.name = Unique("Cube");
+            cube.GetComponent<Renderer>().sharedMaterial = AssetDatabase.LoadAssetAtPath<Material>(path);
+
+            var answer = Ok("set_material_properties", "material", cube.name, "properties", "{\"_Color\":[0,0,1,1]}");
+
+            Assert.AreEqual(path, (string)answer["data"]["assetPath"]);
+            Assert.AreEqual(Color.blue, AssetDatabase.LoadAssetAtPath<Material>(path).GetColor("_Color"));
+        }
+
+        [Test]
+        public void SetMaterialProperties_OnAProjectMaterialNamesTheAssetAndSaysEveryRendererChanges()
         {
             var path = NewMaterial("Edit");
 
-            var answer = Ok("set_material_property", "path", path, "name", "_Color", "value", "1,0,0,1");
+            var answer = Ok("set_material_properties", "material", path, "properties", "{\"_Color\":[1,0,0,1]}");
 
             Assert.AreEqual(path, (string)answer["data"]["assetPath"]);
             StringAssert.Contains("every renderer", (string)answer["data"]["note"]);
@@ -131,23 +147,23 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void SetMaterialProperty_RefusesAForcedTypeThePropertyDoesNotHave()
+        public void SetMaterialProperties_ReportsAValueOfTheWrongKindAndLeavesThePropertyAlone()
         {
             var path = NewMaterial("Mismatch");
             var material = AssetDatabase.LoadAssetAtPath<Material>(path);
             var before = material.GetColor("_Color");
 
-            var answer = Refused("set_material_property", "path", path, "name", "_Color", "value", "1", "type", "float");
+            var answer = Ok("set_material_properties", "material", path, "properties", "{\"_Color\":1}");
 
-            Assert.AreEqual("INVALID_PARAM", (string)answer["code"]);
-            StringAssert.Contains("Color", answer.ToString());
+            Assert.AreEqual(0, answer["data"]["applied"].Count());
+            StringAssert.Contains("_Color", answer["data"]["unknown"].ToString());
             Assert.AreEqual(before, material.GetColor("_Color"));
         }
 
         [TestCase("1e40")]
         [TestCase("-1e40")]
         [TestCase("3.5e38")]
-        public void SetMaterialProperty_RefusesAFloatThatDoesNotFitAFloat(string value)
+        public void SetMaterialProperties_RefusesAFloatThatDoesNotFitAFloat(string value)
         {
             var path = NewMaterial("Huge");
             var material = AssetDatabase.LoadAssetAtPath<Material>(path);
@@ -155,20 +171,10 @@ namespace KitWright.Editor.Tests
                 Assert.Ignore("The test shader has no float property.");
             var before = material.GetFloat("PixelSnap");
 
-            var answer = Refused("set_material_property", "path", path, "name", "PixelSnap", "value", value);
+            var answer = Ok("set_material_properties", "material", path, "properties", "{\"PixelSnap\":" + value + "}");
 
-            Assert.AreEqual("INVALID_PARAM", (string)answer["code"]);
+            StringAssert.Contains("PixelSnap", answer["data"]["unknown"].ToString());
             Assert.AreEqual(before, material.GetFloat("PixelSnap"));
-        }
-
-        [Test]
-        public void SetMaterialProperty_AcceptsAForcedTypeThePropertyHas()
-        {
-            var path = NewMaterial("Match");
-
-            Ok("set_material_property", "path", path, "name", "_Color", "value", "0,1,0,1", "type", "color");
-
-            Assert.AreEqual(Color.green, AssetDatabase.LoadAssetAtPath<Material>(path).GetColor("_Color"));
         }
 
         [Test]

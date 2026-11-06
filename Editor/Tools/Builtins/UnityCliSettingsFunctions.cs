@@ -15,101 +15,30 @@ using UnityEngine.Rendering;
 namespace KitWright.Editor.Tools.Builtins
 {
     /// <summary>
-    /// The Unity CLI's typed settings tools (get_/set_ physics, audio, time, quality, player, graphics, input, tags_layers,
-    /// build, runtime_pipeline), under its names and parameter shapes. get_project_settings / set_project_settings reach the same
-    /// pages by property path; these take the handful of fields the CLI names. Every set_ tool needs confirm=true and offers
+    /// The Unity CLI's typed settings tools that do more than a property write (set_ time, quality, player, graphics, input,
+    /// tags_layers, build, runtime_pipeline), under its names and parameter shapes. Reading a page, and writing physics or audio,
+    /// is get_project_settings / set_project_settings by property path. Every set_ tool here needs confirm=true and offers
     /// dry_run, and none of them is undoable.
     /// </summary>
     [ToolProvider("ProjectSettings")]
     internal static class UnityCliSettingsFunctions
     {
-        // ---- Physics ----
-
-        [Description("Read Physics settings: gravity, default solver iterations, bounce threshold.")]
-        [ReadOnlyTool]
-        public static object GetPhysicsSettings()
-        {
-            var so = Singleton("PhysicsManager", out var error);
-            if (so == null) return error;
-
-            var gravity = so.FindProperty("m_Gravity").vector3Value;
-            return Response.Success("Physics settings read.", new
-            {
-                gravityX = gravity.x,
-                gravityY = gravity.y,
-                gravityZ = gravity.z,
-                defaultSolverIterations = so.FindProperty("m_DefaultSolverIterations").intValue,
-                bounceThreshold = so.FindProperty("m_BounceThreshold").floatValue
-            });
-        }
-
-        [Description("Change Physics settings: {gravityX, gravityY, gravityZ, defaultSolverIterations, bounceThreshold} as a JSON object; " +
-                     "omitted fields stay. Needs confirm=true; dry_run previews. Not undoable.")]
-        public static object SetPhysicsSettings(
-            [ToolParam("JSON object of the fields to change")] string settings,
-            [ToolParam("Apply the change", Required = false)] bool confirm = false,
-            [ToolParam("Preview without applying", Required = false)] bool dry_run = false)
-        {
-            return ApplySingleton("PhysicsManager", settings, confirm, dry_run, new[]
-            {
-                Field("gravityX", "m_Gravity.x", FieldKind.Float),
-                Field("gravityY", "m_Gravity.y", FieldKind.Float),
-                Field("gravityZ", "m_Gravity.z", FieldKind.Float),
-                Field("defaultSolverIterations", "m_DefaultSolverIterations", FieldKind.Int),
-                Field("bounceThreshold", "m_BounceThreshold", FieldKind.Float)
-            });
-        }
-
-        // ---- Audio ----
-
-        [Description("Read project Audio settings: volume, rolloff scale, doppler factor.")]
-        [ReadOnlyTool]
-        public static object GetAudioSettings()
-        {
-            var so = Singleton("AudioManager", out var error);
-            if (so == null) return error;
-
-            return Response.Success("Audio settings read.", new
-            {
-                volume = so.FindProperty("m_Volume").floatValue,
-                rolloffScale = so.FindProperty("Rolloff Scale").floatValue,
-                dopplerFactor = so.FindProperty("Doppler Factor").floatValue
-            });
-        }
-
-        [Description("Change project Audio settings: {volume, rolloffScale, dopplerFactor} as a JSON object. Needs confirm=true; dry_run previews. Not undoable.")]
-        public static object SetAudioSettings(
-            [ToolParam("JSON object of the fields to change")] string settings,
-            [ToolParam("Apply the change", Required = false)] bool confirm = false,
-            [ToolParam("Preview without applying", Required = false)] bool dry_run = false)
-        {
-            return ApplySingleton("AudioManager", settings, confirm, dry_run, new[]
-            {
-                Field("volume", "m_Volume", FieldKind.Float),
-                Field("rolloffScale", "Rolloff Scale", FieldKind.Float),
-                Field("dopplerFactor", "Doppler Factor", FieldKind.Float)
-            });
-        }
-
         // ---- Time ----
 
-        [Description("Read Time settings: fixedDeltaTime, maximumDeltaTime, timeScale.")]
-        [ReadOnlyTool]
-        public static object GetTimeSettings() =>
-            Response.Success("Time settings read.", new
-            {
-                fixedDeltaTime = Time.fixedDeltaTime,
-                maximumDeltaTime = Time.maximumDeltaTime,
-                timeScale = Time.timeScale
-            });
-
-        [Description("Change Time settings: {fixedDeltaTime, maximumDeltaTime, timeScale} as a JSON object. Needs confirm=true; dry_run previews. Not undoable.")]
+        [Description("Change the project's Time settings (TimeManager): {fixedDeltaTime, maximumDeltaTime, timeScale} as a JSON object. " +
+                     "Edit Mode only; in Play Mode use set_time_scale for the running game. Needs confirm=true; dry_run previews. Not undoable.")]
         public static object SetTimeSettings(
             [ToolParam("JSON object of the fields to change")] string settings,
             [ToolParam("Apply the change", Required = false)] bool confirm = false,
             [ToolParam("Preview without applying", Required = false)] bool dry_run = false)
         {
-            // Fixed Timestep is a compound property in Unity 6, so the Time API is the one reading that works on every version.
+            // In Play Mode Time.* is the running game's copy, reset when Play Mode ends, so the project setting would not change.
+            if (EditorApplication.isPlaying)
+                return Response.Error("EDIT_MODE_REQUIRED", new { settings },
+                    "Call exit_play_mode first to change the project's Time settings, or set_time_scale to change the running game only.");
+
+            // Fixed Timestep is a compound property in Unity 6, so the Time API is the one writing that works on every version;
+            // in Edit Mode it writes the TimeManager page.
             if (!TryParse(settings, out var json, out var error)) return error;
 
             var unknown = json.Properties().Select(p => p.Name).Where(n => n != "fixedDeltaTime" && n != "maximumDeltaTime" && n != "timeScale").ToArray();
@@ -139,17 +68,6 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // ---- Quality ----
-
-        [Description("Read QualitySettings: current level, level names, vSync count, anti-aliasing.")]
-        [ReadOnlyTool]
-        public static object GetQualitySettings() =>
-            Response.Success("Quality settings read.", new
-            {
-                level = QualitySettings.GetQualityLevel(),
-                levelNames = QualitySettings.names,
-                vSyncCount = QualitySettings.vSyncCount,
-                antiAliasing = QualitySettings.antiAliasing
-            });
 
         [Description("Change QualitySettings: {level, vSyncCount, antiAliasing} as a JSON object. Needs confirm=true; dry_run previews. Not undoable.")]
         public static object SetQualitySettings(
@@ -243,17 +161,6 @@ namespace KitWright.Editor.Tools.Builtins
 
         // ---- Graphics ----
 
-        [Description("Read GraphicsSettings: the default render pipeline asset (null for the built-in pipeline).")]
-        [ReadOnlyTool]
-        public static object GetGraphicsSettings()
-        {
-            var asset = GraphicsSettings.defaultRenderPipeline;
-            return Response.Success("Graphics settings read.", new
-            {
-                renderPipelineAsset = asset != null ? new { name = asset.name, path = AssetDatabase.GetAssetPath(asset) } : null
-            });
-        }
-
         [Description("Set the default render pipeline asset: {renderPipelineAsset: '<path or guid>'}, or an empty value / '{}' for the " +
                      "built-in pipeline. Needs confirm=true; dry_run previews. Not undoable.")]
         public static object SetGraphicsSettings(
@@ -289,18 +196,6 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         // ---- Input (legacy Input Manager) ----
-
-        [Description("Read the legacy Input Manager axes: names and count.")]
-        [ReadOnlyTool]
-        public static object GetInputSettings()
-        {
-            var so = Singleton("InputManager", out var error);
-            if (so == null) return error;
-
-            var axes = so.FindProperty("m_Axes");
-            var names = Enumerable.Range(0, axes.arraySize).Select(i => axes.GetArrayElementAtIndex(i).FindPropertyRelative("m_Name").stringValue).ToArray();
-            return Response.Success($"{names.Length} axis entr{(names.Length == 1 ? "y" : "ies")}.", new { count = names.Length, axes = names.Distinct().ToArray() });
-        }
 
         [Description("Tune a legacy Input Manager axis by name: {axis, sensitivity, gravity, dead} as a JSON object; omitted numbers stay. " +
                      "Every axis of that name changes. Needs confirm=true; dry_run previews. Not undoable.")]
@@ -350,18 +245,21 @@ namespace KitWright.Editor.Tools.Builtins
 
         // ---- Tags and layers ----
 
-        [Description("Read the project's tags and its named layers.")]
+        [Description("Read the project's tags and its named layers. include_empty_layers lists all 32 layer slots, an unused one with name null.")]
         [ReadOnlyTool]
-        public static object GetTagsLayers() =>
+        public static object GetTagsLayers(
+            [ToolParam("List all 32 layer slots, the unnamed ones too", Required = false)] bool include_empty_layers = false) =>
             Response.Success("Tags and layers read.", new
             {
                 tags = InternalEditorUtility.tags,
-                layers = Enumerable.Range(0, 32).Where(i => LayerMask.LayerToName(i).Length > 0)
-                    .Select(i => new { index = i, name = LayerMask.LayerToName(i) }).ToArray()
+                layers = Enumerable.Range(0, 32).Where(i => include_empty_layers || LayerMask.LayerToName(i).Length > 0)
+                    .Select(i => new { index = i, name = LayerMask.LayerToName(i).Length > 0 ? LayerMask.LayerToName(i) : null }).ToArray()
             });
 
         [Description("Add or remove tags and name user layers (index 8-31): {addTags: [..], removeTags: [..], setLayers: [{index, name}]} " +
-                     "as a JSON object; an empty layer name clears the slot. Needs confirm=true; dry_run previews. Not undoable.")]
+                     "as a JSON object. Adding an existing tag does nothing; a built-in tag cannot be removed. A layer given without an " +
+                     "index takes the first free user slot (none if the name already is a layer); an index with an empty name clears that " +
+                     "slot. Needs confirm=true; dry_run previews. Not undoable.")]
         public static object SetTagsLayers(
             [ToolParam("JSON object with addTags, removeTags and setLayers")] string settings,
             [ToolParam("Apply the change", Required = false)] bool confirm = false,
@@ -371,15 +269,51 @@ namespace KitWright.Editor.Tools.Builtins
 
             var add = Strings(json["addTags"]);
             var remove = Strings(json["removeTags"]);
-            var layers = (json["setLayers"] as JArray ?? new JArray()).OfType<JObject>()
-                .Select(l => new { index = l.Value<int?>("index") ?? -1, name = l.Value<string>("name") ?? string.Empty }).ToArray();
+            if (add.Concat(remove).Any(t => t.Length == 0))
+                return Response.Error("INVALID_TAG", new { addTags = add, removeTags = remove }, "Tag names cannot be empty.");
 
-            var badLayer = layers.FirstOrDefault(l => l.index < 8 || l.index > 31);
-            if (badLayer != null)
-                return Response.Error("INVALID_PARAM", new { param = "setLayers", index = badLayer.index }, "User layers are 8 to 31.");
+            var tagManager = Singleton("TagManager", out var singletonError);
+            if (tagManager == null) return singletonError;
+
+            // TagManager's tags array holds only the custom tags; InternalEditorUtility.tags adds the built-in ones.
+            var allTags = InternalEditorUtility.tags;
+            var tagsProperty = tagManager.FindProperty("tags");
+            var customTags = Enumerable.Range(0, tagsProperty.arraySize).Select(i => tagsProperty.GetArrayElementAtIndex(i).stringValue).ToList();
+            var unremovable = remove.FirstOrDefault(t => !customTags.Contains(t));
+            if (unremovable != null)
+                return allTags.Contains(unremovable)
+                    ? Response.Error("CANNOT_REMOVE_BUILTIN_TAG", new { tag = unremovable }, "Built-in tags cannot be removed.")
+                    : Response.Error("TAG_NOT_FOUND", new { tag = unremovable });
+            add = add.Where(t => !allTags.Contains(t)).Distinct().ToArray();
+
+            var slots = tagManager.FindProperty("layers");
+            var original = Enumerable.Range(0, 32).Select(i => slots.GetArrayElementAtIndex(i).stringValue).ToArray();
+            var names = (string[])original.Clone();
+            var layers = new List<(int index, string name)>();
+            foreach (var entry in (json["setLayers"] as JArray ?? new JArray()).OfType<JObject>())
+            {
+                var name = (entry.Value<string>("name") ?? string.Empty).Trim();
+                var index = entry.Value<int?>("index");
+                if (index == null)
+                {
+                    if (name.Length == 0)
+                        return Response.Error("INVALID_LAYER", new { param = "setLayers" },
+                            "A layer without an index needs a name. To clear a slot, give its index and an empty name.");
+                    if (Array.IndexOf(names, name) >= 0) continue;
+
+                    index = Array.FindIndex(names, 8, n => n.Length == 0);
+                    if (index < 0)
+                        return Response.Error("NO_FREE_LAYER", new { layer = name }, "All user layer slots (8-31) are taken.");
+                }
+                else if (index < 8 || index > 31)
+                    return Response.Error("INVALID_PARAM", new { param = "setLayers", index }, "User layers are 8 to 31.");
+
+                layers.Add((index.Value, name));
+                names[index.Value] = name;
+            }
 
             var changes = add.Select(t => "add tag " + t).Concat(remove.Select(t => "remove tag " + t))
-                .Concat(layers.Select(l => $"layer {l.index} '{LayerMask.LayerToName(l.index)}' -> '{l.name}'")).ToList();
+                .Concat(layers.Select(l => $"layer {l.index} '{original[l.index]}' -> '{l.name}'")).ToList();
 
             var gate = Gate(confirm, dry_run, changes);
             if (gate != null) return gate;
@@ -387,37 +321,28 @@ namespace KitWright.Editor.Tools.Builtins
             foreach (var tag in add) InternalEditorUtility.AddTag(tag);
             foreach (var tag in remove) InternalEditorUtility.RemoveTag(tag);
 
-            if (layers.Length > 0)
+            if (layers.Count > 0)
             {
-                var so = Singleton("TagManager", out var singletonError);
-                if (so == null) return singletonError;
-
-                var property = so.FindProperty("layers");
+                // The tag calls above wrote TagManager behind this SerializedObject's back.
+                tagManager.Update();
+                slots = tagManager.FindProperty("layers");
                 foreach (var layer in layers)
-                    property.GetArrayElementAtIndex(layer.index).stringValue = layer.name;
-                so.ApplyModifiedProperties();
+                    slots.GetArrayElementAtIndex(layer.index).stringValue = layer.name;
+                tagManager.ApplyModifiedProperties();
             }
 
             AssetDatabase.SaveAssets();
-            return Response.Success($"Applied {changes.Count} change(s).", new { applied = changes });
+            var renamed = layers.Where(l => original[l.index].Length > 0 && original[l.index] != l.name).Select(l => l.index).Distinct().ToArray();
+            return Response.Success($"Applied {changes.Count} change(s).", new { applied = changes },
+                renamed.Length == 0 ? null
+                    : $"GameObjects, camera culling masks and the collision matrix refer to layer slots ({string.Join(", ", renamed)}) by " +
+                      "number, so they keep pointing at the renamed or cleared slot; they are not cleaned up.");
         }
-
-        [Description("Set a GameObject's tag (the tag must already exist).")]
-        public static object SetTag(
-            [ToolParam("Identifier of the GameObject")] string target,
-            [ToolParam("Tag to assign")] string tag) =>
-            GameObjectFunctions.SetTagAndLayer(target, tag: tag);
-
-        [Description("Set a GameObject's layer by name or by index 0-31.")]
-        public static object SetLayer(
-            [ToolParam("Identifier of the GameObject")] string target,
-            [ToolParam("Layer name or index")] string layer) =>
-            GameObjectFunctions.SetTagAndLayer(target, layer: layer);
 
         // ---- Build settings ----
 
         [Description("Set EditorUserBuildSettings fields: {developmentBuild, allowDebugging, connectWithProfiler, buildScriptsOnly, " +
-                     "symlinkSources, il2CppCodeGeneration: OptimizeSpeed|OptimizeSize} as a JSON object. Scenes are add_scene_to_build, " +
+                     "symlinkSources, il2CppCodeGeneration: OptimizeSpeed|OptimizeSize} as a JSON object. Scenes are modify_build_scenes, " +
                      "the target is switch_build_target. Needs confirm=true; dry_run previews.")]
         [ToolProvider("Build")]
         public static object SetBuildSettings(
@@ -489,17 +414,6 @@ namespace KitWright.Editor.Tools.Builtins
 
         // ---- shared ----
 
-        private enum FieldKind { Float, Int }
-
-        private sealed class SettingField
-        {
-            public string Name;
-            public string Path;
-            public FieldKind Kind;
-        }
-
-        private static SettingField Field(string name, string path, FieldKind kind) => new SettingField { Name = name, Path = path, Kind = kind };
-
         private static SerializedObject Singleton(string name, out object error)
         {
             error = null;
@@ -511,50 +425,6 @@ namespace KitWright.Editor.Tools.Builtins
             }
 
             return new SerializedObject(target);
-        }
-
-        private static object ApplySingleton(string singleton, string settings, bool confirm, bool dryRun, SettingField[] fields)
-        {
-            if (!TryParse(settings, out var json, out var error)) return error;
-
-            var so = Singleton(singleton, out error);
-            if (so == null) return error;
-
-            var unknown = json.Properties().Select(p => p.Name).Where(n => fields.All(f => f.Name != n)).ToArray();
-            if (unknown.Length > 0)
-                return Response.Error("UNKNOWN_SETTING", new { unknown, valid = fields.Select(f => f.Name).ToArray() });
-
-            var changes = new List<string>();
-            foreach (var field in fields)
-            {
-                if (!json.ContainsKey(field.Name)) continue;
-                var property = so.FindProperty(field.Path);
-                if (property == null)
-                    return Response.Error("SETTING_NOT_FOUND", new { field = field.Name, path = field.Path }, "This Unity version names the property differently.");
-
-                var wanted = Float(json, field.Name);
-                if (wanted == null)
-                    return Response.Error("INVALID_PARAM", new { param = field.Name, provided = json[field.Name]?.ToString() }, "Expected a number.");
-
-                var current = field.Kind == FieldKind.Int ? property.intValue : property.floatValue;
-                changes.Add($"{field.Name} {current} -> {wanted}");
-            }
-
-            var gate = Gate(confirm, dryRun, changes);
-            if (gate != null) return gate;
-
-            foreach (var field in fields)
-            {
-                if (!json.ContainsKey(field.Name)) continue;
-                var property = so.FindProperty(field.Path);
-                var wanted = Float(json, field.Name).Value;
-                if (field.Kind == FieldKind.Int) property.intValue = (int)wanted;
-                else property.floatValue = wanted;
-            }
-
-            so.ApplyModifiedProperties();
-            AssetDatabase.SaveAssets();
-            return Response.Success($"Applied {changes.Count} change(s).", new { applied = changes });
         }
 
         internal static object Gate(bool confirm, bool dryRun, List<string> changes)
@@ -609,7 +479,7 @@ namespace KitWright.Editor.Tools.Builtins
         }
 
         private static string[] Strings(JToken token) =>
-            token is JArray array ? array.Select(t => t.ToString()).Where(s => s.Length > 0).ToArray() : new string[0];
+            token is JArray array ? array.Select(t => t.ToString().Trim()).ToArray() : new string[0];
 
         private static NamedBuildTarget SelectedTarget() =>
             NamedBuildTarget.FromBuildTargetGroup(EditorUserBuildSettings.selectedBuildTargetGroup);

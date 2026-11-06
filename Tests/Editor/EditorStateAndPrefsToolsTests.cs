@@ -38,8 +38,10 @@ namespace KitWright.Editor.Tests
         {
             // Every test is meant to clean up after itself; these run anyway, because a failed
             // assertion leaves the tail of a test unexecuted and the leftover in the project.
-            Call("remove_tag", "tag", Tag);
-            Call("remove_layer", "layer", Layer);
+            SetTagsLayers("{\"removeTags\":[\"" + Tag + "\"]}");
+            var layer = LayerMask.NameToLayer(Layer);
+            if (layer >= 8)
+                SetTagsLayers("{\"setLayers\":[{\"index\":" + layer + ",\"name\":\"\"}]}");
             Call("remove_sorting_layer", "name", SortingLayer);
             Call("remove_sorting_layer", "name", RenamedSortingLayer);
             Call("delete_editor_pref", "key", PrefKey);
@@ -60,32 +62,43 @@ namespace KitWright.Editor.Tests
         private static bool Lists(string readerTool, string value) =>
             Call(readerTool).ToString().Contains(value);
 
+        private static JObject SetTagsLayers(string settings) =>
+            Call("set_tags_layers", "settings", settings, "confirm", "true");
+
         [Test]
         public void ATagCanBeAddedAndTakenBackOut()
         {
-            AssertSuccess(Call("add_tag", "tag", Tag));
-            Assert.IsTrue(Lists("get_tags", Tag), "get_tags should report a tag that was just added.");
+            AssertSuccess(SetTagsLayers("{\"addTags\":[\"" + Tag + "\"]}"));
+            Assert.IsTrue(Lists("get_tags_layers", Tag), "get_tags_layers should report a tag that was just added.");
 
             // Adding it twice is documented as a no-op rather than an error.
-            AssertSuccess(Call("add_tag", "tag", Tag));
+            AssertSuccess(SetTagsLayers("{\"addTags\":[\"" + Tag + "\"]}"));
 
-            AssertSuccess(Call("remove_tag", "tag", Tag));
-            Assert.IsFalse(Lists("get_tags", Tag));
-            AssertFailed(Call("remove_tag", "tag", Tag));
+            AssertSuccess(SetTagsLayers("{\"removeTags\":[\"" + Tag + "\"]}"));
+            Assert.IsFalse(Lists("get_tags_layers", Tag));
+            AssertFailed(SetTagsLayers("{\"removeTags\":[\"" + Tag + "\"]}"));
         }
 
         [Test]
         public void ALayerTakesTheFirstFreeUserSlotAndGivesItBack()
         {
-            var added = Call("add_layer", "layer", Layer);
-            if ((bool)added["success"] != true)
-                Assert.Ignore($"No free user layer slot in this project: {added}");
+            var firstFree = -1;
+            for (var i = 8; i < 32 && firstFree < 0; i++)
+                if (LayerMask.LayerToName(i).Length == 0) firstFree = i;
+            if (firstFree < 0)
+                Assert.Ignore("No free user layer slot in this project.");
 
-            Assert.IsTrue(Lists("get_layers", Layer), "get_layers should report the new layer.");
+            AssertSuccess(SetTagsLayers("{\"setLayers\":[{\"name\":\"" + Layer + "\"}]}"));
+            Assert.IsTrue(Lists("get_tags_layers", Layer), "get_tags_layers should report the new layer.");
+            Assert.AreEqual(firstFree, LayerMask.NameToLayer(Layer), "A layer without an index takes the first free user slot.");
 
-            AssertSuccess(Call("remove_layer", "layer", Layer));
-            Assert.IsFalse(Lists("get_layers", Layer));
-            AssertFailed(Call("remove_layer", "layer", Layer));
+            var slots = (JArray)Call("get_tags_layers", "include_empty_layers", "true")["data"]["layers"];
+            Assert.AreEqual(32, slots.Count, "include_empty_layers lists every slot, the unused ones too.");
+
+            Assert.AreEqual("INVALID_LAYER", (string)SetTagsLayers("{\"setLayers\":[{\"name\":\"  \"}]}")["code"]);
+
+            AssertSuccess(SetTagsLayers("{\"setLayers\":[{\"index\":" + firstFree + ",\"name\":\"\"}]}"));
+            Assert.IsFalse(Lists("get_tags_layers", Layer));
         }
 
         [Test]

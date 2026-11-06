@@ -339,14 +339,12 @@ namespace KitWright.Editor.Tests
                 ["name"] = name,
                 ["arguments"] = new Dictionary<string, object> { [argument] = value }
             };
-            Assert.AreEqual(600 + 120, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("execute_code_file", "timeout_seconds", 600)));
-            Assert.AreEqual(600 + 120, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("eval", "timeout", 600_000)),
-                "eval takes milliseconds, as the Unity CLI's does");
-            Assert.AreEqual(601 + 120, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("Eval_File", "timeout", 600_001)), "rounded up");
-            Assert.AreEqual(180, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("eval", "timeout", 5000)));
-            Assert.AreEqual(180, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("eval", "timeout", "soon")), "unreadable = no request");
+            Assert.AreEqual(600 + 120, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("Execute_Code_File", "timeout_seconds", 600)));
+            Assert.AreEqual(180, ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("execute_code_file", "timeout_seconds", "soon")),
+                "unreadable = no request");
             Assert.AreEqual(ToolRegistry.MaxExecuteCodeTimeoutSeconds + 120,
-                ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("eval", "timeout", 1_000_000_000_000L)), "clamped under the broker's deadline");
+                ToolRegistry.TimeoutSecondsForRequest("tools/call", Call("execute_code_file", "timeout_seconds", 1_000_000_000_000L)),
+                "clamped under the broker's deadline");
         }
 
         [Test]

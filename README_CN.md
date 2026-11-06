@@ -375,28 +375,28 @@ Unity 在 2026 年 7 月发布了 Unity CLI 与实验性的 `com.unity.pipeline`
 ## 内置工具
 
 <!-- tools-summary:start -->
-KitWright MCP for Unity 当前提供 **388 个工具函数，覆盖 36 个模块**（`core` profile 暴露其中 53 个）。
+KitWright MCP for Unity 当前提供 **298 个工具函数，覆盖 36 个模块**（`core` profile 暴露其中 51 个）。
 
 | 模块 | 工具数 | 模块 | 工具数 |
 |------|--------|------|--------|
-| **ProjectSettings** | 32 | **Terrain** | 8 |
-| **GameObject** | 29 | **AssemblyDefinition** | 7 |
-| **Editor** | 26 | **File** | 7 |
-| **Profiling** | 23 | **InputSimulation** | 7 |
-| **Asset** | 20 | **Prefs** | 7 |
-| **NavMesh** | 17 | **UI** | 7 |
-| **Animation** | 15 | **Addressable** | 6 |
-| **Rendering** | 15 | **Audio** | 6 |
-| **Sprites & Textures** | 14 | **Code** | 6 |
-| **Build** | 12 | **InputActions** | 6 |
-| **Materials & Shaders** | 12 | **Screenshot** | 6 |
-| **Prefab** | 12 | **Testing** | 6 |
-| **Lighting** | 11 | **Console** | 5 |
-| **Compilation** | 10 | **SceneView** | 5 |
-| **Scene** | 10 | **Timeline** | 5 |
-| **ExecuteCode** | 9 | **Docs** | 4 |
-| **Package** | 9 | **MCP** | 3 |
-| **PlayMode** | 8 | **Physics** | 3 |
+| **Editor** | 22 | **Addressable** | 6 |
+| **Profiling** | 21 | **Audio** | 6 |
+| **GameObject** | 17 | **ExecuteCode** | 6 |
+| **Asset** | 16 | **InputActions** | 6 |
+| **ProjectSettings** | 16 | **Materials & Shaders** | 6 |
+| **Rendering** | 15 | **Package** | 6 |
+| **Animation** | 13 | **Scene** | 6 |
+| **Sprites & Textures** | 12 | **File** | 5 |
+| **Prefab** | 11 | **PlayMode** | 5 |
+| **Build** | 9 | **Screenshot** | 5 |
+| **Lighting** | 9 | **Timeline** | 5 |
+| **NavMesh** | 9 | **Code** | 4 |
+| **Compilation** | 8 | **SceneView** | 4 |
+| **Terrain** | 8 | **Testing** | 4 |
+| **AssemblyDefinition** | 7 | **Console** | 3 |
+| **InputSimulation** | 7 | **Physics** | 3 |
+| **Prefs** | 7 | **Docs** | 2 |
+| **UI** | 7 | **MCP** | 2 |
 
 > 📖 每个工具及其说明见 [TOOLS.md](TOOLS.md)。
 <!-- tools-summary:end -->

@@ -49,5 +49,14 @@ namespace KitWright.Editor.Tests
             // which missed the occupancy check and then failed to save while reporting success.
             StringAssert.Contains("SCENE_EXISTS", SceneFunctions.CreateNewScene("Occupied", TestFolder).ToString());
         }
+
+        [Test]
+        public void CreateNewScene_UnknownTemplate_IsRefusedBeforeAnySceneIsMade()
+        {
+            var result = SceneFunctions.CreateNewScene("KwNeverMade", TestFolder, additive: true, template: "fancy");
+
+            StringAssert.Contains("INVALID_PARAM", result);
+            Assert.IsFalse(File.Exists(TestFolder + "/KwNeverMade.unity"));
+        }
     }
 }

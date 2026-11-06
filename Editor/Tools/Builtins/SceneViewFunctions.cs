@@ -41,22 +41,8 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Aligned Scene View to '{go.name}'.", DescribeView(view));
         }
 
-        [Description("Point the Scene View camera at a world position without changing distance much. Rotates the view to look toward the given point.")]
-        public static object LookAtPoint(
-            [ToolParam("World position to look at as 'x,y,z'")] string point,
-            [ToolParam("Optional camera distance from the point", Required = false)] float distance = -1f)
-        {
-            if (!TryGetSceneView(out var view, out var noView)) return noView;
-            if (!ValueConverter.TryParseVector3(point, out var p, out _)) return Response.Error("INVALID_VECTOR", new { point });
-
-            float size = distance > 0f ? distance : view.size;
-            view.LookAt(p, view.rotation, size);
-            view.Repaint();
-
-            return Response.Success($"Scene View looking at {p}.", DescribeView(view));
-        }
-
-        [Description("Manually set the Scene View camera pivot, rotation (euler degrees), and orbit size (distance). Any omitted value is kept. Use for precise framing.")]
+        [Description("Manually set the Scene View camera pivot, rotation (euler degrees), and orbit size (distance). Any omitted value is kept, " +
+                     "so pivot alone centres the view on a world point at its current angle. Use for precise framing.")]
         public static object SetSceneViewCamera(
             [ToolParam("Pivot (look-at center) as 'x,y,z'", Required = false)] string pivot = null,
             [ToolParam("Rotation euler degrees as 'x,y,z'", Required = false)] string rotation = null,
@@ -64,9 +50,18 @@ namespace KitWright.Editor.Tools.Builtins
         {
             if (!TryGetSceneView(out var view, out var noView)) return noView;
 
-            if (!string.IsNullOrEmpty(pivot) && ValueConverter.TryParseVector3(pivot, out var p, out _))
+            var p = default(Vector3);
+            var r = default(Vector3);
+            var hasPivot = !string.IsNullOrEmpty(pivot);
+            var hasRotation = !string.IsNullOrEmpty(rotation);
+            if (hasPivot && !ValueConverter.TryParseVector3(pivot, out p, out _))
+                return Response.Error("INVALID_VECTOR", new { pivot });
+            if (hasRotation && !ValueConverter.TryParseVector3(rotation, out r, out _))
+                return Response.Error("INVALID_VECTOR", new { rotation });
+
+            if (hasPivot)
                 view.pivot = p;
-            if (!string.IsNullOrEmpty(rotation) && ValueConverter.TryParseVector3(rotation, out var r, out _))
+            if (hasRotation)
                 view.rotation = Quaternion.Euler(r);
             if (size > 0f)
                 view.size = size;

@@ -75,8 +75,9 @@ namespace KitWright.Editor.Tests
         [Test]
         public void RemoveAnimationCurve_NeedsConfirm_ThenRemovesTheBinding()
         {
-            AnimationFunctions.CreateAnimationClip("Clip", Folder + "/");
-            AnimationFunctions.SetClipCurve(ClipPath, "m_LocalPosition.x", "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":2}]");
+            AssetDatabase.CreateAsset(new AnimationClip(), ClipPath);
+            AssertSuccess(UnityCliAssetFunctions.SetAnimationCurve(ClipPath, "Transform", "m_LocalPosition.x",
+                "[{\"time\":0,\"value\":0},{\"time\":1,\"value\":2}]"));
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath);
             var binding = EditorCurveBinding.FloatCurve(string.Empty, typeof(Transform), "m_LocalPosition.x");
 
@@ -100,7 +101,7 @@ namespace KitWright.Editor.Tests
             AssertError(BakeControlFunctions.CancelLightingBake(), "NO_BAKE_RUNNING");
             AssertError(BakeControlFunctions.CancelOcclusionBake(), "NO_BAKE_RUNNING");
             Assert.AreEqual("idle", (string)AssertSuccess(BakeControlFunctions.OcclusionBakeStatus())["data"]["state"]);
-            Assert.AreEqual("idle", (string)AssertSuccess(BakeControlFunctions.LightingBakeStatus())["data"]["state"]);
+            Assert.IsFalse((bool)AssertSuccess(LightingFunctions.GetLightingSettings())["data"]["is_running"]);
         }
 
         [Test]
@@ -262,10 +263,8 @@ namespace KitWright.Editor.Tests
 
 #if KITWRIGHT_AI
         [Test]
-        public void NavMeshBakeControl_ReportsIdle_RefusesToCancelNothing_AndReadsTheAgentSettings()
+        public void NavMeshBakeControl_ReadsTheAgentSettings()
         {
-            Assert.AreEqual("idle", (string)AssertSuccess(NavMeshBakeFunctions.NavMeshBakeStatus())["data"]["state"]);
-            AssertError(NavMeshBakeFunctions.CancelNavMeshBake(), "NO_BAKE_RUNNING");
             Assert.GreaterOrEqual(((JArray)AssertSuccess(NavMeshBakeFunctions.GetNavMeshSettings())["data"]["agents"]).Count, 1);
         }
 #endif
@@ -355,20 +354,6 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void AttachScript_RefusesAMissingScript()
-        {
-            var go = new GameObject("KwAttachProbe");
-            try
-            {
-                AssertError(AttachScriptFunctions.AttachScript(go.GetInstanceID().ToString(), "Assets/NoSuchScript.cs"), "SCRIPT_NOT_FOUND");
-            }
-            finally
-            {
-                Object.DestroyImmediate(go);
-            }
-        }
-
-        [Test]
         public void ImportAsset_CopiesTheFile_AndRefusesToReplaceItWithoutConfirm()
         {
             var source = Path.Combine(Path.GetTempPath(), "kw_import_source.txt");
@@ -386,24 +371,6 @@ namespace KitWright.Editor.Tests
             {
                 File.Delete(source);
             }
-        }
-
-        [Test]
-        public void SavePrefabContents_RenamesAChild_AndLeavesThePrefabAloneWhenAChildIsMissing()
-        {
-            const string prefabPath = Folder + "/Thing.prefab";
-            var root = new GameObject("Thing");
-            new GameObject("Body").transform.SetParent(root.transform);
-            PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
-            Object.DestroyImmediate(root);
-
-            AssertError(EditorUtilityFunctions.SavePrefabContents(prefabPath, "Body", "Torso", "Missing"), "CHILD_NOT_FOUND");
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).transform.Find("Body"));
-
-            AssertSuccess(EditorUtilityFunctions.SavePrefabContents(prefabPath, "Body", "Torso", "Body", false));
-            var saved = AssetDatabase.LoadAssetAtPath<GameObject>(prefabPath).transform.Find("Torso");
-            Assert.IsNotNull(saved);
-            Assert.IsFalse(saved.gameObject.activeSelf);
         }
     }
 }

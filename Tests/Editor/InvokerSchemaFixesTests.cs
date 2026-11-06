@@ -344,7 +344,7 @@ namespace KitWright.Editor.Tests
                 ToolRegistry.ScanAssemblies(new Assembly[] { new PartiallyLoadableAssembly(), typeof(FunctionInvoker).Assembly });
 
                 Assert.IsNotNull(ToolRegistry.GetMethod(ProbeTool), "The loadable half of the assembly was dropped with the rest.");
-                Assert.IsNotNull(ToolRegistry.GetMethod("create_script"));
+                Assert.IsNotNull(ToolRegistry.GetMethod("write_file"));
             }
             finally { ToolRegistry.ScanAssemblies(); }
         }

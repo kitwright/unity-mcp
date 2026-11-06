@@ -31,23 +31,6 @@ namespace KitWright.Editor.Tools.Builtins
             return $"Created Animator Controller at {fullPath}";
         }
 
-        [Description("Create an Animation Clip asset. Refuses to replace an existing asset unless overwrite=true.")]
-        public static string CreateAnimationClip(
-            [ToolParam("Name of the animation clip (file name only, no folders)")] string name,
-            [ToolParam("Folder to save into", Required = false)] string save_path = "Assets/Animations/",
-            [ToolParam("Replace a clip that already exists at that path", Required = false)] bool overwrite = false)
-        {
-            if (!TryPrepareNewAsset(name, save_path, ".anim", "ANIMATION_CLIP_EXISTS", overwrite, out var fullPath, out var error))
-                return error;
-
-            var clip = new AnimationClip();
-            clip.name = name;
-
-            AssetDatabase.CreateAsset(clip, fullPath);
-            AssetDatabase.Refresh();
-            return $"Created Animation Clip at {fullPath}";
-        }
-
         [Description("Assign an Animator Controller to a GameObject")]
         public static string AssignAnimator(
             [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string game_object_name,
@@ -457,74 +440,6 @@ namespace KitWright.Editor.Tools.Builtins
             SaveController(controller);
             return $"Added transition {from_state} -> {to_state} on layer {layer} of '{controller_path}' " +
                    $"({conditionCount} condition(s), exitTime={has_exit_time}, duration={duration}).";
-        }
-
-        [Description("Write a float curve into an Animation Clip. create_animation_clip makes an empty clip; this is " +
-                     "what puts animation in it.\n" +
-                     "keys is a JSON array of {\"time\":<seconds>,\"value\":<float>} — at least two to see movement. " +
-                     "property is the serialized field name, which for a Transform is a single axis: " +
-                     "'m_LocalPosition.x', 'm_LocalScale.y', 'm_LocalRotation.z'. relative_path is the child path " +
-                     "under the animated root ('' for the root itself, 'Body/Head' for a descendant). " +
-                     "Curves are linear-interpolated between keys; re-running for the same binding replaces it.")]
-        public static string SetClipCurve(
-            [ToolParam("Path to the .anim clip asset")] string clip_path,
-            [ToolParam("Serialized property name, e.g. 'm_LocalPosition.x'")] string property,
-            [ToolParam("JSON array of {time, value} keyframes")] string keys,
-            [ToolParam("Child path under the animated root. Empty for the root object.", Required = false)] string relative_path = "",
-            [ToolParam("Component type the property lives on. Default 'Transform'.", Required = false)] string type = "Transform")
-        {
-            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clip_path);
-            if (clip == null)
-                return ToolResultFormatter.Error("ANIMATION_CLIP_NOT_FOUND", new { clip_path });
-
-            var componentType = TypeResolver.Resolve(type);
-            if (componentType == null)
-                return ToolResultFormatter.Error("TYPE_NOT_FOUND", new { type });
-
-            if (string.IsNullOrWhiteSpace(property))
-                return ToolResultFormatter.Error("INVALID_PARAM", new { param = "property", provided = property });
-
-            JArray parsedKeys;
-            try { parsedKeys = JsonParse.Array(keys); }
-            catch (Exception ex) { return ToolResultFormatter.Error("INVALID_KEYS_JSON", new { message = ex.Message }); }
-
-            if (parsedKeys.Count == 0)
-                return ToolResultFormatter.Error("NO_KEYFRAMES", new { hint = "Pass at least one {time, value} pair." });
-
-            var keyframes = new Keyframe[parsedKeys.Count];
-            var times = new HashSet<float>();
-            for (var i = 0; i < parsedKeys.Count; i++)
-            {
-                if (!(parsedKeys[i] is JObject key))
-                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = "Each key must be an object like {\"time\":0,\"value\":1}." });
-
-                var time = key["time"];
-                var value = key["value"];
-                if (time == null || value == null)
-                    return ToolResultFormatter.Error("INVALID_KEYFRAME", new { index = i, hint = "Each key needs both 'time' and 'value'." });
-                if (!TryFiniteNumber(time, out var timeValue) || !TryFiniteNumber(value, out var valueValue))
-                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = "'time' and 'value' must be finite numbers." });
-                if (!times.Add(timeValue))
-                    return ToolResultFormatter.Error("INVALID_PARAM", new { param = "keys", index = i, hint = $"Another key already has time {timeValue}; times must be distinct." });
-
-                keyframes[i] = new Keyframe(timeValue, valueValue);
-            }
-
-            var curve = new AnimationCurve(keyframes);
-            for (var i = 0; i < curve.length; i++)
-            {
-                AnimationUtility.SetKeyLeftTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
-                AnimationUtility.SetKeyRightTangentMode(curve, i, AnimationUtility.TangentMode.Linear);
-            }
-
-            var binding = EditorCurveBinding.FloatCurve(relative_path ?? string.Empty, componentType, property);
-            Undo.RecordObject(clip, $"Set curve {property} on {clip.name}");
-            AnimationUtility.SetEditorCurve(clip, binding, curve);
-            EditorUtility.SetDirty(clip);
-            AssetDatabase.SaveAssetIfDirty(clip);
-
-            return $"Set {curve.length}-key curve on '{property}' ({componentType.Name}, path '{relative_path}') in '{clip_path}'. " +
-                   $"Clip length is now {clip.length:0.###}s.";
         }
 
         // -------- Helpers --------

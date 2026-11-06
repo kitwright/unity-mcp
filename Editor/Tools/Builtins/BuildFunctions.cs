@@ -14,89 +14,9 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Build")]
     internal static class BuildFunctions
     {
-        [Description("Build a standalone/player build with Unity's BuildPipeline. Runs synchronously and blocks until the build finishes, then returns the result summary (size, errors, warnings, output path). " +
-                     "By default builds the enabled scenes from Build Settings to the active build target. This can take a long time for large projects. " +
-                     "An output folder that is the project root, contains the project, or is Assets, ProjectSettings, Library, Packages, UserSettings, Temp or Logs is refused (OUTPUT_PATH_REFUSED).")]
-        [LongRunningTool(1800)]
-        public static object BuildPlayer(
-            [ToolParam("Target platform: windows64, windows32, osx, linux64, android, ios, webgl, uwp, tvos. Empty = active build target.", Required = false)] string target = null,
-            [ToolParam("Output path (relative to project root or absolute). Empty = 'Builds/<target>/<product>.<ext>'.", Required = false)] string output_path = null,
-            [ToolParam("Comma-separated scene paths to include. Empty = enabled scenes from Build Settings.", Required = false)] string scenes = null,
-            [ToolParam("Development build (adds Development flag, debug symbols).", Required = false)] bool development = false)
-        {
-            if (!TryResolveTarget(target, out var buildTarget))
-                return Response.Error("UNKNOWN_TARGET", new { target, valid = "windows64, windows32, osx, linux64, android, ios, webgl, uwp, tvos" });
-
-            var sceneArray = string.IsNullOrWhiteSpace(scenes)
-                ? EditorBuildSettings.scenes.Where(s => s.enabled).Select(s => s.path).ToArray()
-                : scenes.Split(',').Select(NormalizeScenePath).Where(s => s.Length > 0).ToArray();
-
-            if (sceneArray.Length == 0)
-                return Response.Error("NO_SCENES", new { message = "No scenes to build. Enable scenes in Build Settings or pass the scenes parameter." });
-
-            var missing = sceneArray.Where(p => !SceneExists(p)).ToArray();
-            if (missing.Length > 0)
-                return Response.Error("SCENE_NOT_FOUND", new { missing }, SceneHint);
-
-            var outputPath = string.IsNullOrWhiteSpace(output_path)
-                ? DefaultOutputPath(buildTarget, PlayerSettings.productName)
-                : output_path;
-
-            // Deliberately NOT confined to the project: builds land in C:\Builds or a CI output
-            // directory as a matter of course, and that is the tool's job. What it must never do is
-            // write a player over the operating system or over the project's own folders.
-            outputPath = System.IO.Path.GetFullPath(outputPath);
-            if (IsSystemLocation(outputPath))
-                return Response.Error("OUTPUT_PATH_REFUSED", new { outputPath },
-                    "That path is inside a system directory. Pick a build folder.");
-
-            if (IsProtectedBuildOutput(outputPath, ApplicationPaths.ProjectRoot))
-                return Response.Error("OUTPUT_PATH_REFUSED", new { outputPath },
-                    "A build fills its output folder, and this one is the project root, a folder that contains the " +
-                    "project, or Assets, ProjectSettings, Library, Packages, UserSettings, Temp or Logs. Pick a build folder such as 'Builds'.");
-
-            var options = new BuildPlayerOptions
-            {
-                target = buildTarget,
-                targetGroup = BuildPipeline.GetBuildTargetGroup(buildTarget),
-                locationPathName = outputPath,
-                scenes = sceneArray,
-                options = development ? BuildOptions.Development : BuildOptions.None
-            };
-
-            try
-            {
-                var report = BuildPipeline.BuildPlayer(options);
-                var summary = report.summary;
-                bool ok = summary.result == BuildResult.Succeeded;
-
-                var data = new
-                {
-                    result = summary.result.ToString(),
-                    target = buildTarget.ToString(),
-                    outputPath,
-                    sceneCount = sceneArray.Length,
-                    totalSizeMb = Math.Round(summary.totalSize / (1024.0 * 1024.0), 2),
-                    totalErrors = summary.totalErrors,
-                    totalWarnings = summary.totalWarnings,
-                    durationSeconds = Math.Round(summary.totalTime.TotalSeconds, 1),
-                    // A failure count with no message sends the caller to Editor.log to find out
-                    // what "1 error" was, which is the one thing this response should already know.
-                    errors = CollectBuildErrors(report)
-                };
-
-                return ok
-                    ? Response.Success($"Build succeeded: {buildTarget} → {outputPath}", data)
-                    : Response.Error("BUILD_FAILED", data);
-            }
-            catch (Exception ex)
-            {
-                return Response.Error("BUILD_EXCEPTION", new { target = buildTarget.ToString(), message = ex.Message });
-            }
-        }
-
         private const int MaxReportedBuildErrors = 5;
 
+        // A failure count with no message sends the caller to Editor.log to find out what "1 error" was.
         internal static string[] CollectBuildErrors(BuildReport report)
         {
             if (report?.steps == null)

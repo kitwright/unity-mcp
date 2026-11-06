@@ -378,10 +378,10 @@ namespace KitWright.Editor.Tests
         [UnityTest]
         public IEnumerator Batch_ReferencesAnEarlierResultById()
         {
-            var batch = UnityCliEditorFunctions.Batch(
-                "[{\"id\":\"go\",\"command\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-ref\"}}," +
-                "{\"command\":\"add_component\",\"params\":{\"target\":\"$go.instanceId\",\"component_type\":\"Light\"}}," +
-                "{\"command\":\"create_game_object\",\"params\":{\"name\":\"$0.99\"}}]");
+            var batch = BatchFunctions.BatchExecute(
+                "[{\"id\":\"go\",\"name\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-ref\"}}," +
+                "{\"name\":\"add_component\",\"params\":{\"target\":\"$go.instanceId\",\"component_type\":\"Light\"}}," +
+                "{\"name\":\"create_game_object\",\"params\":{\"name\":\"$0.99\"}}]", resolve_references: true);
             try
             {
                 yield return WaitForTask(batch);
@@ -401,10 +401,10 @@ namespace KitWright.Editor.Tests
         [UnityTest]
         public IEnumerator Batch_AMissingPathFailsThatOperationAndStops()
         {
-            var batch = UnityCliEditorFunctions.Batch(
-                "[{\"id\":\"state\",\"command\":\"get_editor_state\",\"params\":{}}," +
-                "{\"command\":\"create_game_object\",\"params\":{\"name\":\"$state.noSuchField\"}}," +
-                "{\"command\":\"get_editor_state\",\"params\":{}}]");
+            var batch = BatchFunctions.BatchExecute(
+                "[{\"id\":\"state\",\"name\":\"get_editor_state\",\"params\":{}}," +
+                "{\"name\":\"create_game_object\",\"params\":{\"name\":\"$state.noSuchField\"}}," +
+                "{\"name\":\"get_editor_state\",\"params\":{}}]", resolve_references: true);
             yield return WaitForTask(batch);
 
             var envelope = JObject.Parse(JsonConvert.SerializeObject(batch.Result));
@@ -416,13 +416,26 @@ namespace KitWright.Editor.Tests
         [UnityTest]
         public IEnumerator Batch_RefusesADuplicateIdBeforeRunning()
         {
-            var batch = UnityCliEditorFunctions.Batch(
-                "[{\"id\":\"a\",\"command\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-dup\"}}," +
-                "{\"id\":\"a\",\"command\":\"get_editor_state\",\"params\":{}}]");
+            var batch = BatchFunctions.BatchExecute(
+                "[{\"id\":\"a\",\"name\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-dup\"}}," +
+                "{\"id\":\"a\",\"name\":\"get_editor_state\",\"params\":{}}]", resolve_references: true);
             yield return WaitForTask(batch);
 
             Assert.AreEqual("DUPLICATE_ID", JObject.Parse(JsonConvert.SerializeObject(batch.Result))["code"].Value<string>());
             Assert.IsNull(GameObject.Find("kw-batch-dup"), "nothing ran");
+        }
+
+        [UnityTest]
+        public IEnumerator BatchExecute_DryRunValidatesNamesAndRunsNothing()
+        {
+            var unknown = BatchFunctions.BatchExecute("[{\"name\":\"no_such_tool\"}]", dry_run: true);
+            yield return WaitForTask(unknown);
+            Assert.AreEqual("UNKNOWN_TOOL", JObject.Parse(JsonConvert.SerializeObject(unknown.Result))["code"].Value<string>());
+
+            var valid = BatchFunctions.BatchExecute("[{\"name\":\"create_game_object\",\"params\":{\"name\":\"kw-batch-dry\"}}]", dry_run: true);
+            yield return WaitForTask(valid);
+            Assert.IsTrue(JObject.Parse(JsonConvert.SerializeObject(valid.Result))["data"]["dry_run"].Value<bool>());
+            Assert.IsNull(GameObject.Find("kw-batch-dry"), "nothing ran");
         }
 
         [UnityTest]
@@ -446,7 +459,7 @@ namespace KitWright.Editor.Tests
         {
             Assert.AreEqual(170, ToolRegistry.BatchBudgetSeconds(new[] { "get_hierarchy", "set_transform" }, 170));
             Assert.AreEqual(170 + 900, ToolRegistry.BatchBudgetSeconds(new[] { "bake_nav_mesh", "get_hierarchy" }, 170));
-            Assert.AreEqual(1800, ToolRegistry.BatchBudgetSeconds(new[] { "build_player", "bake_nav_mesh" }, 170),
+            Assert.AreEqual(1800, ToolRegistry.BatchBudgetSeconds(new[] { "switch_build_target", "bake_nav_mesh" }, 170),
                 "capped under the broker's hold deadline");
 
             var call = new System.Collections.Generic.Dictionary<string, object>

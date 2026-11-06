@@ -26,16 +26,24 @@ namespace KitWright.Editor.Tools.Builtins
                      "The scene changes the whole batch makes collapse into a single Undo step, so the user can revert " +
                      "the batch with one Ctrl+Z instead of one per command. File writes, asset imports and play-mode " +
                      "changes are outside Unity's undo system and are not reverted by it. " +
-                     "rollback_on_error=true also reverts that step when the batch stops on a failure or its time budget.")]
+                     "rollback_on_error=true also reverts that step when the batch stops on a failure or its time budget. " +
+                     "resolve_references=true lets a command use an earlier command's result; dry_run validates without running.")]
         public static async Task<object> BatchExecute(
-            [ToolParam("JSON array of commands, e.g. [{\"name\":\"create_primitive\",\"params\":{\"primitive_type\":\"Cube\"}},{\"name\":\"get_hierarchy\",\"params\":{}}]")] string commands,
+            [ToolParam("JSON array of commands, e.g. [{\"name\":\"create_game_object\",\"params\":{\"name\":\"Box\",\"primitive\":\"Cube\"}},{\"name\":\"get_hierarchy\",\"params\":{}}]. " +
+                       "With resolve_references each command may carry an id matching ^[A-Za-z_][A-Za-z0-9_-]*$, unique in the batch.")] string commands,
             [ToolParam("Stop the batch when a call fails (default true). If false, remaining calls still run.", Required = false)] bool stop_on_error = true,
             [ToolParam("Name shown in Unity's Edit > Undo menu for the collapsed step.", Required = false)] string undo_label = null,
             [ToolParam("Revert the batch's Undo-tracked scene changes when it stops on a failure or its time budget (default false). " +
                        "File, asset, settings and Play Mode changes are not reverted. With stop_on_error=false only the time budget " +
                        "stops the batch, so only that rolls it back. Edits made in the Editor while the batch runs are reverted with it. " +
                        "undo/redo commands are refused; execute_menu_item 'Edit/Undo' or Undo.PerformUndo in execute_code are not " +
-                       "caught and can pop an Undo step from before the batch.", Required = false)] bool rollback_on_error = false)
+                       "caught and can pop an Undo step from before the batch.", Required = false)] bool rollback_on_error = false,
+            [ToolParam("Replace a string param whose whole value is \"$<id or index>.<path>\" with that earlier command's result, read " +
+                       "under its data first (\"$0.instanceId\"), then the whole result (\"$0.data.instanceId\"). The path starts with a " +
+                       "letter or '_', so \"$0.99\" stays text, and \"$$<id>.<path>\" passes \"$<id>.<path>\" through literally. A reference " +
+                       "to a later, failed or unknown command, or a path that is not there, fails that command with UNRESOLVED_REFERENCE. " +
+                       "Default false: every string arrives as written.", Required = false)] bool resolve_references = false,
+            [ToolParam("Validate the command names (and the ids, with resolve_references) without running anything.", Required = false)] bool dry_run = false)
         {
             JArray parsed;
             try
@@ -47,13 +55,13 @@ namespace KitWright.Editor.Tools.Builtins
                 return Response.Error("INVALID_COMMANDS", new { message = ex.Message, expected = "a JSON array of {name, params} objects" });
             }
 
-            return await Run(parsed, stop_on_error, undo_label, rollback_on_error, resolveReferences: false);
+            return await Run(parsed, stop_on_error, undo_label, rollback_on_error, resolve_references, dry_run);
         }
 
-        // batch_execute has shipped without references, so only the CLI-shape batch resolves them: a "$5.99"
-        // label a client already sends must still arrive as text.
+        // References are opt-in because batch_execute shipped without them: a "$5.99" label a client already
+        // sends must still arrive as text.
         internal static async Task<object> Run(
-            JArray parsed, bool stop_on_error, string undo_label, bool rollback_on_error, bool resolveReferences)
+            JArray parsed, bool stop_on_error, string undo_label, bool rollback_on_error, bool resolveReferences, bool dryRun = false)
         {
             var cancellation = RequestCancellation.EntryToken;
             if (parsed.Count == 0)
@@ -79,8 +87,18 @@ namespace KitWright.Editor.Tools.Builtins
                     if (names[i] != null && ClearsUndoHistory.Contains(names[i]))
                         return Response.Error("NOT_TRANSACTIONAL", new { index = i, name = names[i] },
                             $"{names[i]} clears the Undo history or reloads the domain, so a batch that rolls back on error cannot revert past it. " +
-                            "Run it on its own, or turn the rollback off (rollback_on_error=false, or transactional=false for batch).");
+                            "Run it on its own, or set rollback_on_error=false.");
                 }
+            }
+
+            if (dryRun)
+            {
+                var unknown = names.Select((n, at) => new { index = at, name = n })
+                    .Where(c => string.IsNullOrEmpty(c.name) || (ToolRegistry.GetMethod(c.name) == null && !ToolRegistry.IsManualTool(c.name)))
+                    .ToArray();
+                return unknown.Length > 0
+                    ? Response.Error("UNKNOWN_TOOL", new { commands = unknown }, "Every command needs a name naming a registered tool.")
+                    : Response.Success($"{parsed.Count} command(s) are valid; nothing ran.", new { count = parsed.Count, dry_run = true });
             }
 
             var invoker = new FunctionInvoker();

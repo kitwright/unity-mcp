@@ -13,7 +13,7 @@ using UnityEngine.AI;
 
 namespace KitWright.Editor.Tools.Builtins
 {
-    /// <summary>The NavMesh tools under the Unity CLI's spelling (navmesh, one word); KitWright's own are bake_nav_mesh and its family.</summary>
+    /// <summary>The Unity CLI's typed NavMesh settings write (navmesh, one word); KitWright's own are bake_nav_mesh and its family.</summary>
     [ToolProvider("NavMesh")]
     internal static class UnityCliNavMeshFunctions
     {
@@ -27,24 +27,6 @@ namespace KitWright.Editor.Tools.Builtins
             ("minRegionArea", "m_Settings.Array.data[0].minRegionArea"),
             ("voxelSize", "m_Settings.Array.data[0].cellSize")
         };
-
-        [Description("Bake the legacy scene NavMesh, like bake_nav_mesh.")]
-        [LongRunningTool(900)]
-        public static object BakeNavmesh() => NavMeshFunctions.BakeNavMesh();
-
-        [Description("Clear the baked legacy NavMesh of the scene, like clear_nav_mesh.")]
-        public static object ClearNavmesh() => NavMeshFunctions.ClearNavMesh();
-
-        [Description("Report whether a legacy NavMesh bake is running: baking or idle.")]
-        [ReadOnlyTool]
-        public static object NavmeshBakeStatus() => NavMeshBakeFunctions.NavMeshBakeStatus();
-
-        [Description("Cancel a running legacy NavMesh bake.")]
-        public static object CancelNavmeshBake() => NavMeshBakeFunctions.CancelNavMeshBake();
-
-        [Description("Read the legacy NavMesh bake settings of the agents (the first is the default agent).")]
-        [ReadOnlyTool]
-        public static object GetNavmeshSettings() => NavMeshBakeFunctions.GetNavMeshSettings();
 
         [Description("Apply a subset of the legacy NavMesh bake settings to the default agent: settings is a JSON object with agentRadius, " +
                      "agentHeight, agentSlope, agentClimb, minRegionArea and/or voxelSize. Reports {applied, unknown}. dry_run validates only.")]

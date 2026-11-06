@@ -4,6 +4,7 @@
 using System.Globalization;
 using System.Linq;
 using KitWright.Editor.Tools.Builtins;
+using Newtonsoft.Json;
 using NUnit.Framework;
 using UnityEditor;
 using UnityEditor.Animations;
@@ -21,7 +22,7 @@ namespace KitWright.Editor.Tests
         public void SetUp()
         {
             AnimationFunctions.CreateAnimatorController("Ctrl", Folder + "/");
-            AnimationFunctions.CreateAnimationClip("Clip", Folder + "/");
+            AssetDatabase.CreateAsset(new AnimationClip(), ClipPath);
         }
 
         [TearDown]
@@ -190,11 +191,11 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual("Hit", StateMachine().anyStateTransitions.Single().destinationState.name);
         }
 
-        // create_animation_clip returns a clip of length 0; a curve is what makes it an animation.
+        // A new clip has length 0; a curve is what makes it an animation.
         [Test]
-        public void SetClipCurve_GivesTheClipRealLengthAndABinding()
+        public void SetAnimationCurve_GivesTheClipRealLengthAndABinding()
         {
-            AnimationFunctions.SetClipCurve(ClipPath, "m_LocalPosition.x",
+            UnityCliAssetFunctions.SetAnimationCurve(ClipPath, "Transform", "m_LocalPosition.x",
                 "[{\"time\":0,\"value\":0},{\"time\":0.5,\"value\":3},{\"time\":1,\"value\":0}]");
 
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath);
@@ -223,10 +224,10 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void SetClipCurve_MalformedKeysAreRejectedInsteadOfWritingAnEmptyCurve()
+        public void SetAnimationCurve_MalformedKeysAreRejectedInsteadOfWritingAnEmptyCurve()
         {
-            StringAssert.Contains("INVALID_KEYFRAME",
-                AnimationFunctions.SetClipCurve(ClipPath, "m_LocalPosition.x", "[{\"time\":0}]"));
+            StringAssert.Contains("INVALID_KEYFRAME", JsonConvert.SerializeObject(
+                UnityCliAssetFunctions.SetAnimationCurve(ClipPath, "Transform", "m_LocalPosition.x", "[{\"time\":0}]")));
 
             var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(ClipPath);
             Assert.IsEmpty(AnimationUtility.GetCurveBindings(clip));

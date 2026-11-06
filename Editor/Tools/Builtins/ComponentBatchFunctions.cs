@@ -153,55 +153,6 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"Pasted the component clipboard onto {success} of {gos.Count} target(s).{UnresolvedNote(unresolved)}", data);
         }
 
-        [Description("Add a component of component_type to many GameObjects in one Undo-tracked call. " +
-                     "`targets` is a comma-separated list of identifiers, or a single find spec that resolves to many. " +
-                     "Returns per-target success with each new component's instanceId.")]
-        public static object AddComponentToMany(
-            [ToolParam("Comma-separated identifiers, or a single find spec resolving to many")] string targets,
-            [ToolParam("Component type name to add (e.g. 'BoxCollider', 'UnityEngine.UI.Image')")] string component_type,
-            [ToolParam("How to resolve each target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
-        {
-            if (string.IsNullOrEmpty(component_type))
-                return Response.Error("COMPONENT_TYPE_REQUIRED");
-
-            var type = TypeResolver.ResolveComponent(component_type);
-            if (type == null)
-                return TypeResolver.UnresolvedError(component_type, "COMPONENT_TYPE_NOT_FOUND", "component_type");
-
-            var gos = ResolveManyTargets(targets, find_method, out var unresolved);
-            if (gos.Count == 0)
-                return Response.Error("NO_TARGETS_RESOLVED", new { targets, find_method, unresolved });
-
-            var results = new List<object>();
-            int success = 0;
-            foreach (var go in gos)
-            {
-                try
-                {
-                    var comp = Undo.AddComponent(go, type);
-                    if (comp != null)
-                    {
-                        success++;
-                        results.Add(new { target = go.name, instanceId = ObjectIdCodec.GetSerializableId(go), ok = true, componentInstanceId = ObjectIdCodec.GetSerializableId(comp) });
-                    }
-                    else
-                    {
-                        results.Add(new { target = go.name, instanceId = ObjectIdCodec.GetSerializableId(go), ok = false, error = "ADD_COMPONENT_FAILED" });
-                    }
-                }
-                catch (Exception ex)
-                {
-                    results.Add(new { target = go.name, instanceId = ObjectIdCodec.GetSerializableId(go), ok = false, error = ex.Message });
-                }
-            }
-
-            var data = new { type = type.Name, successCount = success, failCount = gos.Count - success, unresolved, results };
-            if (success == 0)
-                return Response.Error("ADD_COMPONENT_FAILED", data);
-
-            return Response.Success($"Added {type.Name} to {success} of {gos.Count} target(s).{UnresolvedNote(unresolved)}", data);
-        }
-
         // -------- Helpers --------
 
         /// <summary>

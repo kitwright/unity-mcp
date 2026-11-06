@@ -52,40 +52,26 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void CreateScript_RefusesAnExistingFileAndLeavesItUntouched()
+        public void WriteFile_RefusesToOverwriteAnExistingScriptItWasNotShownAndLeavesItUntouched()
         {
             var original = "public class Probe { }";
-            File.WriteAllText(FullPath("Probe.cs"), original);
+            var path = Write("Probe.cs", original);
 
-            var refused = CodeFunctions.CreateScript("Probe", "public class Probe { void Clobbered() { } }", Folder);
+            var refused = FileFunctions.WriteFile(path, "public class Probe { void Clobbered() { } }");
 
-            StringAssert.Contains("SCRIPT_EXISTS", refused);
-            StringAssert.Contains("edit_script", refused);
+            StringAssert.Contains("SHA_REQUIRED", refused);
             StringAssert.Contains("patch_script", refused);
-            Assert.AreEqual(original, File.ReadAllText(FullPath("Probe.cs")),
-                "A refused create must leave the file untouched.");
-        }
-
-        [TestCase("../Escaped")]
-        [TestCase("Sub/Probe")]
-        [TestCase("Sub\\Probe")]
-        [TestCase("..")]
-        [TestCase("")]
-        public void CreateScript_RefusesANameThatIsNotAPlainFileName(string name)
-        {
-            StringAssert.Contains("INVALID_NAME", CodeFunctions.CreateScript(name, Sound, Folder));
-            Assert.IsEmpty(Directory.GetFileSystemEntries(FullPath(string.Empty)));
+            Assert.AreEqual(original, Read("Probe.cs"), "A refused write must leave the file untouched.");
         }
 
         [Test]
-        public void CreateScript_RefusesAFileAsSavePath_AndStripsACsSuffixFromTheName()
+        public void WriteFile_CreatesANewScriptWithoutASha()
         {
-            StringAssert.Contains("INVALID_SAVE_PATH", CodeFunctions.CreateScript("Probe", Sound, Folder + "/Dir.cs"));
-            Assert.IsEmpty(Directory.GetFileSystemEntries(FullPath(string.Empty)));
+            var path = Folder + "/Sub/Created.cs";
 
-            StringAssert.Contains("Created script 'Dotted.cs'", CodeFunctions.CreateScript("Dotted.cs", Sound, Folder));
-            Assert.IsTrue(File.Exists(FullPath("Dotted.cs")));
-            Assert.IsFalse(File.Exists(FullPath("Dotted.cs.cs")));
+            StringAssert.Contains("Written", FileFunctions.WriteFile(path, Sound));
+
+            Assert.AreEqual(Sound, Read("Sub/Created.cs"));
         }
 
         [TestCase("a\nb\n", "x\ny\n", "a\nb\n")]
@@ -112,14 +98,14 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void EditScript_KeepsTheFilesLineEndings()
+        public void WriteFile_KeepsAScriptsLineEndings()
         {
             var original = "class A\r\n{\r\n}\r\n";
-            var path = Write("Rewrite.txt", original);
+            var path = Write("Rewrite.cs", original);
 
-            CodeFunctions.EditScript(path, "class A\n{\n    int x;\n}\n", CodeFunctions.ComputeSha256(original));
+            FileFunctions.WriteFile(path, "class A\n{\n    int x;\n}\n", CodeFunctions.ComputeSha256(original));
 
-            Assert.AreEqual("class A\r\n{\r\n    int x;\r\n}\r\n", Read("Rewrite.txt"));
+            Assert.AreEqual("class A\r\n{\r\n    int x;\r\n}\r\n", Read("Rewrite.cs"));
         }
 
         [Test]
@@ -136,24 +122,36 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void EditScript_RejectsAnIntroducedNonBraceError_ButNotAPreexistingOne()
+        public void WriteFile_RejectsAnIntroducedNonBraceErrorInAScript_ButNotAPreexistingOne()
         {
             // Braces balance in all three versions, so a brace count alone cannot tell them apart.
             var sound = "public class Probe { void A() { B(1); } }";
             var broken = "public class Probe { void A() { B(1; } }";
 
-            var soundPath = Folder + "/Sound.txt";
-            File.WriteAllText(FullPath("Sound.txt"), sound);
-            var rejected = CodeFunctions.EditScript(soundPath, broken, CodeFunctions.ComputeSha256(sound));
+            var soundPath = Write("Sound.cs", sound);
+            var rejected = FileFunctions.WriteFile(soundPath, broken, CodeFunctions.ComputeSha256(sound));
             StringAssert.Contains("SYNTAX_REGRESSION", rejected);
-            Assert.AreEqual(sound, File.ReadAllText(FullPath("Sound.txt")));
+            Assert.AreEqual(sound, Read("Sound.cs"));
 
-            var brokenPath = Folder + "/Broken.txt";
-            File.WriteAllText(FullPath("Broken.txt"), broken);
+            var brokenPath = Write("Broken.cs", broken);
             var stillBroken = "public class Probe { void A() { B(2; } }";
-            var applied = CodeFunctions.EditScript(brokenPath, stillBroken, CodeFunctions.ComputeSha256(broken));
-            StringAssert.Contains("Updated script", applied);
-            Assert.AreEqual(stillBroken, File.ReadAllText(FullPath("Broken.txt")));
+            var applied = FileFunctions.WriteFile(brokenPath, stillBroken, CodeFunctions.ComputeSha256(broken));
+            StringAssert.Contains("Written", applied);
+            Assert.AreEqual(stillBroken, Read("Broken.cs"));
+        }
+
+        // Only C# is checked: a shader or a text file that is not C# would trip the checker on sound content.
+        [Test]
+        public void WriteFile_DoesNotSyntaxCheckAFileThatIsNotCSharp()
+        {
+            const string sound = "Shader \"Probe\" { }";
+            const string unbalanced = "Shader \"Probe\" { SubShader {";
+            var path = Write("Probe.shader", sound);
+
+            var applied = FileFunctions.WriteFile(path, unbalanced, CodeFunctions.ComputeSha256(sound));
+
+            StringAssert.Contains("Written", applied);
+            Assert.AreEqual(unbalanced, Read("Probe.shader"));
         }
 
         [Test]
@@ -231,22 +229,22 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void EditScript_RequiresAShaAndRejectsAStaleOne()
+        public void WriteFile_RequiresAShaForAScriptAndRejectsAStaleOne()
         {
-            var path = Write("Sha.txt", Sound);
+            var path = Write("Sha.cs", Sound);
             const string rewrite = "public class Probe { void A() { B(); } }";
 
-            var missing = CodeFunctions.EditScript(path, rewrite, null);
+            var missing = FileFunctions.WriteFile(path, rewrite, null);
             StringAssert.Contains("SHA_REQUIRED", missing);
-            Assert.AreEqual(Sound, Read("Sha.txt"));
+            Assert.AreEqual(Sound, Read("Sha.cs"));
 
-            var stale = CodeFunctions.EditScript(path, rewrite, CodeFunctions.ComputeSha256("some older content"));
+            var stale = FileFunctions.WriteFile(path, rewrite, CodeFunctions.ComputeSha256("some older content"));
             StringAssert.Contains("STALE_FILE", stale);
-            Assert.AreEqual(Sound, Read("Sha.txt"));
+            Assert.AreEqual(Sound, Read("Sha.cs"));
 
-            var applied = CodeFunctions.EditScript(path, rewrite, CodeFunctions.ComputeSha256(Sound));
-            StringAssert.Contains("Updated script", applied);
-            Assert.AreEqual(rewrite, Read("Sha.txt"));
+            var applied = FileFunctions.WriteFile(path, rewrite, CodeFunctions.ComputeSha256(Sound));
+            StringAssert.Contains("Written", applied);
+            Assert.AreEqual(rewrite, Read("Sha.cs"));
         }
 
         [Test]

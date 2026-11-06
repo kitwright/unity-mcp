@@ -17,10 +17,12 @@ namespace KitWright.Editor.Tools.Builtins
     {
         [Description("Get a lightweight performance snapshot of the current Unity session. " +
                      "Returns frame timing, memory usage, scene scale, and a few high-signal rendering counts. " +
+                     "Frame timing comes from FrameTimingManager (no profiler_start needed), averaged over sample_frames recent frames. " +
                      "Useful as a first pass before deeper profiling.")]
         [ReadOnlyTool]
         public static string GetPerformanceSnapshot(
-            [ToolParam("Include scene object and renderer counts", Required = false)] bool include_scene_counts = true)
+            [ToolParam("Include scene object and renderer counts", Required = false)] bool include_scene_counts = true,
+            [ToolParam("Number of recent frames to sample and average for the frame timing (1-30)", Required = false)] int sample_frames = 1)
         {
             try
             {
@@ -36,7 +38,7 @@ namespace KitWright.Editor.Tools.Builtins
                 sb.AppendLine($"VSync Count: {QualitySettings.vSyncCount}");
                 sb.AppendLine($"Time Scale: {Time.timeScale:F2}");
 
-                AppendFrameTiming(sb);
+                AppendFrameTiming(sb, Mathf.Clamp(sample_frames, 1, 30));
                 AppendMemoryStats(sb);
                 // The last frame a Game view rendered, UI and particles included; the scene sum below counts meshes only.
                 sb.AppendLine($"Rendering (last frame): {UnityStats.batches} batches, {UnityStats.drawCalls} draw calls, " +
@@ -106,7 +108,7 @@ namespace KitWright.Editor.Tools.Builtins
             }
         }
 
-        private static void AppendFrameTiming(StringBuilder sb)
+        private static void AppendFrameTiming(StringBuilder sb, int sampleFrames)
         {
             sb.AppendLine("Frame Timing:");
 
@@ -120,26 +122,32 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 FrameTimingManager.CaptureFrameTimings();
-                var timings = new FrameTiming[1];
-                uint timingCount = FrameTimingManager.GetLatestTimings(1, timings);
-                if (timingCount > 0)
+                var timings = new FrameTiming[sampleFrames];
+                uint timingCount = FrameTimingManager.GetLatestTimings((uint)sampleFrames, timings);
+                double cpuSum = 0.0, gpuSum = 0.0;
+                int cpuSamples = 0, gpuSamples = 0;
+                for (int i = 0; i < timingCount; i++)
                 {
-                    var timing = timings[0];
-                    if (timing.cpuFrameTime > 0.0 || timing.gpuFrameTime > 0.0)
-                    {
-                        var cpuMs = timing.cpuFrameTime > 0.0 ? timing.cpuFrameTime : fallbackFrameMs;
-                        var gpuMs = timing.gpuFrameTime;
-                        var fps = cpuMs > 0.0 ? 1000.0 / cpuMs : fallbackFps;
+                    if (timings[i].cpuFrameTime > 0.0) { cpuSum += timings[i].cpuFrameTime; cpuSamples++; }
+                    if (timings[i].gpuFrameTime > 0.0) { gpuSum += timings[i].gpuFrameTime; gpuSamples++; }
+                }
 
-                        sb.AppendLine($"- CPU Frame: {cpuMs:F2} ms");
-                        if (gpuMs > 0.0)
-                            sb.AppendLine($"- GPU Frame: {gpuMs:F2} ms");
-                        else
-                            sb.AppendLine("- GPU Frame: unavailable");
-                        sb.AppendLine($"- Approx FPS: {fps:F1}");
-                        sb.AppendLine($"- Delta Time: {Time.deltaTime * 1000.0:F2} ms, Smooth Delta: {Time.smoothDeltaTime * 1000.0:F2} ms");
-                        return;
-                    }
+                if (cpuSamples > 0 || gpuSamples > 0)
+                {
+                    var cpuMs = cpuSamples > 0 ? cpuSum / cpuSamples : fallbackFrameMs;
+                    var gpuMs = gpuSamples > 0 ? gpuSum / gpuSamples : 0.0;
+                    var fps = cpuMs > 0.0 ? 1000.0 / cpuMs : fallbackFps;
+
+                    if (sampleFrames > 1)
+                        sb.AppendLine($"- Sampled {timingCount} frame(s), averaged");
+                    sb.AppendLine($"- CPU Frame: {cpuMs:F2} ms");
+                    if (gpuMs > 0.0)
+                        sb.AppendLine($"- GPU Frame: {gpuMs:F2} ms");
+                    else
+                        sb.AppendLine("- GPU Frame: unavailable");
+                    sb.AppendLine($"- Approx FPS: {fps:F1}");
+                    sb.AppendLine($"- Delta Time: {Time.deltaTime * 1000.0:F2} ms, Smooth Delta: {Time.smoothDeltaTime * 1000.0:F2} ms");
+                    return;
                 }
             }
             catch

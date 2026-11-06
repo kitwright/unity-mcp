@@ -121,7 +121,7 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void FocusOnObject_LeavesTheSelectionAsItWasAndSaysWhenThereIsNoSceneView()
+        public void FrameObject_LeavesTheSelectionAsItWasAndSaysWhenThereIsNoSceneView()
         {
             var first = new GameObject(Unique("KwFocusSelA"));
             var second = new GameObject(Unique("KwFocusSelB"));
@@ -132,7 +132,7 @@ namespace KitWright.Editor.Tests
             {
                 Selection.objects = new Object[] { first, second };
 
-                var answer = Call("focus_on_object", "name", target.name);
+                var answer = Call("frame_object", "target", target.name);
 
                 var hasSceneView = SceneView.lastActiveSceneView != null ||
                                    (SceneView.sceneViews != null && SceneView.sceneViews.Count > 0);
@@ -346,9 +346,9 @@ namespace KitWright.Editor.Tests
         {
             foreach (var name in new[]
             {
-                "create_game_object", "create_primitive", "instantiate_prefab", "delete_game_object", "duplicate_game_object",
+                "create_game_object", "instantiate_prefab", "delete_game_object", "duplicate_game_object",
                 "set_transform", "set_parent", "set_active", "rename_game_object", "add_component", "remove_component",
-                "set_component_properties", "set_component_enabled", "set_tag_and_layer", "set_rect_transform", "create_canvas",
+                "set_component_properties", "set_tag_and_layer", "set_rect_transform", "create_canvas",
                 "create_button", "create_text", "create_image", "create_ui_element", "set_camera_settings", "set_camera_projection"
             })
             {

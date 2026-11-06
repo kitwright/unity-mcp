@@ -39,7 +39,6 @@ namespace KitWright.Editor.Tools
         internal static readonly HashSet<string> SceneEditingTools = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
             "create_game_object",
-            "create_primitive",
             "instantiate_prefab",
             "delete_game_object",
             "duplicate_game_object",
@@ -50,7 +49,6 @@ namespace KitWright.Editor.Tools
             "add_component",
             "remove_component",
             "set_component_properties",
-            "set_component_enabled",
             "set_tag_and_layer",
             "set_rect_transform",
             "create_canvas",
@@ -68,6 +66,7 @@ namespace KitWright.Editor.Tools
             "remove_volume_override",
             "set_camera_settings",
             "set_camera_projection",
+            "set_camera_culling_mask",
         };
 
         /// <summary>
@@ -310,7 +309,7 @@ namespace KitWright.Editor.Tools
 
         internal const string BatchToolName = "batch_execute";
 
-        // A batch holding build_player was cut off at the ordinary ceiling while the build ran on.
+        // A batch holding switch_build_target was cut off at the ordinary ceiling while the build ran on.
         // It gets the ordinary ceiling once, plus each long-running command's own budget, capped
         // below the broker's hold deadline so the editor still answers before the broker gives up.
         internal static int BatchBudgetSeconds(IEnumerable<string> commandNames, int fallback)
@@ -336,7 +335,7 @@ namespace KitWright.Editor.Tools
         internal static int ClampExecuteCodeTimeout(long seconds) =>
             (int)Math.Min(Math.Max(seconds, 0), MaxExecuteCodeTimeoutSeconds);
 
-        // -1: not a tool that takes a run timeout. eval / eval_file take theirs in milliseconds, as the Unity CLI does.
+        // -1: not a tool that takes a run timeout.
         private static int TimeoutArgumentSeconds(string toolName, IDictionary<string, object> parameters)
         {
             switch (toolName.ToLowerInvariant())
@@ -345,26 +344,21 @@ namespace KitWright.Editor.Tools
                 case ReplayExecuteCodeToolName:
                 case "execute_code_file":
                     return ExecuteCodeTimeoutSeconds(parameters);
-                case "eval":
-                case "eval_file":
-                    return ExecuteCodeTimeoutSeconds(parameters, "timeout", 1000);
                 default:
                     return -1;
             }
         }
 
         // Absent, zero or unreadable all mean "no request": the ordinary ceiling stays.
-        internal static int ExecuteCodeTimeoutSeconds(
-            IDictionary<string, object> parameters, string argument = "timeout_seconds", long unitsPerSecond = 1)
+        internal static int ExecuteCodeTimeoutSeconds(IDictionary<string, object> parameters)
         {
             if (!(parameters.TryGetValue("arguments", out var arguments) && arguments is IDictionary<string, object> args) ||
-                !args.TryGetValue(argument, out var value) || value == null)
+                !args.TryGetValue("timeout_seconds", out var value) || value == null)
                 return 0;
 
             try
             {
-                var units = Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
-                return ClampExecuteCodeTimeout(units / unitsPerSecond + (units % unitsPerSecond > 0 ? 1 : 0));
+                return ClampExecuteCodeTimeout(Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture));
             }
             catch (Exception ex) when (ex is FormatException || ex is InvalidCastException || ex is OverflowException)
             {

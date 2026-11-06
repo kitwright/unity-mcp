@@ -46,9 +46,9 @@ namespace KitWright.Editor.Tools.Builtins
             ("File/Open Recent Scene", null),
             ("File/Save As", "save_scene"),
             ("File/Save Scene As", "save_scene"),
-            ("File/Build And Run", "build_player"),
-            ("File/Build Profiles", "build_player"),
-            ("File/Build Settings", "build_player"),
+            ("File/Build And Run", "build"),
+            ("File/Build Profiles", "build"),
+            ("File/Build Settings", "build"),
             ("Assets/Import New Asset", null),
             ("Assets/Import Package", "install_package"),
             ("Assets/Export Package", null),
@@ -241,7 +241,7 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Error("MENU_ITEM_NOT_FOUND", new { menu_path = menuPath, hint });
         }
 
-        [Description("Execute an editor menu item by its full path. " +
+        [Description("Execute an editor menu item by its full path, or list the menu items (at most 2000) when menu_path is empty. " +
                      "Examples: 'GameObject/2D Object/Sprites/Square', 'Window/Layouts/Default', 'Edit/Undo'. " +
                      "Returns success/failure based on whether the menu item exists and was triggered; " +
                      "MENU_ITEM_DISABLED means an item that is disabled right now, MENU_ITEM_IS_SUBMENU means the path only groups other items, " +
@@ -251,11 +251,11 @@ namespace KitWright.Editor.Tools.Builtins
                      "pass allow_modal=true to run one anyway when someone is watching the editor. " +
                      "Items that quit the editor, open or switch the project, or irreversibly clear PlayerPrefs or the saved window layout are always refused.")]
         public static object ExecuteMenuItem(
-            [ToolParam("Full menu path, e.g. 'GameObject/2D Object/Sprite'")] string menu_path,
+            [ToolParam("Full menu path, e.g. 'GameObject/2D Object/Sprite'. Omit to list the menu items.", Required = false)] string menu_path = "",
             [ToolParam("Run a menu item that is known to open a modal dialog or file picker. Only with a human at the editor.", Required = false)] bool allow_modal = false)
         {
             if (string.IsNullOrWhiteSpace(menu_path))
-                return Response.Error("MENU_PATH_REQUIRED", new { message = "menu_path cannot be empty." });
+                return ListMenuItems();
 
             if (menu_path.IndexOfAny(new[] { '\t', '\r', '\n' }) >= 0)
                 return Response.Error("INVALID_PARAM", new { param = "menu_path", expected = "a menu path on one line, without tabs" });
@@ -292,6 +292,47 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 return Response.Error("MENU_EXECUTION_FAILED", new { message = ex.Message });
             }
+        }
+
+        private static readonly string[] BuiltInMenuRoots = { "File", "Edit", "Assets", "GameObject", "Component", "Window", "Help" };
+
+        private static object ListMenuItems()
+        {
+            var method = typeof(Menu).GetMethod("GetMenuItems", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public, null,
+                new[] { typeof(string), typeof(bool), typeof(bool) }, null);
+            if (method == null)
+                return Response.Error("FEATURE_UNAVAILABLE", hint: "This Unity version does not expose its menu list.");
+
+            // GetMenuItems("") lists nothing, so it is asked root by root: Unity's own menus plus every root a [MenuItem] declares.
+            var roots = new System.Collections.Generic.HashSet<string>(BuiltInMenuRoots, StringComparer.Ordinal);
+            foreach (var declaring in TypeCache.GetMethodsWithAttribute<MenuItem>())
+            {
+                foreach (MenuItem attribute in declaring.GetCustomAttributes(typeof(MenuItem), false))
+                {
+                    var slash = attribute.menuItem?.IndexOf('/') ?? -1;
+                    var root = slash > 0 ? attribute.menuItem.Substring(0, slash) : null;
+                    if (root != null && root != "CONTEXT" && root.IndexOf(':') < 0)
+                        roots.Add(root);
+                }
+            }
+
+            var items = new System.Collections.Generic.List<string>();
+            foreach (var root in roots.OrderBy(r => r, StringComparer.Ordinal))
+            {
+                if (!(method.Invoke(null, new object[] { root, false, false }) is Array found))
+                    continue;
+
+                // Unity 6 returns ScriptingMenuItem[] (a path property); older versions returned string[].
+                foreach (var item in found)
+                {
+                    var path = item as string ?? item?.GetType().GetProperty("path")?.GetValue(item) as string;
+                    if (!string.IsNullOrEmpty(path))
+                        items.Add(path);
+                }
+            }
+
+            var listed = items.Distinct().Take(2000).ToArray();
+            return Response.Success($"{listed.Length} menu item(s) listed (at most 2000).", new { items = listed, total = items.Count });
         }
     }
 }

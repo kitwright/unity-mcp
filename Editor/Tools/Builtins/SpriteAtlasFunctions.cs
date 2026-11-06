@@ -216,29 +216,6 @@ namespace KitWright.Editor.Tools.Builtins
             return Response.Success($"SpriteAtlas settings updated for '{Path.GetFileName(path)}'.");
         }
 
-        [Description("Delete a SpriteAtlas asset by moving it to the OS trash (Recycle Bin). Not an Editor undo step, but the file can be restored by hand from the trash.")]
-        public static object DeleteSpriteAtlas(
-            [ToolParam("Asset path of the SpriteAtlas to delete. The file is moved to the OS trash, so it can be recovered by hand.")] string path)
-        {
-            var atlas = LoadAtlas(path, out var error);
-            if (atlas == null) return error;
-            if (!AssetDatabase.MoveAssetToTrash(path)) return Response.Error("DELETE_FAILED", new { path });
-            return Response.Success($"SpriteAtlas '{Path.GetFileName(path)}' moved to OS trash.", new { path });
-        }
-
-        [Description("List all SpriteAtlas assets in the project, optionally scoped to a folder.")]
-        [ReadOnlyTool]
-        public static object ListSpriteAtlases(
-            [ToolParam("Folder to search in (e.g. 'Assets/Atlases'). Omit for whole project.", Required = false)] string folder = null)
-        {
-            var searchFolders = string.IsNullOrEmpty(folder) ? null : new[] { folder.Replace('\\', '/').TrimEnd('/') };
-            var guids = searchFolders == null
-                ? AssetDatabase.FindAssets("t:SpriteAtlas")
-                : AssetDatabase.FindAssets("t:SpriteAtlas", searchFolders);
-            var paths = guids.Select(AssetDatabase.GUIDToAssetPath).OrderBy(p => p).ToList();
-            return Response.Success($"Found {paths.Count} SpriteAtlas asset(s).", new { count = paths.Count, atlases = paths });
-        }
-
         private static SpriteAtlas LoadAtlas(string path, out object error)
         {
             error = null;

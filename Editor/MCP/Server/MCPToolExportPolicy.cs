@@ -65,10 +65,8 @@ namespace KitWright.Editor.MCP.Server
             "set_selection",
             "get_prefab_stage",
             "find_game_objects",
-            "list_components",
             "get_game_object_info",
             "create_game_object",
-            "create_primitive",
             "delete_game_object",
             "add_component",
             "set_transform",
@@ -96,14 +94,16 @@ namespace KitWright.Editor.MCP.Server
             "set_rect_transform"
         };
 
-        // Extended = every registered tool EXCEPT these niche families. Substring match on tool name
-        // (tool names are verb-first: create_terrain, get_addressable_info, memory_take_snapshot).
-        private static readonly string[] ExtendedExcludedSubstrings =
+        // Extended = core plus every registered tool EXCEPT these niche categories.
+        private static readonly HashSet<string> ExtendedExcludedCategories = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "terrain",
-            "addressable",
-            "assembly",
-            "memory_"
+            "Terrain",
+            "Addressable",
+            "AssemblyDefinition",
+            "NavMesh",
+            "Lighting",
+            "Timeline",
+            "Profiling"
         };
 
         private static readonly string[] ProfileOrder = { "minimal", "core", "extended", "full" };
@@ -191,12 +191,11 @@ namespace KitWright.Editor.MCP.Server
 
         private static bool IsExtendedExcluded(string toolName)
         {
-            foreach (var sub in ExtendedExcludedSubstrings)
-            {
-                if (toolName.IndexOf(sub, StringComparison.OrdinalIgnoreCase) >= 0)
-                    return true;
-            }
-            return false;
+            if (CoreTools.Contains(toolName))
+                return false;
+
+            var method = ToolRegistry.GetMethod(toolName);
+            return method != null && ExtendedExcludedCategories.Contains(ToolProviderAttribute.CategoryOf(method) ?? string.Empty);
         }
 
         public static IEnumerable<string> DefaultToolsFor(

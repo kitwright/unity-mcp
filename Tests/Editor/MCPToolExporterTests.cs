@@ -90,7 +90,6 @@ namespace KitWright.Editor.Tests
             "find_broken_references",
             "find_game_objects",
             "find_references",
-            "focus_on_object",
             "frame_debugger_get_events",
             "get_active_tool",
             "get_addressable_info",
@@ -110,11 +109,9 @@ namespace KitWright.Editor.Tests
             "get_editor_pref",
             "get_editor_state",
             "get_execute_code_history",
-            "get_frame_timing",
             "get_game_object_info",
             "get_hierarchy",
             "get_input_actions_info",
-            "get_layers",
             "get_lighting_settings",
             "get_lod_group_info",
             "get_material_properties",
@@ -129,7 +126,6 @@ namespace KitWright.Editor.Tests
             "get_reload_recovery_status",
             "get_scene_info",
             "get_scene_view_camera",
-            "get_script_reference_url",
             "get_script_sha",
             "get_scriptable_object",
             "get_selection",
@@ -137,7 +133,6 @@ namespace KitWright.Editor.Tests
             "get_sorting_layers",
             "get_sprite_atlas_info",
             "get_sprite_sheet_info",
-            "get_tags",
             "get_terrain_info",
             "get_test_job",
             "get_top_memory_objects",
@@ -146,12 +141,8 @@ namespace KitWright.Editor.Tests
             "get_windows",
             "list_addressable_groups",
             "list_assembly_defs",
-            "list_components",
             "list_directory",
             "list_packages",
-            "list_scenes",
-            "list_shaders",
-            "list_sprite_atlases",
             "log_message",
             "memory_compare_snapshots",
             "memory_list_full_snapshots",
@@ -165,43 +156,19 @@ namespace KitWright.Editor.Tests
             "profiler_status",
             // Ported from the Unity CLI. Each only reads: it reports a state, lists, or searches, and none writes project data.
             "audit_status",
-            "console",
-            "console_status",
-            "editor_status",
-            "find_gameobjects",
-            "get_audio_settings",
-            "get_graphics_settings",
-            "get_import_settings",
-            "get_input_settings",
-            "get_navmesh_settings",
-            "get_performance_stats",
-            "get_physics_settings",
             "get_player_settings",
-            "get_quality_settings",
             "get_runtime_pipeline_settings",
-            "get_scene_hierarchy",
-            "get_serialized_fields",
-            "get_shader_properties",
             "get_tags_layers",
-            "get_time_settings",
-            "list_open_scenes",
-            "navmesh_bake_status",
-            "package_list",
-            "read_text_file",
-            "recompile_status",
             "search",
-            "test_status",
             "build_status",
             "get_animation_clip",
             "get_animator_controller",
             "get_authoring_root",
             "get_nav_mesh_settings",
             "get_timeline",
-            "lighting_bake_status",
             "list_build_profiles",
             "list_build_targets",
             "list_tests",
-            "nav_mesh_bake_status",
             "occlusion_bake_status",
             "package_search",
             "package_status",
@@ -210,11 +177,8 @@ namespace KitWright.Editor.Tests
             "wait_status",
             "raycast_at_point",
             "read_file",
-            "read_shader",
             "reflect_api",
             "search_files",
-            "search_manual",
-            "select_object",
             "show_dialog",
             "simulate_gamepad",
             "simulate_key_combo",
@@ -305,6 +269,20 @@ namespace KitWright.Editor.Tests
             Assert.IsFalse(ToolRegistry.IsPackageAssembly(typeof(MCPToolExporterTests).Assembly));
         }
 
+        [Test]
+        public void ExtendedLeavesOutNicheCategories_ButNeverACoreTool()
+        {
+            bool Extended(string tool) => MCPToolExportPolicy.IsToolAllowed(tool, MCPToolExportProfile.Extended, false, null);
+
+            Assert.IsTrue(Extended("execute_code"));
+            Assert.IsTrue(Extended("execute_code_file"));
+            Assert.IsFalse(Extended("create_terrain"), "Terrain is a niche category");
+            Assert.IsTrue(MCPToolExportPolicy.IsToolAllowed("create_terrain", MCPToolExportProfile.Full, false, null));
+            Assert.IsTrue(Extended("get_performance_snapshot"), "a core tool stays even inside an excluded category");
+            Assert.IsTrue(MCPToolExportPolicy.DefaultCoreTools.Where(t => !ToolPackageGate.IsUnavailable(t)).All(Extended),
+                "extended is a superset of core");
+        }
+
         // Without this, a project tool would be invisible under the default core profile,
         // which is the profile most clients connect with.
         [Test]
@@ -373,7 +351,6 @@ namespace KitWright.Editor.Tests
             foreach (var name in new[]
                      {
                          "create_game_object",
-                         "create_primitive",
                          "delete_game_object",
                          "add_component",
                          "set_transform",

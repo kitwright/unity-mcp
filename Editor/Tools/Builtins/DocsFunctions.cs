@@ -42,28 +42,6 @@ namespace KitWright.Editor.Tools.Builtins
         private static readonly Regex HorizontalSpaceRegex = new Regex(@"[ \t]+");
         private static readonly Regex BlankLinesRegex = new Regex(@"\n{3,}");
 
-        [Description("Get the Unity documentation URL for a scripting API type or member. Returns the ScriptReference link for the current Unity version (e.g. 'Rigidbody', 'GameObject.SetActive', 'AI.NavMeshAgent'). " +
-                     "Builds the link offline and fetches nothing — use fetch_docs instead when you want to read the page.")]
-        [ReadOnlyTool]
-        public static string GetScriptReferenceUrl(
-            [ToolParam("Type or member, e.g. 'Rigidbody' or 'Transform.Rotate'. Namespace dots are stripped except the member separator.")] string symbol)
-        {
-            if (string.IsNullOrWhiteSpace(symbol)) return ToolResultFormatter.Error("EMPTY_SYMBOL");
-
-            return $"ScriptReference URL for '{symbol}' (Unity {Application.unityVersion}):\n<{ScriptReferenceUrl(symbol)}>";
-        }
-
-        [Description("Get a Unity Manual search URL for a topic (e.g. 'lightmapping', 'addressables'). Returns a docs.unity3d.com Manual search link for the current Unity version. " +
-                     "Use this when the Manual slug is unknown; fetch_docs reads a page once you have the slug.")]
-        [ReadOnlyTool]
-        public static string SearchManual(
-            [ToolParam("Topic or keyword to search the Unity Manual for")] string query)
-        {
-            if (string.IsNullOrWhiteSpace(query)) return ToolResultFormatter.Error("EMPTY_QUERY");
-
-            return $"Manual search URL for '{query}' (Unity {Application.unityVersion}):\n<{ManualSearchUrl(query)}>";
-        }
-
         [Description("Fetch Unity documentation pages and return them as plain text, so usage notes and code examples arrive without a separate web fetch. " +
                      "Accepts a comma-separated list (up to 10) for batch lookup: a bare name hits the ScriptReference " +
                      "('Physics.Raycast', 'AI.NavMeshAgent'), a 'manual:' prefix hits the Unity Manual by slug ('manual:execution-order'). " +

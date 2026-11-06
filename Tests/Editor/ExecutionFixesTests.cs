@@ -157,7 +157,7 @@ namespace KitWright.Editor.Tests
         [Test]
         public void AProfileRefusalStillAnswersToolNotExposedWithItsHint()
         {
-            var error = JObject.Parse(MCPExecutionBridge.WithheldToolError("create_primitive", "minimal", null, "profile hint"));
+            var error = JObject.Parse(MCPExecutionBridge.WithheldToolError("create_game_object", "minimal", null, "profile hint"));
 
             Assert.AreEqual("TOOL_NOT_EXPOSED", (string)error["code"]);
             Assert.AreEqual("minimal", (string)error["data"]["profile"]);
@@ -218,7 +218,7 @@ namespace KitWright.Editor.Tests
                 Assert.AreEqual(1, ToolGateProbeProvider.WritesStarted, "the probe should be holding the gate");
 
                 settings.MCPToolExportProfile = "minimal";
-                var refused = bridge.ExecuteToolAsync("create_primitive", noArgs, CancellationToken.None);
+                var refused = bridge.ExecuteToolAsync("create_game_object", noArgs, CancellationToken.None);
                 var startedAt = Time.realtimeSinceStartup;
                 while (!refused.IsCompleted && Time.realtimeSinceStartup - startedAt < 5f)
                     yield return null;

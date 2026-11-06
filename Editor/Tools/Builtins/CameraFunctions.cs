@@ -189,7 +189,7 @@ namespace KitWright.Editor.Tools.Builtins
             if (!TryParseLayerNames(layers, out var mask, out var invalid))
                 return ToolResultFormatter.Error("INVALID_PARAM",
                     new { param = "layers", provided = layers, invalid, valid = NamedLayers() },
-                    "Pass comma-separated names of existing layers (see get_layers), or Everything / Nothing. Nothing was changed.");
+                    "Pass comma-separated names of existing layers (see get_tags_layers), or Everything / Nothing. Nothing was changed.");
 
             Undo.RecordObject(camera, "Set Camera Culling Mask");
             switch (operation)

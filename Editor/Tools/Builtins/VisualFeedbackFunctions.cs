@@ -16,36 +16,6 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Editor")]
     internal static class VisualFeedbackFunctions
     {
-        [Description("Select a GameObject in the scene hierarchy and inspector")]
-        [ReadOnlyTool]
-        public static string SelectObject(
-            [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string name)
-        {
-            var go = ObjectsHelper.FindTarget(name);
-            if (go == null)
-                return ObjectsHelper.NotFoundText("name", name);
-
-            Selection.activeGameObject = go;
-            EditorGUIUtility.PingObject(go);
-            return $"Selected '{go.name}'";
-        }
-
-        [Description("Focus the Scene View camera on a specific GameObject")]
-        [ReadOnlyTool]
-        public static string FocusOnObject(
-            [ToolParam("GameObject name, hierarchy path, or instance ID. Finds inactive objects too.")] string name)
-        {
-            var go = ObjectsHelper.FindTarget(name);
-            if (go == null)
-                return ObjectsHelper.NotFoundText("name", name);
-
-            if (!SceneViewFunctions.TryGetSceneView(out var view, out _))
-                return ToolResultFormatter.Error("NO_SCENE_VIEW", new { hint = SceneViewFunctions.NoSceneViewHint });
-
-            SceneViewFunctions.FrameKeepingSelection(view, go);
-            return $"Focused scene view on '{go.name}'";
-        }
-
         [Description("Ping/highlight an asset in the Project window")]
         [ReadOnlyTool]
         public static string PingAsset(

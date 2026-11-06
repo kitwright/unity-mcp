@@ -44,7 +44,6 @@ window. Batchmode will not do, since it skips these tests too.
 - [ ] `ScreenshotFunctionsTests`: capture read-back (graphics device)
 - [ ] `EditorWindowInteractionFunctionsTests`: UI Toolkit click (rendered view)
 - [ ] `EditorThreadHelperStallTests.SinceLastPump_IsFreshWhileTheEditorIsRunningThisTest` (editor loop ticking)
-- [ ] `ShaderFunctionsTests.ListShaders_CountCapReportsThePreCapTotalAndTheShownCount` (a project with two or more shaders)
 - [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
 - [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
 - [ ] `PowerThrottlingTests` (Windows)

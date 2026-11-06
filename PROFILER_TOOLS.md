@@ -30,7 +30,7 @@ These 13 tools close that gap. They're intentionally built as small, focused, fl
 
 | Tool | Params | Returns | Notes |
 |---|---|---|---|
-| `get_frame_timing` | `sample_frames` (int, optional, default 1, clamped 1–30) | Avg CPU/GPU frame time (ms) + approx FPS | Uses `UnityEngine.FrameTimingManager`. Does **not** require `profiler_start`. Falls back to `Time.unscaledDeltaTime` if no timing samples are available yet. |
+| `get_performance_snapshot` | `sample_frames` (int, optional, default 1, clamped 1–30) | Avg CPU/GPU frame time (ms) + approx FPS | Uses `UnityEngine.FrameTimingManager`. Does **not** require `profiler_start`. Falls back to `Time.unscaledDeltaTime` if no timing samples are available yet. |
 | `get_counters` | `names` (string, optional, comma-separated) | One line per counter: `last`, `current`, `unit` | Reads the persistent recorders started by `profiler_start`. Without a session it reads only the Memory counters, once, from recorders disposed afterwards, and says so; a Render counter asked for by name then answers `UNKNOWN_COUNTERS`, because it needs `profiler_start` and a few frames. |
 
 #### Default counters
@@ -97,7 +97,7 @@ All 13 tools were tested twice, independently:
 During implementation, each tool was compiled and exercised individually against a live running Unity Editor using `execute_code` reflection calls into `ProfilerFunctions`'s static methods (the tools weren't yet registered as named MCP tools mid-session — see [test note](#a-note-on-mcp-tool-discovery) below). This covered:
 
 - `profiler_start` → `profiler_status` → `profiler_stop` full lifecycle, confirming recorder count (9) and clean teardown (0 active recorders after stop).
-- `get_frame_timing` sampled over 1–15 frames in both Edit Mode (flagged a real gotcha: `FrameTimingManager` can report a stale multi-hundred-ms sample when the Editor is idle with no continuous repaint) and Play Mode (consistently sane, ~20ms CPU / ~2-3ms GPU).
+- `get_performance_snapshot(sample_frames)` sampled over 1–15 frames in both Edit Mode (flagged a real gotcha: `FrameTimingManager` can report a stale multi-hundred-ms sample when the Editor is idle with no continuous repaint) and Play Mode (consistently sane, ~20ms CPU / ~2-3ms GPU).
 - `get_counters` default set and a `names` filter including a comma+space edge case (`"Draw Calls Count, Triangles Count"`) — caught and fixed a real bug where the filter didn't trim whitespace before matching.
 - `get_object_memory` against a real project texture asset, a real scene GameObject (checking the `Total (incl. all child components)` aggregation), and a nonexistent path (clean error, no exception).
 - `memory_take_snapshot` → `memory_list_snapshots` → `memory_compare_snapshots`, allocating ~400MB of `Texture2D` between two snapshots and confirming the delta direction was correct — caught and fixed a real bug where the `ReadCounterOrZero` helper read `ProfilerRecorder.LastValue` (which is `0` for Memory-category recorders) instead of `CurrentValue`. Also caught and fixed a real path-traversal bug where `memory_compare_snapshots`'s `path_a`/`path_b` reached `Path.Combine` unsanitized (`../secret` escaped the snapshot directory) before adding a `Path.GetFileName` guard.
@@ -109,7 +109,7 @@ During implementation, each tool was compiled and exercised individually against
 After registering the tools with the MCP server (see the note below), all 13 were re-run **as real first-class MCP tool calls** (not reflection) against a live Unity Editor in Play Mode, back to back:
 
 ```
-profiler_start → profiler_status (9 recorders, running) → get_frame_timing(5)
+profiler_start → profiler_status (9 recorders, running) → get_performance_snapshot(sample_frames=5)
   (Avg CPU 25.85ms / Avg GPU 2.77ms / ~38.7 FPS)
 → get_counters() (Render: 0 as documented; Memory: real non-zero values)
 → get_counters(names="Draw Calls Count, Triangles Count") (whitespace-trim fix confirmed)

@@ -120,24 +120,27 @@ namespace KitWright.Editor.Tools.Builtins
             return $"Assigned material '{mat.name}' to '{go.name}'";
         }
 
-        [Description("Search for assets by type and name. Paths come back sorted, and a page cut short by " +
-                     "max reports a next_cursor to pass back as cursor for the rest.")]
+        [Description("Search for assets by type and name (e.g. 't:Shader', 't:SpriteAtlas', 't:Scene'), optionally in one folder. " +
+                     "Paths come back sorted, and a page cut short by max reports a next_cursor to pass back as cursor for the rest.")]
         [ReadOnlyTool]
         public static string FindAssets(
             [ToolParam("Search filter (e.g. 't:Material red', 't:Prefab Player', 't:Texture')")] string filter,
             [ToolParam("Maximum paths to return (1-500). Default 50.", Required = false)] int max = 50,
             [ToolParam(Paging.CursorParam, Required = false)] int cursor = 0,
-            [ToolParam("Only search under this folder (e.g. 'Assets/Prefabs').", Required = false)] string folder = null)
+            [ToolParam("Folder to search in (e.g. 'Assets/Atlases'). Omit for the whole project.", Required = false)] string folder = null)
         {
-            if (!string.IsNullOrEmpty(folder) && !AssetDatabase.IsValidFolder(folder.TrimEnd('/')))
-                return ToolResultFormatter.Error("INVALID_PARAM", new { param = nameof(folder), provided = folder },
-                    "folder must be an existing project folder such as 'Assets/Prefabs'.");
+            string[] searchFolders = null;
+            if (!string.IsNullOrWhiteSpace(folder))
+            {
+                folder = folder.Replace('\\', '/').TrimEnd('/');
+                if (!AssetDatabase.IsValidFolder(folder))
+                    return ToolResultFormatter.Error("FOLDER_NOT_FOUND", new { folder });
+                searchFolders = new[] { folder };
+            }
 
             // Sorted because AssetDatabase.FindAssets promises no order, and paging an unordered
             // result set silently skips and repeats entries between calls.
-            var paths = (string.IsNullOrEmpty(folder)
-                    ? AssetDatabase.FindAssets(filter)
-                    : AssetDatabase.FindAssets(filter, new[] { folder.TrimEnd('/') }))
+            var paths = (searchFolders == null ? AssetDatabase.FindAssets(filter) : AssetDatabase.FindAssets(filter, searchFolders))
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .OrderBy(p => p, StringComparer.Ordinal)
                 .ToList();
@@ -173,18 +176,14 @@ namespace KitWright.Editor.Tools.Builtins
                 return ToolResultFormatter.Error("ASSET_NOT_FOUND", new { path });
 
             bool deleted = AssetDatabase.MoveAssetToTrash(normalized);
+            if (!deleted)
+            {
+                // A file written outside the Editor has no AssetDatabase entry to move until it is imported. Only that
+                // one: a full Refresh could start a script compile and reload the domain in the middle of the call.
+                AssetDatabase.ImportAsset(normalized, ImportAssetOptions.ForceSynchronousImport);
+                deleted = AssetDatabase.MoveAssetToTrash(normalized);
+            }
             return deleted ? $"Moved asset to OS trash: {normalized}" : ToolResultFormatter.Error("ASSET_DELETE_FAILED", new { path });
-        }
-
-        [Description("Rename an asset")]
-        public static string RenameAsset(
-            [ToolParam("Current path of the asset")] string path,
-            [ToolParam("New name (without extension)")] string new_name)
-        {
-            var result = AssetDatabase.RenameAsset(path, new_name);
-            return string.IsNullOrEmpty(result)
-                ? $"Renamed to '{new_name}'"
-                : ToolResultFormatter.Error("ASSET_RENAME_FAILED", new { path, new_name, message = result });
         }
 
         [Description("Copy an asset to a new location. Refuses to replace an existing asset unless overwrite=true.")]

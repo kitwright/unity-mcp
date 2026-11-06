@@ -143,7 +143,7 @@ namespace KitWright.Editor.Tests
                 AssertSuccess(ComponentBatchFunctions.PasteComponentValues(target.name, "BoxCollider"));
                 Assert.AreEqual(sourceCollider.size, targetCollider.size);
 
-                AssertSuccess(ComponentBatchFunctions.AddComponentToMany(target.name, "Rigidbody"));
+                AssertSuccess(GameObjectFunctions.AddComponent(target.name, "Rigidbody"));
                 Assert.IsNotNull(target.GetComponent<Rigidbody>());
             }
             finally
@@ -171,8 +171,7 @@ namespace KitWright.Editor.Tests
                 var colorProperty = material.HasProperty("_Color") ? "_Color" : "_BaseColor";
                 Assert.IsTrue(material.HasProperty(colorProperty));
 
-                AssertError(MaterialFunctions.SetMaterialProperty(materialPath, colorProperty, "NaN,0,0,1", "color"), "INVALID_PARAM");
-                AssertSuccess(MaterialFunctions.SetMaterialProperty(materialPath, colorProperty, "0.2,0.4,0.6,1", "color"));
+                AssertSuccess(UnityCliAssetFunctions.SetMaterialProperties(materialPath, "{\"" + colorProperty + "\":[0.2,0.4,0.6,1]}"));
                 AssertSuccess(MaterialFunctions.GetMaterialProperties(materialPath));
 
                 var invalidLighting = LightingFunctions.SetLightingSettings(

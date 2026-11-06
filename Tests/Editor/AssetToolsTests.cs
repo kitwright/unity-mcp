@@ -10,7 +10,7 @@ namespace KitWright.Editor.Tests
 {
     /// <summary>
     /// The asset tools that write to disk: a folder, a material, a texture, a ScriptableObject, and the
-    /// copy/move/rename trio. Every one of them had no test, and they are the tools an agent uses to
+    /// copy/move pair (a move in place is the rename). Every one of them had no test, and they are the tools an agent uses to
     /// build the thing it was asked for - a failure here is a project left half-written, not a query
     /// that returned nothing. Everything is created under one temp folder that the teardown deletes.
     /// </summary>
@@ -91,13 +91,12 @@ namespace KitWright.Editor.Tests
             Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(Folder + "/KwCopy.mat"), "A move is not a copy.");
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Material>(Folder + "/Sub/KwCopy.mat"));
 
-            Ok("rename_asset", "path", source, "new_name", "KwRenamed");
-            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Material>(Folder + "/KwRenamed.mat"));
+            Ok("move_asset", "source_path", source, "destination_path", Folder + "/KwRenamed.mat");
+            Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Material>(Folder + "/KwRenamed.mat"), "A move in place is a rename.");
             Assert.IsNull(AssetDatabase.LoadAssetAtPath<Material>(source));
 
             Refused("copy_asset", "source_path", Folder + "/NotThere.mat", "destination_path", Folder + "/X.mat");
             Refused("move_asset", "source_path", Folder + "/NotThere.mat", "destination_path", Folder + "/X.mat");
-            Refused("rename_asset", "path", Folder + "/NotThere.mat", "new_name", "X");
         }
 
         [Test]
@@ -119,10 +118,10 @@ namespace KitWright.Editor.Tests
         }
 
         [Test]
-        public void CreateScriptableObjectMakesTheAssetAndNamesATypeItCannotFind()
+        public void CreateAssetMakesAScriptableObjectAndNamesATypeItCannotFind()
         {
             var path = Folder + "/kw_profile.asset";
-            var created = Call("create_scriptable_object", "type_name", "VolumeProfile", "asset_path", path);
+            var created = Call("create_asset", "type", "VolumeProfile", "path", path);
 
             if ((bool)created["success"] != true)
                 Assert.Ignore($"VolumeProfile is not available in this project: {created}");
@@ -130,8 +129,7 @@ namespace KitWright.Editor.Tests
             Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<ScriptableObject>(path),
                 $"Expected an asset at {path}. Tool said: {created}");
 
-            Refused("create_scriptable_object",
-                "type_name", "KwTypeNobodyDeclared", "asset_path", Folder + "/kw_nope.asset");
+            Refused("create_asset", "type", "KwTypeNobodyDeclared", "path", Folder + "/kw_nope.asset");
         }
     }
 }

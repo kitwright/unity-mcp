@@ -19,29 +19,6 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("GameObject")]
     internal static class ComponentPropertyFunctions
     {
-        [Description("List components on a GameObject. Each entry includes its instanceId so subsequent " +
-                     "set_component_properties calls can disambiguate when a GameObject has multiple components of the same type.")]
-        [ReadOnlyTool]
-        public static object ListComponents(
-            [ToolParam("GameObject identifier (instance id, name, path, tag…)")] string target,
-            [ToolParam("How to resolve target: " + ObjectsHelper.FindMethodValues, Required = false)] string find_method = null)
-        {
-            var go = ObjectsHelper.FindObject(target, find_method, searchInactive: true);
-            if (go == null)
-                return ObjectsHelper.NotFound("target", target, find_method);
-
-            var items = go.GetComponents<Component>()
-                .Where(c => c != null)
-                .Select(c => new { instanceId = ObjectIdCodec.GetSerializableId(c), type = c.GetType().Name, fullType = c.GetType().FullName })
-                .ToList();
-
-            return Response.Success($"{items.Count} component(s) on '{go.name}'.", new
-            {
-                gameObject = new { instanceId = ObjectIdCodec.GetSerializableId(go), name = go.name },
-                components = items
-            });
-        }
-
         [Description("Get all serialized properties on a component, including [SerializeField] private fields. " +
                      "Component can be addressed by type name on a GameObject, or directly by component instanceId. " +
                      "On a component with many properties, pass name_filter to return only the ones you need — " +
@@ -138,7 +115,8 @@ namespace KitWright.Editor.Tools.Builtins
 
         [Description("Set multiple properties on a component in one call. " +
                      "Pass `properties` as a JSON object: {\"mass\": 5, \"isKinematic\": true, \"material\": {\"fileID\": 12345}}. " +
-                     "Returns per-field success so partial failures are diagnosable.")]
+                     "{\"enabled\": false} toggles a Behaviour, Renderer or Collider. With several components of one type, pass " +
+                     "component_instance_id (get_game_object_info lists them). Returns per-field success so partial failures are diagnosable.")]
         public static object SetComponentProperties(
             [ToolParam("JSON object of property→value pairs")] string properties,
             [ToolParam("GameObject identifier (omit if using component_instance_id)", Required = false)] string target = null,
