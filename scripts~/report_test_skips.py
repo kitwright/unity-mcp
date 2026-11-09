@@ -43,6 +43,7 @@ EXPECTED = [
     r"Windows path spellings",
     r"needs a scene already in the build list",
     r"does not run module initializers",
+    r"Builds a Windows player",
 ]
 
 

@@ -41,8 +41,12 @@ namespace KitWright.Editor.Tools.Builtins
                 AppendFrameTiming(sb, Mathf.Clamp(sample_frames, 1, 30));
                 AppendMemoryStats(sb);
                 // The last frame a Game view rendered, UI and particles included; the scene sum below counts meshes only.
-                sb.AppendLine($"Rendering (last frame): {UnityStats.batches} batches, {UnityStats.drawCalls} draw calls, " +
-                              $"{UnityStats.setPassCalls} SetPass, {UnityStats.triangles:N0} tris, {UnityStats.vertices:N0} verts");
+                sb.AppendLine("Rendering (last frame): " +
+#if !UNITY_6000_4_OR_NEWER // Unity 6000.4 removed UnityStats.batches.
+                              $"{UnityStats.batches} batches, " +
+#endif
+                              $"{UnityStats.drawCalls} draw calls, {UnityStats.setPassCalls} SetPass, " +
+                              $"{UnityStats.triangles:N0} tris, {UnityStats.vertices:N0} verts");
 
                 if (include_scene_counts)
                 {

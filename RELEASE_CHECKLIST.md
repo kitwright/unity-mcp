@@ -47,6 +47,7 @@ window. Batchmode will not do, since it skips these tests too.
 - [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
 - [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
 - [ ] `PowerThrottlingTests` (Windows)
+- [ ] `PortedUnityToolsTests.Build_RunsAStandalonePlayerBuildToCompletion` (a Windows editor with Windows Mono build support; Explicit, so run it by name)
 - [ ] Add-on: `UIReconstructToolsTests`, the whole match pipeline (graphics device), and `RuntimeToolsPlayModeTests` drag and scroll (a screen larger than 640x480)
 
 A skip in CI whose reason `scripts~/report_test_skips.py` does not list fails the build. Add the reason
