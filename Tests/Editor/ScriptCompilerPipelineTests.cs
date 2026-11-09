@@ -103,7 +103,8 @@ namespace KitWright.Editor.Tests
             var result = ScriptCompilerPipeline.Compile(
                 "namespace NewerSyntax; public class NewerSyntaxRun { public static object Run() => 4; }");
 
-            Assert.AreEqual(ScriptCompilationStatus.Success, result.Status, result.Message);
+            Assert.AreEqual(ScriptCompilationStatus.Success, result.Status,
+                result.Message + " " + string.Join("; ", result.Errors.Select(e => e.code + " " + e.text)));
             Assert.AreEqual("Roslyn", result.CompilerName);
             Assert.AreEqual(1, result.Attempts.Count, "the in-process hand-off is not reported as an attempt");
             Assert.AreEqual(4, result.Assembly.GetType("NewerSyntax.NewerSyntaxRun").GetMethod("Run").Invoke(null, null));
