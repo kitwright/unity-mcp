@@ -2,11 +2,13 @@
 
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using KitWright.Editor.DI;
 using KitWright.Editor.MCP.Server;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 
 namespace KitWright.Editor.Interop
@@ -55,6 +57,51 @@ namespace KitWright.Editor.Interop
                 {
                     return false;
                 }
+            }
+        }
+
+        internal enum PatchResult
+        {
+            Patched,
+            CompileError,
+            NeedsRecompile,
+        }
+
+        // Anything the engine could not put into the running code means the code and the file differ until Unity compiles.
+        internal static PatchResult Classify(IEnumerable<string> verdicts)
+        {
+            var all = verdicts.ToList();
+            if (all.Contains("compile_error"))
+                return PatchResult.CompileError;
+            return all.Any(v => v != "applied" && v != "no_change") ? PatchResult.NeedsRecompile : PatchResult.Patched;
+        }
+
+        /// <summary>Every verdict the engine recorded at or after <paramref name="sinceUtc"/>, oldest first; null while none.</summary>
+        internal static JArray OutcomesSince(DateTime sinceUtc)
+        {
+            try
+            {
+                var json = FindEngine()?.GetMethod("OutcomesSince", BindingFlags.Public | BindingFlags.Static)
+                    ?.Invoke(null, new object[] { sinceUtc.ToString("O") }) as string;
+                return json == null ? null : JObject.Parse(json)["items"] as JArray;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
+        /// <summary>False while the patch server builds baselines or compiles a batch of edits.</summary>
+        internal static bool ServerIdle()
+        {
+            try
+            {
+                var json = FindEngine()?.GetMethod("ServerState", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null) as string;
+                return json == null || (string)JObject.Parse(json)["state"] == "ready";
+            }
+            catch (Exception)
+            {
+                return true;
             }
         }
 

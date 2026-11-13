@@ -1,5 +1,6 @@
 // Copyright (C) KitWright. Licensed under MIT.
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using DescriptionAttribute = System.ComponentModel.DescriptionAttribute;
 using KitWright.Editor.DI;
@@ -81,7 +82,9 @@ namespace KitWright.Editor.Tools.Builtins
                      "exit_play_mode=true ends Play Mode first, keeping its latest console errors in the response, instead of answering PLAY_MODE_ACTIVE. " +
                      "While Hot Reload (SingularityGroup) is patching code, Play Mode included, it answers that plugin's verdict on the latest script edit: " +
                      "verdict applied, COMPILATION_FAILED, or HOT_RELOAD_NEEDS_RECOMPILE when the running code does not match the file. " +
-                     "When the plugin is holding patches back (debugger attached, paused in Edit Mode), Edit Mode falls back to a full recompile and Play Mode answers HOT_RELOAD_PAUSED.")]
+                     "When the plugin is holding patches back (debugger attached, paused in Edit Mode), Edit Mode falls back to a full recompile and Play Mode answers HOT_RELOAD_PAUSED. " +
+                     "The KitWright patch engine (unity-mcp-pro) answers the same way: patched means the running code matches the file and Unity did not recompile; " +
+                     "a change it cannot patch falls back to a full recompile in Edit Mode and answers HOT_RELOAD_NEEDS_RECOMPILE in Play Mode.")]
         public static async Task<string> RequestRecompile(
             [ToolParam("Maximum seconds to wait for compilation (5-120; a value outside that range is clamped)", Required = false)] int timeout_seconds = 30,
             [ToolParam("Hold the call until compilation finishes and answer with the compile result. In broker mode the call is held across the domain reload; without a broker, leave false and call wait_for_compilation.", Required = false)] bool wait = false,
@@ -99,6 +102,9 @@ namespace KitWright.Editor.Tools.Builtins
                            "Unity started compiling the script changes while playing (Script Changes While Playing recompiles them). " +
                            "If this request is interrupted, call get_reload_recovery_status for the final outcome.";
                 }
+
+                if (!exit_play_mode && Interop.KitWrightEngine.IsEnabled)
+                    return await AwaitEnginePatchAsync(timeout_seconds, inPlayMode: true);
 
                 if (!exit_play_mode)
                 {
@@ -134,17 +140,18 @@ namespace KitWright.Editor.Tools.Builtins
         private static async Task<string> RecompileAsync(int timeout_seconds, bool wait)
         {
             if (Interop.KitWrightEngine.IsEnabled)
-                return ToolResultFormatter.Error("PATCH_ENGINE_ENABLED", new
-                {
-                    hint = "The KitWright patch engine is running: saved edits are patched live and nothing is compiled. " +
-                           "To force a compile, press Ctrl+R in the Editor (Assets > Refresh)."
-                });
+            {
+                var patched = await AwaitEnginePatchAsync(timeout_seconds, inPlayMode: false);
+                if (patched != null)
+                    return patched;
+            }
 
             MarkExternalSyncPending();
 
             var refreshResult = await EditorRefreshPipeline.RefreshAndRequestCompilationAsync(
                     forceUpdate: true,
-                    verifyScriptChanges: true);
+                    verifyScriptChanges: true,
+                    compileOverPatches: true);
 
             if (refreshResult.KnownHotReloadDetected && !refreshResult.CompilationOrImportStarted)
             {
@@ -336,6 +343,77 @@ namespace KitWright.Editor.Tools.Builtins
         {
             return RootScopeServices.Services?.GetService(typeof(CompilationService)) as CompilationService
                    ?? CompilationService.Instance;
+        }
+
+        private static readonly TimeSpan EngineIdleGrace = TimeSpan.FromSeconds(2);
+
+        /// <summary>
+        /// The KitWright patch engine's verdict on the newest script edit. Null in Edit Mode means a full compile is
+        /// the way to a matching state (the engine could not patch it, never saw it, or there is no script edit to
+        /// patch), which the caller then runs.
+        /// </summary>
+        private static async Task<string> AwaitEnginePatchAsync(int timeoutSeconds, bool inPlayMode)
+        {
+            var since = EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: true).NewestChangeUtc;
+            if (since == null)
+            {
+                return inPlayMode
+                    ? ToolResultFormatter.Success("The KitWright patch engine is running, and no script changed since the last compilation, so there is nothing to patch.")
+                    : null;
+            }
+
+            var changedAt = since.Value.ToString("O");
+            var deadline = DateTime.UtcNow + TimeSpan.FromSeconds(timeoutSeconds);
+            var start = DateTime.UtcNow;
+            JArray outcomes = null;
+            while (DateTime.UtcNow < deadline)
+            {
+                if (EditorApplication.isCompiling)
+                    return null;
+                outcomes = Interop.KitWrightEngine.OutcomesSince(since.Value);
+                // The server finished its batch and recorded nothing: it never saw this edit.
+                if (outcomes != null || (DateTime.UtcNow - start > EngineIdleGrace && Interop.KitWrightEngine.ServerIdle()))
+                    break;
+                await Task.Delay(100);
+            }
+
+            if (outcomes != null)
+            {
+                // A batch touching several assemblies records one verdict each.
+                while (!Interop.KitWrightEngine.ServerIdle() && DateTime.UtcNow < deadline)
+                    await Task.Delay(100);
+                await Task.Delay(300);
+                outcomes = Interop.KitWrightEngine.OutcomesSince(since.Value) ?? outcomes;
+            }
+
+            if (outcomes == null)
+            {
+                return inPlayMode
+                    ? ToolResultFormatter.Error("HOT_RELOAD_NO_OUTCOME", new { changed_at = changedAt },
+                        "The KitWright patch engine gave no result for the script change made at " + changedAt + ". " +
+                        "The running game may not match the file: call request_recompile with exit_play_mode=true to compile it.")
+                    : null;
+            }
+
+            var verdicts = outcomes.Select(o => (string)o["verdict"]).ToList();
+            var details = outcomes.SelectMany(o => (o["details"] as JArray ?? new JArray()).Select(d => (string)d)).Take(20).ToList();
+            switch (Interop.KitWrightEngine.Classify(verdicts))
+            {
+                case Interop.KitWrightEngine.PatchResult.Patched:
+                    return ToolResultFormatter.Success(
+                        "The KitWright patch engine patched the change: the running code matches the file. Unity did not recompile.",
+                        new { verdicts, changed_at = changedAt },
+                        "Assets edited outside the Editor (prefabs, scenes, shaders) are not imported while the engine patches: " +
+                        "Assets > Refresh imports them, and compiles the scripts over the patch.");
+                case Interop.KitWrightEngine.PatchResult.CompileError:
+                    return ToolResultFormatter.Error("COMPILATION_FAILED", new { verdicts, issues = string.Join("\n", details), changed_at = changedAt });
+                default:
+                    return inPlayMode
+                        ? ToolResultFormatter.Error("HOT_RELOAD_NEEDS_RECOMPILE", new { verdicts, reasons = details, changed_at = changedAt },
+                            "The KitWright patch engine could not fully apply the change, so the running code does not match the file. " +
+                            "A full recompile ends Play Mode: call request_recompile with exit_play_mode=true.")
+                        : null;
+            }
         }
 
         // How long the plugin may stay idle with no verdict before the edit counts as one it never saw.

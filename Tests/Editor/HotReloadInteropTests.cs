@@ -138,6 +138,16 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(MCPToolCallStatus.Error, KitWrightEngine.StatusOf("not_applied"));
         }
 
+        [Test]
+        public void EngineVerdicts_PatchedOnlyWhenEveryOneIsInTheRunningCode()
+        {
+            Assert.AreEqual(KitWrightEngine.PatchResult.Patched, KitWrightEngine.Classify(new[] { "applied", "no_change" }));
+            Assert.AreEqual(KitWrightEngine.PatchResult.NeedsRecompile, KitWrightEngine.Classify(new[] { "applied", "not_applied" }));
+            Assert.AreEqual(KitWrightEngine.PatchResult.NeedsRecompile, KitWrightEngine.Classify(new[] { "partial" }));
+            Assert.AreEqual(KitWrightEngine.PatchResult.NeedsRecompile, KitWrightEngine.Classify(new[] { "inlined" }));
+            Assert.AreEqual(KitWrightEngine.PatchResult.CompileError, KitWrightEngine.Classify(new[] { "not_applied", "compile_error" }));
+        }
+
         // Canary for what request_recompile's verdict reads: a renamed member turns every verdict into
         // HOT_RELOAD_NO_OUTCOME, or stops the full recompile it falls back to.
         [Test]

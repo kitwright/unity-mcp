@@ -19,7 +19,8 @@ namespace KitWright.Editor.Tools.Helpers
         public static async Task<EditorRefreshResult> RefreshAndRequestCompilationAsync(
             bool forceUpdate = true,
             bool verifyScriptChanges = true,
-            TimeSpan? startDetectionTimeout = null)
+            TimeSpan? startDetectionTimeout = null,
+            bool compileOverPatches = false)
         {
             var result = new EditorRefreshResult
             {
@@ -27,7 +28,8 @@ namespace KitWright.Editor.Tools.Helpers
                 PlayModeActive = EditorApplication.isPlaying
             };
 
-            var patchEngineEnabled = Interop.KitWrightEngine.IsEnabled;
+            // The caller found the engine's patches do not cover the edit, so the compile is wanted.
+            var patchEngineEnabled = Interop.KitWrightEngine.IsEnabled && !compileOverPatches;
 
             // Escalating a recompile or script reload mid-play destroys runtime state.
             var escalationBlocked = result.KnownHotReloadDetected || result.PlayModeActive || patchEngineEnabled;
