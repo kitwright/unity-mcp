@@ -27,15 +27,18 @@ namespace KitWright.Editor.Tools.Helpers
                 PlayModeActive = EditorApplication.isPlaying
             };
 
+            var patchEngineEnabled = Interop.KitWrightEngine.IsEnabled;
+
             // Escalating a recompile or script reload mid-play destroys runtime state.
-            var escalationBlocked = result.KnownHotReloadDetected || result.PlayModeActive;
+            var escalationBlocked = result.KnownHotReloadDetected || result.PlayModeActive || patchEngineEnabled;
 
             if (verifyScriptChanges && !escalationBlocked)
                 result.ScriptStateBefore = CaptureScriptChangeState(scanForUnknownProjectScripts: false);
 
             // An import mid-play can reload the domain, which wipes the runtime state the caller is
             // playing to observe - the same reason escalation is blocked above.
-            if (!result.PlayModeActive)
+            // The KitWright engine patches the saved edit itself; importing it would compile it over the patch.
+            if (!result.PlayModeActive && !patchEngineEnabled)
             {
                 try
                 {
@@ -205,11 +208,15 @@ namespace KitWright.Editor.Tools.Helpers
 
                     // One stat per source: a missing one stats as 1601, which never reads as newer
                     // than an output that exists, so only a missing output needs the existence check.
-                    if (outputExists
-                            ? GetSourceWriteTimeUtc(source) - outputTime > timestampTolerance
-                            : File.Exists(source))
+                    if (outputExists)
                     {
-                        state.AddOutOfDateSource(source);
+                        var writeTime = GetSourceWriteTimeUtc(source);
+                        if (writeTime - outputTime > timestampTolerance)
+                            state.AddOutOfDateSource(source, writeTime);
+                    }
+                    else if (File.Exists(source))
+                    {
+                        state.AddOutOfDateSource(source, null);
                     }
                 }
             }
@@ -220,11 +227,9 @@ namespace KitWright.Editor.Tools.Helpers
                 if (string.IsNullOrEmpty(normalizedScript) || knownSources.Contains(normalizedScript) || !File.Exists(normalizedScript))
                     continue;
 
-                if (newestOutputTime == DateTime.MinValue ||
-                    File.GetLastWriteTimeUtc(normalizedScript) - newestOutputTime > timestampTolerance)
-                {
-                    state.AddUnknownProjectScript(normalizedScript);
-                }
+                var writeTime = File.GetLastWriteTimeUtc(normalizedScript);
+                if (newestOutputTime == DateTime.MinValue || writeTime - newestOutputTime > timestampTolerance)
+                    state.AddUnknownProjectScript(normalizedScript, writeTime);
             }
 
             return state;
@@ -638,19 +643,29 @@ namespace KitWright.Editor.Tools.Helpers
         public int UnknownProjectScriptCount { get; private set; }
         public bool HasPendingScriptChanges =>
             OutOfDateSourceCount > 0 || UnknownProjectScriptCount > 0 || !string.IsNullOrEmpty(AnalysisError);
+        /// <summary>When the newest pending script was written; null when none is pending or its time is unknown.</summary>
+        public DateTime? NewestChangeUtc { get; private set; }
 
-        public void AddOutOfDateSource(string path)
+        public void AddOutOfDateSource(string path, DateTime? writeTimeUtc = null)
         {
             IsEmpty = false;
             OutOfDateSourceCount++;
             AddExample(_outOfDateSourceExamples, path);
+            NoteWriteTime(writeTimeUtc);
         }
 
-        public void AddUnknownProjectScript(string path)
+        public void AddUnknownProjectScript(string path, DateTime? writeTimeUtc = null)
         {
             IsEmpty = false;
             UnknownProjectScriptCount++;
             AddExample(_unknownProjectScriptExamples, path);
+            NoteWriteTime(writeTimeUtc);
+        }
+
+        private void NoteWriteTime(DateTime? writeTimeUtc)
+        {
+            if (writeTimeUtc != null && (NewestChangeUtc == null || writeTimeUtc > NewestChangeUtc))
+                NewestChangeUtc = writeTimeUtc;
         }
 
         public object ToResponseData()

@@ -78,7 +78,10 @@ namespace KitWright.Editor.Tools.Builtins
                      "Call it after modifying .cs, .asmdef, .shader, prefabs, scenes, ScriptableObjects, or other Assets files, and before running tests, entering Play Mode, executing follow-up tools, or assuming Unity has imported the latest state. " +
                      "It forces Unity to import external file changes and handles any resulting script compilation or domain reload recovery. " +
                      "wait=true holds the call until compilation finishes and answers with its result (in broker mode it survives the domain reload). " +
-                     "exit_play_mode=true ends Play Mode first, keeping its latest console errors in the response, instead of answering PLAY_MODE_ACTIVE.")]
+                     "exit_play_mode=true ends Play Mode first, keeping its latest console errors in the response, instead of answering PLAY_MODE_ACTIVE. " +
+                     "While Hot Reload (SingularityGroup) is patching code, Play Mode included, it answers that plugin's verdict on the latest script edit: " +
+                     "verdict applied, COMPILATION_FAILED, or HOT_RELOAD_NEEDS_RECOMPILE when the running code does not match the file. " +
+                     "When the plugin is holding patches back (debugger attached, paused in Edit Mode), Edit Mode falls back to a full recompile and Play Mode answers HOT_RELOAD_PAUSED.")]
         public static async Task<string> RequestRecompile(
             [ToolParam("Maximum seconds to wait for compilation (5-120; a value outside that range is clamped)", Required = false)] int timeout_seconds = 30,
             [ToolParam("Hold the call until compilation finishes and answer with the compile result. In broker mode the call is held across the domain reload; without a broker, leave false and call wait_for_compilation.", Required = false)] bool wait = false,
@@ -89,6 +92,14 @@ namespace KitWright.Editor.Tools.Builtins
             string playModeErrors = null;
             if (EditorApplication.isPlaying)
             {
+                // The plugin patches the running game, so a Play Mode edit gets its verdict rather than a refusal.
+                if (!exit_play_mode && Interop.HotReload.IsPatching)
+                {
+                    return await AwaitHotReloadPatchAsync(timeout_seconds, inPlayMode: true) ??
+                           "Unity started compiling the script changes while playing (Script Changes While Playing recompiles them). " +
+                           "If this request is interrupted, call get_reload_recovery_status for the final outcome.";
+                }
+
                 if (!exit_play_mode)
                 {
                     return ToolResultFormatter.Error("PLAY_MODE_ACTIVE", new
@@ -122,6 +133,13 @@ namespace KitWright.Editor.Tools.Builtins
 
         private static async Task<string> RecompileAsync(int timeout_seconds, bool wait)
         {
+            if (Interop.KitWrightEngine.IsEnabled)
+                return ToolResultFormatter.Error("PATCH_ENGINE_ENABLED", new
+                {
+                    hint = "The KitWright patch engine is running: saved edits are patched live and nothing is compiled. " +
+                           "To force a compile, press Ctrl+R in the Editor (Assets > Refresh)."
+                });
+
             MarkExternalSyncPending();
 
             var refreshResult = await EditorRefreshPipeline.RefreshAndRequestCompilationAsync(
@@ -130,20 +148,13 @@ namespace KitWright.Editor.Tools.Builtins
 
             if (refreshResult.KnownHotReloadDetected && !refreshResult.CompilationOrImportStarted)
             {
-                // Within the grace window the plugin either patches or escalates to its own full recompile.
-                bool escalatedToCompile = await WaitForHotReloadOutcomeAsync(
-                    () => EditorApplication.isCompiling, TimeSpan.FromSeconds(3));
-
-                if (!escalatedToCompile)
+                var hotReloadAnswer = await AwaitHotReloadPatchAsync(timeout_seconds, inPlayMode: false);
+                if (hotReloadAnswer != null)
                 {
                     ClearExternalSyncPending();
-                    return ToolResultFormatter.Success(
-                        $"Code-patching plugin active ({Interop.HotReload.DisplayName}): this call did not start a Unity compilation — the plugin detours refresh/compile and hot-patches method bodies instead. " +
-                        "Its patch outcome (read after a 3s grace period; the newest entries are the most recent file changes) is in patch_status below: " +
-                        "a PatchApplied entry naming your member means it is live; PartiallySupportedChange/UndetectedChange/Failure/Error means the running code does NOT match the file.",
-                        new { patch_status = Interop.HotReload.GetStatus() });
+                    return hotReloadAnswer;
                 }
-                // Escalated to a real compile: fall through to the normal wait path.
+                // A real compile started: fall through to the normal wait path.
             }
 
             if (refreshResult.ScriptChangesStillPending)
@@ -325,6 +336,112 @@ namespace KitWright.Editor.Tools.Builtins
         {
             return RootScopeServices.Services?.GetService(typeof(CompilationService)) as CompilationService
                    ?? CompilationService.Instance;
+        }
+
+        // How long the plugin may stay idle with no verdict before the edit counts as one it never saw.
+        private static readonly TimeSpan HotReloadQuietGrace = TimeSpan.FromSeconds(3);
+        private static readonly TimeSpan HotReloadInlineCheck = TimeSpan.FromSeconds(1.2);
+
+        /// <summary>
+        /// Hot Reload's verdict on the newest script edit. Null means Unity started a full compile (the plugin
+        /// escalated, or this asked it to outside Play Mode), which the caller then waits for.
+        /// </summary>
+        private static async Task<string> AwaitHotReloadPatchAsync(int timeoutSeconds, bool inPlayMode)
+        {
+            // The newest pending script's write time, not this call's: the plugin may have patched it already.
+            var since = EditorRefreshPipeline.CaptureScriptChangeState(scanForUnknownProjectScripts: true).NewestChangeUtc;
+            if (since == null)
+            {
+                return ToolResultFormatter.Success(
+                    $"{Interop.HotReload.DisplayName} is patching code, and no script changed since the last compilation, so there is nothing to patch.",
+                    new { patch_status = Interop.HotReload.GetStatus() });
+            }
+
+            var changedAt = since.Value.ToString("O");
+            var paused = Interop.HotReload.PausedReason();
+            if (paused != null && Interop.HotReload.OutcomeSince(since.Value) == null)
+            {
+                if (!inPlayMode && Interop.HotReload.TryRequestFullRecompile() &&
+                    await WaitForHotReloadOutcomeAsync(() => EditorApplication.isCompiling, HotReloadQuietGrace))
+                    return null;
+                return ToolResultFormatter.Error("HOT_RELOAD_PAUSED",
+                    new { reason = paused, changed_at = changedAt, patch_status = Interop.HotReload.GetStatus() },
+                    inPlayMode
+                        ? $"{Interop.HotReload.DisplayName} is not patching because {paused}, so the running game still runs the old code. " +
+                          "A full recompile ends Play Mode: call request_recompile with exit_play_mode=true."
+                        : $"{Interop.HotReload.DisplayName} is not patching because {paused}, and Unity did not start a compile. " +
+                          "Use Recompile in the Hot Reload window, then call request_recompile again.");
+            }
+
+            string verdict = null;
+            var start = DateTime.UtcNow;
+            while (DateTime.UtcNow - start < TimeSpan.FromSeconds(timeoutSeconds))
+            {
+                if (EditorApplication.isCompiling)
+                    return null;
+                verdict = Interop.HotReload.OutcomeSince(since.Value);
+                if (verdict != null)
+                    break;
+                if (DateTime.UtcNow - start > HotReloadQuietGrace && Interop.HotReload.TryGetBusy() == false)
+                    break;
+                await Task.Delay(250);
+            }
+
+            // The plugin checks for inlined methods on its next 500 ms tick and counts one as a failed patch,
+            // so an applied verdict is read again once that tick has passed.
+            if (verdict == Interop.HotReload.Applied)
+            {
+                await Task.Delay(HotReloadInlineCheck);
+                verdict = Interop.HotReload.OutcomeSince(since.Value) ?? verdict;
+            }
+
+            if (verdict == null)
+            {
+                return ToolResultFormatter.Error("HOT_RELOAD_NO_OUTCOME",
+                    new { changed_at = changedAt, patch_status = Interop.HotReload.GetStatus() },
+                    $"{Interop.HotReload.DisplayName} gave no result for the script change made at {changedAt}. Check its window; " +
+                    "the running code may not match the file until it patches or Unity recompiles.");
+            }
+
+            if (verdict == Interop.HotReload.Applied)
+            {
+                return ToolResultFormatter.Success(
+                    $"{Interop.HotReload.DisplayName} patched the change: the running code matches the file. Unity did not recompile.",
+                    new { verdict, changed_at = changedAt, patch_status = Interop.HotReload.GetStatus() });
+            }
+
+            if (verdict == Interop.HotReload.NoChange)
+            {
+                return ToolResultFormatter.Success(
+                    $"{Interop.HotReload.DisplayName} found no code change to patch (a comment or formatting edit, or code put back to what was already patched). Unity did not recompile.",
+                    new { verdict, changed_at = changedAt, patch_status = Interop.HotReload.GetStatus() });
+            }
+
+            if (verdict == Interop.HotReload.CompileError)
+            {
+                return ToolResultFormatter.Error("COMPILATION_FAILED",
+                    new { verdict, issues = Interop.HotReload.ErrorsSince(since.Value, compileErrorsOnly: true), patch_status = Interop.HotReload.GetStatus() });
+            }
+
+            // The running code does not match the file. The plugin may recompile on its own; give it a moment.
+            if (await WaitForHotReloadOutcomeAsync(() => EditorApplication.isCompiling, TimeSpan.FromSeconds(2)))
+                return null;
+            if (!inPlayMode && Interop.HotReload.TryRequestFullRecompile() &&
+                await WaitForHotReloadOutcomeAsync(() => EditorApplication.isCompiling, HotReloadQuietGrace))
+                return null;
+
+            var why = verdict == "inlined"
+                ? "patched the methods, but Unity had inlined them into their callers (Release code optimization), so those calls still run the old body; " +
+                  "Debug code optimization (the bug icon in the status bar) avoids this"
+                : $"could not fully apply the change ({verdict}), so the running code does not match the file";
+            // The reasons can name a file someone else changed at the same moment, which the agent should not chase.
+            var reasons = Interop.HotReload.ErrorsSince(since.Value, compileErrorsOnly: false);
+            return ToolResultFormatter.Error("HOT_RELOAD_NEEDS_RECOMPILE",
+                new { verdict, reasons, changed_at = changedAt, patch_status = Interop.HotReload.GetStatus() },
+                inPlayMode
+                    ? $"{Interop.HotReload.DisplayName} {why}. A full recompile ends Play Mode: call request_recompile with exit_play_mode=true."
+                    : $"{Interop.HotReload.DisplayName} {why}, and Unity did not start a compile. " +
+                      "Use Recompile in the Hot Reload window, or stop Hot Reload, then call request_recompile again.");
         }
 
         internal static async Task<bool> WaitForHotReloadOutcomeAsync(Func<bool> compilationStarted, TimeSpan grace)

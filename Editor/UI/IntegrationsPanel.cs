@@ -29,7 +29,7 @@ namespace KitWright.Editor.MCP.Server
             new Integration
             {
                 Name = "Hot Reload",
-                PackageId = "com.singularity-group.hot-reload",
+                PackageId = "com.singularitygroup.hotreload",
                 AssemblyPrefix = "SingularityGroup.HotReload",
                 Description = "Patches script edits into the running editor without domain reloads. MCP detects it and skips fallback recompiles — tool calls stay fast, Play Mode state survives.",
                 Url = "https://hotreload.net/",

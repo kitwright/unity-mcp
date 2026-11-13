@@ -93,7 +93,7 @@ namespace KitWright.Editor.MCP.Server
             public List<SerializedEntry> Entries = new List<SerializedEntry>();
         }
 
-        public void Add(string toolName, MCPToolCallStatus status, string resultSummary)
+        public void Add(string toolName, MCPToolCallStatus status, string resultSummary, DateTime? timestamp = null)
         {
             var isImage = Base64Of(resultSummary) != null;
             var imageFilePath = isImage
@@ -103,7 +103,7 @@ namespace KitWright.Editor.MCP.Server
             var display = ExtractMessage(resultSummary);
             var entry = new MCPLogEntry
             {
-                Timestamp = DateTime.Now,
+                Timestamp = timestamp ?? DateTime.Now,
                 ToolName = toolName,
                 Status = status,
                 ResultSummary = isImage || imageFilePath != null
