@@ -72,7 +72,7 @@ namespace KitWright.Editor.Tools.Helpers
             if (property == null)
                 return false;
 
-#if UNITY_6000_6_OR_NEWER
+#if UNITY_6000_5_OR_NEWER
             return property.objectReferenceEntityIdValue.IsValid();
 #else
             return property.objectReferenceInstanceIDValue != 0;
