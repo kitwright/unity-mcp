@@ -60,6 +60,24 @@ namespace KitWright.Editor.Interop
             }
         }
 
+        /// <summary>The engine's own status (status, why_off, server, last_verdict...); null when the engine is not installed.</summary>
+        internal static JObject GetStatus()
+        {
+            try
+            {
+                var json = FindEngine()?.GetMethod("Status", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null) as string;
+                if (json == null)
+                    return null;
+                var status = JObject.Parse(json);
+                status["plugin"] = "KitWright";
+                return status;
+            }
+            catch (Exception)
+            {
+                return null;
+            }
+        }
+
         internal enum PatchResult
         {
             Patched,

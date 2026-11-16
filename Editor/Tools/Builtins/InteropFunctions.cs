@@ -10,7 +10,8 @@ namespace KitWright.Editor.Tools.Builtins
     [ToolProvider("Compilation")]
     internal static class InteropFunctions
     {
-        [Description("Report the status of known third-party code-patching plugins (currently: SingularityGroup Hot Reload). " +
+        [Description("Report the status of known code-patching plugins (SingularityGroup Hot Reload, and the KitWright patch engine of unity-mcp-pro when installed: " +
+                     "its entry has status off, idle, busy, patched, needs_recompile or compile_error, plus why_off and the last verdict). " +
                      "Returns per plugin: loaded, server health, whether its compile detour is installed, and its recent timeline " +
                      "(which members were hot-patched, which changes it could not patch, and its own compile errors). " +
                      "Use after editing .cs files while such a plugin is active to verify the new code actually reached the running domain: " +
@@ -26,11 +27,13 @@ namespace KitWright.Editor.Tools.Builtins
             try
             {
                 var suppressed = HotReload.IsSuppressingCompilation;
+                var engine = KitWrightEngine.GetStatus();
+                var plugins = engine == null ? new object[] { HotReload.GetStatus() } : new object[] { HotReload.GetStatus(), engine };
                 return Response.Success(
                     suppressed
                         ? "A code-patching plugin is active: it detours refresh/compile, so editor scripts cannot start a Unity compilation. Ordinary method-body edits are hot-patched; for a change it cannot patch (const values, signatures, new types, lambda closures, attributes, field initializers) it runs its own full recompile, so read the timeline below rather than assuming either outcome."
                         : "No code-patching plugin is suppressing the Unity compile pipeline.",
-                    new { compile_pipeline_suppressed = suppressed, plugins = new[] { HotReload.GetStatus() } });
+                    new { compile_pipeline_suppressed = suppressed, plugins });
             }
             catch (Exception ex)
             {
