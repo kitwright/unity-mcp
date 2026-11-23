@@ -45,6 +45,7 @@ window. Batchmode will not do, since it skips these tests too.
 - [ ] `EditorWindowInteractionFunctionsTests`: UI Toolkit click (rendered view)
 - [ ] `EditorThreadHelperStallTests.SinceLastPump_IsFreshWhileTheEditorIsRunningThisTest` (editor loop ticking)
 - [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
+- [ ] Hot Reload verdicts (plugin installed, server running): in Play Mode edit a method body, then `request_recompile` answers `verdict` `applied` and the game runs the new code; add a field to a struct and it answers `HOT_RELOAD_NEEDS_RECOMPILE`, and with `exit_play_mode=true` Unity compiles; break the syntax and it answers `COMPILATION_FAILED` with the `error CS` line; with no edit it answers at once
 - [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
 - [ ] `PowerThrottlingTests` (Windows)
 - [ ] `PortedUnityToolsTests.Build_RunsAStandalonePlayerBuildToCompletion` (a Windows editor with Windows Mono build support; Explicit, so run it by name)

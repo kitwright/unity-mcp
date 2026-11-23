@@ -6,6 +6,8 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using Newtonsoft.Json.Linq;
+using UnityEditor;
+using UnityEditorInternal;
 using UnityEngine;
 
 namespace KitWright.Editor.Interop
@@ -32,6 +34,9 @@ namespace KitWright.Editor.Interop
         {
             "Error", "Failure", "InlinedMethod", "PatchApplied", "PartiallySupportedChange", "UndetectedChange"
         };
+
+        // Values of SingularityGroup.HotReload.Editor.EntryType.
+        private static readonly string[] EntryTypeNames = { "Parent", "Child", "Standalone", "Foldout" };
 
         /// <summary>Plugin assemblies are present, so it detours the refresh/compile pipeline.</summary>
         public static bool IsLoaded
@@ -81,6 +86,150 @@ namespace KitWright.Editor.Interop
             };
         }
 
+        /// <summary>The plugin is loaded and its server is up, so it patches edited methods, Play Mode included.</summary>
+        public static bool IsPatching => IsLoaded && TryGetServerHealthy() == true;
+
+        public const string Applied = "applied";
+        public const string NoChange = "no_change";
+        public const string CompileError = "compile_error";
+
+        /// <summary>
+        /// The verdict on the script edits made since <paramref name="sinceUtc"/>, or null while the plugin has
+        /// not answered for them yet (see <see cref="ClassifyOutcome"/>).
+        /// </summary>
+        public static string OutcomeSince(DateTime sinceUtc) => ClassifyOutcome(ReadEntries(), sinceUtc);
+
+        /// <summary>
+        /// The error text of the entries created since <paramref name="sinceUtc"/>: the "error CS" lines only, or
+        /// every reason a patch failed (which can name another file changed at the same time).
+        /// </summary>
+        public static string[] ErrorsSince(DateTime sinceUtc, bool compileErrorsOnly) =>
+            (ReadEntries() ?? new List<TimelineEntry>())
+                .Where(e => e.CreatedAtUtc >= sinceUtc && !string.IsNullOrEmpty(e.Error) && (!compileErrorsOnly || IsCompileError(e)))
+                .Select(e => e.Error)
+                .Distinct()
+                .ToArray();
+
+        /// <summary>EditorCodePatcher.patchStatus is Compiling or Patching; null when it cannot be read.</summary>
+        public static bool? TryGetBusy()
+        {
+            try
+            {
+                var status = FindEditorType("SingularityGroup.HotReload.Editor.EditorCodePatcher")
+                    ?.GetField("patchStatus", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)
+                    ?.GetValue(null)?.ToString();
+                return status == null ? (bool?)null : status == "Compiling" || status == "Patching";
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Why the plugin is holding patches back right now (its compile detour stays on, so Unity does not
+        /// compile either), or null. Mirrors the early returns of EditorCodePatcher.OnIntervalMainThread.
+        /// </summary>
+        public static string PausedReason()
+        {
+            if (System.Diagnostics.Debugger.IsAttached && EditorPrefs.GetBool("HotReloadWindow.DebuggerCompatibilityEnabled", true))
+                return "a debugger is attached (its \"auto-disable with debugger\" setting)";
+            if (EditorApplication.isPlaying)
+                return null;
+            if (EditorPrefs.GetBool("HotReloadWindow.PauseHotReloadInEditMode", false))
+                return "it is paused in Edit Mode (its \"Pause Hot Reload in Edit Mode\" setting)";
+            if (!InternalEditorUtility.isApplicationActive && TryGetPatchOnlyOnFocus() == true)
+                return "it patches Edit Mode edits only while the Editor has focus (patchEditModeOnlyOnEditorFocus in hot-reload-config.json)";
+            return null;
+        }
+
+        private static bool? TryGetPatchOnlyOnFocus()
+        {
+            try
+            {
+                var config = FindEditorType("SingularityGroup.HotReload.Editor.EditorCodePatcher")
+                    ?.GetField("config", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Static)?.GetValue(null);
+                return config?.GetType().GetField("patchEditModeOnlyOnEditorFocus")?.GetValue(config) as bool?;
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// The plugin's own Recompile button: drops the compile detour and asks Unity to compile. It also
+        /// ends Play Mode, so callers use it only outside Play Mode or when asked to leave it.
+        /// </summary>
+        public static bool TryRequestFullRecompile()
+        {
+            try
+            {
+                var recompile = FindEditorType("SingularityGroup.HotReload.Editor.HotReloadRunTab")
+                    ?.GetMethod("Recompile", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static, null, Type.EmptyTypes, null);
+                if (recompile == null)
+                    return false;
+
+                recompile.Invoke(null, null);
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        internal sealed class TimelineEntry
+        {
+            public DateTime? CreatedAtUtc;
+            public string Type;
+            // EntryType: a patch's outcome is a Parent or Standalone entry; its Child entries are the details.
+            public string Role;
+            public string Title;
+            public string Error;
+            public string Method;
+            public string[] PatchedMembers;
+        }
+
+        /// <summary>
+        /// The newest outcome among entries created at or after <paramref name="sinceUtc"/>:
+        /// <c>compile_error</c> (an Error entry quoting "error CS"; a compile error gets no outcome entry),
+        /// <c>applied</c> (PatchApplied), <c>no_change</c> (UndetectedChange: the edit changed no code, such as a
+        /// comment, or put back what was already patched), or, where the running code does not match the file,
+        /// <c>partial</c> (PartiallySupportedChange), <c>not_applied</c> (Failure: an unsupported change or a
+        /// failed patch), <c>inlined</c> (InlinedMethod).
+        /// Null while no entry that new decides it.
+        /// </summary>
+        internal static string ClassifyOutcome(IEnumerable<TimelineEntry> newestFirst, DateTime sinceUtc)
+        {
+            var recent = (newestFirst ?? Enumerable.Empty<TimelineEntry>())
+                .Where(e => e.CreatedAtUtc >= sinceUtc)
+                .ToList();
+
+            if (recent.Any(IsCompileError))
+                return CompileError;
+
+            foreach (var entry in recent)
+            {
+                if (entry.Role == "Child")
+                    continue;
+
+                switch (entry.Type)
+                {
+                    case "PatchApplied": return Applied;
+                    case "PartiallySupportedChange": return "partial";
+                    case "Failure": return "not_applied";
+                    case "UndetectedChange": return NoChange;
+                    case "InlinedMethod": return "inlined";
+                }
+            }
+
+            return null;
+        }
+
+        private static bool IsCompileError(TimelineEntry entry) =>
+            entry.Type == "Error" && entry.Error != null && entry.Error.Contains("error CS");
+
         /// <summary>CompileMethodDetourer.detouredMethod via reflection; null when unavailable.</summary>
         private static bool? TryGetDetourInstalled()
         {
@@ -127,10 +276,39 @@ namespace KitWright.Editor.Interop
         /// </summary>
         private static object ReadTimeline()
         {
-            return ReadLiveTimeline() ?? ReadPersistedTimeline();
+            var source = "live";
+            var entries = ReadLiveEntries();
+            string reason = null;
+            if (entries == null)
+            {
+                source = "persisted";
+                entries = ReadPersistedEntries(out reason);
+            }
+
+            if (entries == null)
+                return new { available = false, reason };
+
+            return new
+            {
+                available = true,
+                source,
+                entries = entries.Take(MaxTimelineEntries).Select(e => new
+                {
+                    created_at = e.CreatedAtUtc?.ToString("O"),
+                    entry_type = e.Type,
+                    role = e.Role,
+                    title = e.Title,
+                    error = e.Error,
+                    method = e.Method,
+                    patched_members = e.PatchedMembers
+                }).ToList()
+            };
         }
 
-        private static object ReadLiveTimeline()
+        private static List<TimelineEntry> ReadEntries() => ReadLiveEntries() ?? ReadPersistedEntries(out _);
+
+        // Newest first, as the plugin keeps them; null when its list cannot be read.
+        private static List<TimelineEntry> ReadLiveEntries()
         {
             try
             {
@@ -140,32 +318,29 @@ namespace KitWright.Editor.Interop
                 if (timeline == null)
                     return null;
 
-                var entries = new List<object>();
+                const BindingFlags instance = BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance;
+                var entries = new List<TimelineEntry>();
                 foreach (var entry in timeline)
                 {
-                    if (entries.Count >= MaxTimelineEntries)
-                        break;
+                    var entryType = entry.GetType();
+                    var alertData = entryType.GetField("alertData", instance)?.GetValue(entry);
+                    object Data(string name) => alertData?.GetType().GetField(name, instance)?.GetValue(alertData);
+                    var createdAt = Data("createdAt") as DateTime? ?? entryType.GetField("timestamp", instance)?.GetValue(entry) as DateTime?;
 
-                    var type = entry.GetType();
-                    object Field(string name) =>
-                        type.GetField(name, BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)?.GetValue(entry);
-
-                    var alertData = Field("alertData");
-                    var patchedMembers = alertData?.GetType()
-                        .GetField("patchedMembersDisplayNames", BindingFlags.NonPublic | BindingFlags.Public | BindingFlags.Instance)
-                        ?.GetValue(alertData) as string[];
-
-                    entries.Add(new
+                    entries.Add(new TimelineEntry
                     {
-                        created_at = Field("timestamp") is DateTime dt ? dt.ToString("O") : null,
-                        entry_type = Field("alertType")?.ToString(),
-                        title = Field("title") as string,
-                        description = Field("shortDescription") as string ?? Field("description") as string,
-                        patched_members = patchedMembers
+                        CreatedAtUtc = createdAt?.ToUniversalTime(),
+                        // alertData.alertEntryType is the outcome; the entry's own alertType only picks its icon.
+                        Type = Data("alertEntryType")?.ToString(),
+                        Role = Data("entryType")?.ToString(),
+                        Title = entryType.GetField("title", instance)?.GetValue(entry) as string,
+                        Error = Data("errorString") as string,
+                        Method = Data("methodSimpleName") as string ?? Data("methodName") as string,
+                        PatchedMembers = Data("patchedMembersDisplayNames") as string[]
                     });
                 }
 
-                return new { available = true, source = "live", entries };
+                return entries;
             }
             catch
             {
@@ -173,37 +348,44 @@ namespace KitWright.Editor.Interop
             }
         }
 
-        private static object ReadPersistedTimeline()
+        private static List<TimelineEntry> ReadPersistedEntries(out string reason)
         {
+            reason = null;
             try
             {
                 var path = Path.Combine(GetProjectRoot(), TimelineRelativePath);
                 if (!File.Exists(path))
-                    return new { available = false, reason = "timeline file not found", path };
-
-                var entries = new List<object>();
-                var alertDatas = JObject.Parse(File.ReadAllText(path))["alertDatas"] as JArray;
-                foreach (var entry in (alertDatas ?? new JArray()).Take(MaxTimelineEntries))
                 {
-                    var typeIndex = entry.Value<int?>("alertEntryType") ?? -1;
-                    entries.Add(new
-                    {
-                        created_at = entry.Value<string>("createdAt"),
-                        entry_type = typeIndex >= 0 && typeIndex < AlertEntryTypeNames.Length
-                            ? AlertEntryTypeNames[typeIndex]
-                            : typeIndex.ToString(),
-                        error = entry.Value<string>("errorString"),
-                        method = entry.Value<string>("methodSimpleName") ?? entry.Value<string>("methodName"),
-                        patched_members = entry["patchedMembersDisplayNames"]?.ToObject<string[]>()
-                    });
+                    reason = "timeline file not found: " + path;
+                    return null;
                 }
 
-                return new { available = true, source = "persisted", entries };
+                return ParsePersistedEntries(File.ReadAllText(path));
             }
             catch (Exception ex)
             {
-                return new { available = false, reason = ex.Message };
+                reason = ex.Message;
+                return null;
             }
+        }
+
+        // The plugin writes its enums as numbers.
+        internal static List<TimelineEntry> ParsePersistedEntries(string json)
+        {
+            string Name(string[] names, int? index) =>
+                index == null ? null : index >= 0 && index < names.Length ? names[index.Value] : index.ToString();
+
+            return ((JObject.Parse(json)["alertDatas"] as JArray) ?? new JArray())
+                .Select(entry => new TimelineEntry
+                {
+                    CreatedAtUtc = entry["createdAt"]?.ToObject<DateTime?>()?.ToUniversalTime(),
+                    Type = Name(AlertEntryTypeNames, entry.Value<int?>("alertEntryType")),
+                    Role = Name(EntryTypeNames, entry.Value<int?>("entryType")),
+                    Error = entry.Value<string>("errorString"),
+                    Method = entry.Value<string>("methodSimpleName") ?? entry.Value<string>("methodName"),
+                    PatchedMembers = entry["patchedMembersDisplayNames"]?.ToObject<string[]>()
+                })
+                .ToList();
         }
 
         private static string GetProjectRoot()
