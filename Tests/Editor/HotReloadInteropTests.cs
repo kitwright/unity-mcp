@@ -1,12 +1,15 @@
 // Copyright (C) KitWright. Licensed under MIT.
 
 using System;
+using System.IO;
 using System.Linq;
 using System.Reflection;
 using KitWright.Editor.Interop;
 using KitWright.Editor.MCP.Server;
 using KitWright.Editor.Tools.Helpers;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using UnityEngine;
 
 namespace KitWright.Editor.Tests
 {
@@ -109,6 +112,32 @@ namespace KitWright.Editor.Tests
             Assert.AreEqual(Edit, state.NewestChangeUtc);
         }
 
+        // A source with no built output used to carry no write time, so Play Mode answered "no script changed".
+        [Test]
+        public void ScriptChangeState_SourceWithNoBuiltOutput_KeepsItsWriteTime()
+        {
+            var temp = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(temp);
+            try
+            {
+                var source = Path.Combine(temp, "Example.cs");
+                File.WriteAllText(source, "class Example {}");
+                File.SetLastWriteTimeUtc(source, Edit);
+
+                var state = EditorRefreshPipeline.AnalyzeScriptChangeState(
+                    new[] { new ScriptCompilationArtifact(Path.Combine(temp, "Missing.dll"), new[] { source }) },
+                    Array.Empty<string>(),
+                    TimeSpan.FromSeconds(1));
+
+                Assert.AreEqual(1, state.OutOfDateSourceCount);
+                Assert.AreEqual(Edit, state.NewestChangeUtc);
+            }
+            finally
+            {
+                Directory.Delete(temp, true);
+            }
+        }
+
         // Canary: the detour flag is a private field of a third-party package, so a plugin update
         // that renames it silently drops us back to guessing from server health.
         [Test]
@@ -169,6 +198,150 @@ namespace KitWright.Editor.Tests
             Assert.IsNotNull(Find("EditorCodePatcher")?.GetField("config", any), "EditorCodePatcher.config");
             Assert.IsNotNull(Find("Config")?.GetField("patchEditModeOnlyOnEditorFocus", any), "Config.patchEditModeOnlyOnEditorFocus");
             Assert.IsNotNull(Find("HotReloadRunTab")?.GetMethod("Recompile", any, null, Type.EmptyTypes, null), "HotReloadRunTab.Recompile()");
+        }
+
+        // What unity-mcp-pro's HotReloadEngine.OutcomesSince writes (JsonUtility of its history).
+        private const string EngineOutcomes =
+            "{\"items\":[" +
+            "{\"seq\":1,\"verdict\":\"applied\",\"message\":\"\",\"assembly\":\"Assembly-CSharp\",\"created_at\":\"2026-11-10T09:00:05.1234567Z\",\"details\":[]}," +
+            "{\"seq\":2,\"verdict\":\"compile_error\",\"message\":\"\",\"assembly\":\"Assembly-CSharp\",\"created_at\":\"2026-11-10T09:00:06.0000000Z\",\"details\":[\"Assets/A.cs(3,1): error CS1002: ; expected\"]}]}";
+
+        [Test]
+        public void EngineOutcomes_ReadVerdictsAndDetailsFromTheItemsItWrites()
+        {
+            var (verdicts, details) = KitWrightEngine.Summarize(KitWrightEngine.ParseOutcomes(EngineOutcomes));
+
+            CollectionAssert.AreEqual(new[] { "applied", "compile_error" }, verdicts);
+            CollectionAssert.AreEqual(new[] { "Assets/A.cs(3,1): error CS1002: ; expected" }, details);
+            Assert.AreEqual(KitWrightEngine.PatchResult.CompileError, KitWrightEngine.Classify(verdicts));
+        }
+
+        [Test]
+        public void EngineOutcomes_NoneYetIsNull_AndAnItemWithoutDetailsHasNone()
+        {
+            Assert.IsNull(KitWrightEngine.ParseOutcomes(null));
+
+            var (verdicts, details) = KitWrightEngine.Summarize(KitWrightEngine.ParseOutcomes("{\"items\":[{\"verdict\":\"no_change\"}]}"));
+
+            CollectionAssert.AreEqual(new[] { "no_change" }, verdicts);
+            Assert.IsEmpty(details);
+            Assert.AreEqual(KitWrightEngine.PatchResult.Patched, KitWrightEngine.Classify(verdicts));
+        }
+
+        [Test]
+        public void EngineServer_IsIdleOnlyWhenItsStateFileSaysReady()
+        {
+            Assert.IsTrue(KitWrightEngine.IsIdle("{\"state\":\"ready\",\"pid\":4242,\"at\":\"2026-11-10T09:00:00.0000000Z\"}"));
+            Assert.IsFalse(KitWrightEngine.IsIdle("{\"state\":\"busy\",\"pid\":4242}"));
+            Assert.IsFalse(KitWrightEngine.IsIdle("{\"state\":\"starting\",\"pid\":4242}"));
+            Assert.IsTrue(KitWrightEngine.IsIdle(null));
+            Assert.IsTrue(KitWrightEngine.IsIdle(""));
+        }
+
+        [Test]
+        public void EngineStatus_CarriesTheKeysOfAHotReloadEntry_AndIsSuppressingOnlyWhileOn()
+        {
+            var on = KitWrightEngine.DescribeStatus(JObject.Parse(
+                "{\"status\":\"patched\",\"why_off\":\"\",\"server\":\"ready\",\"last_verdict\":\"applied\",\"last_message\":\"\",\"last_at\":\"\"}"));
+            var off = KitWrightEngine.DescribeStatus(JObject.Parse("{\"status\":\"off\",\"why_off\":\"EditorPrefs KitWright.HotReload.Off is set.\"}"));
+            var hotReload = JObject.FromObject(HotReload.GetStatus());
+
+            foreach (var key in new[] { "id", "display_name", "loaded", "suppresses_compilation" })
+            {
+                Assert.IsNotNull(on[key], "engine " + key);
+                Assert.IsNotNull(hotReload[key], "hot reload " + key);
+            }
+
+            Assert.AreEqual("patched", (string)on["status"]);
+            Assert.IsTrue((bool)on["loaded"]);
+            Assert.IsTrue((bool)on["suppresses_compilation"]);
+            Assert.IsFalse((bool)off["suppresses_compilation"]);
+        }
+
+        [Test]
+        public void EngineFailure_IsLoggedOnlyOnce()
+        {
+            var warnings = 0;
+            void Count(string message, string stackTrace, LogType type)
+            {
+                if (type == LogType.Warning && message.Contains("KitWright patch engine's OutcomesSince"))
+                    warnings++;
+            }
+
+            var wasLogged = KitWrightEngine.FailureLogged;
+            KitWrightEngine.FailureLogged = false;
+            Application.logMessageReceived += Count;
+            try
+            {
+                KitWrightEngine.LogFailureOnce("OutcomesSince", new InvalidOperationException("boom"));
+                KitWrightEngine.LogFailureOnce("OutcomesSince", new InvalidOperationException("boom"));
+            }
+            finally
+            {
+                Application.logMessageReceived -= Count;
+                KitWrightEngine.FailureLogged = wasLogged;
+            }
+
+            Assert.AreEqual(1, warnings);
+        }
+
+        // Canary for unity-mcp-pro: every member KitWrightEngine finds by name, with the signature it calls it with.
+        // A rename there turns every verdict into HOT_RELOAD_NO_OUTCOME without any error here.
+        [Test]
+        public void EngineMembersAreStillWhereWeReflectOnThem()
+        {
+            var type = AppDomain.CurrentDomain.GetAssemblies()
+                .FirstOrDefault(a => a.GetName().Name == KitWrightEngine.EngineAssembly)
+                ?.GetType(KitWrightEngine.EngineType, false);
+            if (type == null)
+                Assert.Ignore("The KitWright patch engine (unity-mcp-pro) is not installed in this project.");
+
+            const BindingFlags publicStatic = BindingFlags.Public | BindingFlags.Static;
+            var enabled = type.GetProperty("Enabled", publicStatic);
+            Assert.IsNotNull(enabled, "HotReloadEngine.Enabled");
+            Assert.AreEqual(typeof(bool), enabled.PropertyType);
+
+            var recorded = type.GetEvent("OutcomeRecorded", publicStatic);
+            Assert.IsNotNull(recorded, "HotReloadEngine.OutcomeRecorded");
+            Assert.AreEqual(typeof(Action<string, string, string>), recorded.EventHandlerType);
+
+            void AssertStringMethod(string name, params Type[] parameters)
+            {
+                Assert.AreEqual(1, type.GetMethods(publicStatic).Count(m => m.Name == name), $"HotReloadEngine.{name} is looked up by name, so it needs one overload");
+                var method = type.GetMethod(name, publicStatic, null, parameters, null);
+                Assert.IsNotNull(method, $"HotReloadEngine.{name}({string.Join(", ", parameters.Select(p => p.Name))})");
+                Assert.AreEqual(typeof(string), method.ReturnType, $"HotReloadEngine.{name} returns JSON");
+            }
+
+            AssertStringMethod("Status");
+            AssertStringMethod("ServerState");
+            AssertStringMethod("OutcomesSince", typeof(string));
+        }
+
+        [Test]
+        public void EngineCallsAnswerWithoutFailingAndStatusKeepsItsKeys()
+        {
+            if (KitWrightEngine.GetStatus() == null)
+                Assert.Ignore("The KitWright patch engine (unity-mcp-pro) is not installed in this project.");
+
+            var wasLogged = KitWrightEngine.FailureLogged;
+            KitWrightEngine.FailureLogged = false;
+            try
+            {
+                var status = KitWrightEngine.GetStatus();
+                _ = KitWrightEngine.IsEnabled;
+                _ = KitWrightEngine.ServerIdle();
+                KitWrightEngine.OutcomesSince(DateTime.UtcNow.AddYears(1));
+
+                Assert.IsNotNull(status);
+                foreach (var key in new[] { "status", "why_off", "server", "last_verdict" })
+                    Assert.IsNotNull(status[key], "Status() key " + key);
+                Assert.IsFalse(KitWrightEngine.FailureLogged, "a reflection call into HotReloadEngine threw");
+            }
+            finally
+            {
+                KitWrightEngine.FailureLogged = wasLogged;
+            }
         }
     }
 }

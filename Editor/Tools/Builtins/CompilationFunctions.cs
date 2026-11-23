@@ -25,6 +25,10 @@ namespace KitWright.Editor.Tools.Builtins
         private const int PlayModeErrorCount = 10;
         internal const string PlayModeErrorsKey = "KitWright_ExternalSync_PlayModeErrors";
 
+        private const string PlayModeCompileStarted =
+            "Unity started compiling the script changes while playing (Script Changes While Playing recompiles them). " +
+            "If this request is interrupted, call get_reload_recovery_status for the final outcome.";
+
         [Description("Force Unity to refresh and wait until script compilation is complete without blocking the editor thread. " +
                      "Use this after editing scripts to ensure the latest code is active before entering Play Mode. " +
                      "Returns compilation errors if any, or a success message.")]
@@ -97,14 +101,10 @@ namespace KitWright.Editor.Tools.Builtins
             {
                 // The plugin patches the running game, so a Play Mode edit gets its verdict rather than a refusal.
                 if (!exit_play_mode && Interop.HotReload.IsPatching)
-                {
-                    return await AwaitHotReloadPatchAsync(timeout_seconds, inPlayMode: true) ??
-                           "Unity started compiling the script changes while playing (Script Changes While Playing recompiles them). " +
-                           "If this request is interrupted, call get_reload_recovery_status for the final outcome.";
-                }
+                    return await AwaitHotReloadPatchAsync(timeout_seconds, inPlayMode: true) ?? PlayModeCompileStarted;
 
                 if (!exit_play_mode && Interop.KitWrightEngine.IsEnabled)
-                    return await AwaitEnginePatchAsync(timeout_seconds, inPlayMode: true);
+                    return await AwaitEnginePatchAsync(timeout_seconds, inPlayMode: true) ?? PlayModeCompileStarted;
 
                 if (!exit_play_mode)
                 {
@@ -368,7 +368,7 @@ namespace KitWright.Editor.Tools.Builtins
             JArray outcomes = null;
             while (DateTime.UtcNow < deadline)
             {
-                if (EditorApplication.isCompiling)
+                if (CompilationService.IsActuallyCompiling)
                     return null;
                 outcomes = Interop.KitWrightEngine.OutcomesSince(since.Value);
                 // The server finished its batch and recorded nothing: it never saw this edit.
@@ -395,16 +395,15 @@ namespace KitWright.Editor.Tools.Builtins
                     : null;
             }
 
-            var verdicts = outcomes.Select(o => (string)o["verdict"]).ToList();
-            var details = outcomes.SelectMany(o => (o["details"] as JArray ?? new JArray()).Select(d => (string)d)).Take(20).ToList();
+            var (verdicts, details) = Interop.KitWrightEngine.Summarize(outcomes);
             switch (Interop.KitWrightEngine.Classify(verdicts))
             {
                 case Interop.KitWrightEngine.PatchResult.Patched:
                     return ToolResultFormatter.Success(
                         "The KitWright patch engine patched the change: the running code matches the file. Unity did not recompile.",
                         new { verdicts, changed_at = changedAt },
-                        "Assets edited outside the Editor (prefabs, scenes, shaders) are not imported while the engine patches: " +
-                        "Assets > Refresh imports them, and compiles the scripts over the patch.");
+                        "The engine imports other assets edited outside the Editor (prefabs, shaders, textures) about 0.3 s after the last save, and asks Unity to recompile for a new or removed script, an asmdef or a plugin. " +
+                        "Scenes are not imported: Assets > Refresh imports them, and compiles the scripts over the patch.");
                 case Interop.KitWrightEngine.PatchResult.CompileError:
                     return ToolResultFormatter.Error("COMPILATION_FAILED", new { verdicts, issues = string.Join("\n", details), changed_at = changedAt });
                 default:
