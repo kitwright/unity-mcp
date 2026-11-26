@@ -239,7 +239,7 @@
 
 | Tool | Description |
 |------|-------------|
-| `get_code_patching_status` | Report the status of known third-party code-patching plugins (currently: SingularityGroup Hot Reload). |
+| `get_code_patching_status` | Report the status of known code-patching plugins (SingularityGroup Hot Reload, and the KitWright patch engine of unity-mcp-pro when installed: its entry has status off, idle, busy, patched, needs_recompile or compile_error, plus why_off and the last verdict). |
 | `get_compilation_errors` *(core)* | Get the latest Unity script compilation errors from the most recent compilation cycle. |
 | `get_reload_recovery_status` *(core)* | Get the latest domain reload recovery event, if any. |
 | `reload_file` | Compile the edited methods tagged [CodeReload] in a source file and apply them in place to the running code, through the Unity Pipeline package's Assembly.Load backend (Editor Play Mode). |
