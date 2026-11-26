@@ -44,8 +44,10 @@ window. Batchmode will not do, since it skips these tests too.
 - [ ] `ScreenshotFunctionsTests`: capture read-back (graphics device)
 - [ ] `EditorWindowInteractionFunctionsTests`: UI Toolkit click (rendered view)
 - [ ] `EditorThreadHelperStallTests.SinceLastPump_IsFreshWhileTheEditorIsRunningThisTest` (editor loop ticking)
-- [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload installed), and the Volume tools' tests (URP installed)
+- [ ] `HotReloadInteropTests` (SingularityGroup Hot Reload and the unity-mcp-pro package installed: the canaries that pin the plugin's and the engine's reflected members skip without them), and the Volume tools' tests (URP installed)
 - [ ] Hot Reload verdicts (plugin installed, server running): in Play Mode edit a method body, then `request_recompile` answers `verdict` `applied` and the game runs the new code; add a field to a struct and it answers `HOT_RELOAD_NEEDS_RECOMPILE`, and with `exit_play_mode=true` Unity compiles; break the syntax and it answers `COMPILATION_FAILED` with the `error CS` line; with no edit it answers at once
+- [ ] KitWright patch engine verdicts (unity-mcp-pro installed, patch server built): in Play Mode edit a method body, then `request_recompile` answers that the engine patched it (`verdicts` `applied`) and the game runs the new code; add a field to a struct and it answers `HOT_RELOAD_NEEDS_RECOMPILE`, and with `exit_play_mode=true` Unity compiles; break the syntax and it answers `COMPILATION_FAILED` with the `error CS` line
+- [ ] Same engine in Edit Mode: a method body edit answers patched without a recompile, and a change it cannot patch (a new field) falls back to a full compile; `get_code_patching_status` lists the engine with `compile_pipeline_suppressed` true
 - [ ] `InputSimulationFunctionsTests` mouse drag, touch and gamepad (a Game View to route device input to)
 - [ ] `PowerThrottlingTests` (Windows)
 - [ ] `PortedUnityToolsTests.Build_RunsAStandalonePlayerBuildToCompletion` (a Windows editor with Windows Mono build support; Explicit, so run it by name)

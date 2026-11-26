@@ -218,7 +218,7 @@ namespace KitWright.Editor.Tools.Helpers
                     }
                     else if (File.Exists(source))
                     {
-                        state.AddOutOfDateSource(source, null);
+                        state.AddOutOfDateSource(source, GetSourceWriteTimeUtc(source));
                     }
                 }
             }

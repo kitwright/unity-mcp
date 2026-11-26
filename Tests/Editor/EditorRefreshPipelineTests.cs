@@ -212,6 +212,9 @@ namespace KitWright.Editor.Tests
         [Test]
         public void RefreshAndRequestCompilation_NotPlaying_StillInvokesTheImport()
         {
+            if (Interop.KitWrightEngine.IsEnabled)
+                Assert.Ignore("The KitWright patch engine skips the import on purpose: it patches the saved edit itself.");
+
             var task = EditorRefreshPipeline.RefreshAndRequestCompilationAsync(forceUpdate: false);
             if (!task.IsCompleted)
                 Assert.Ignore("A compile or import started, so the result is not readable without blocking the editor thread.");

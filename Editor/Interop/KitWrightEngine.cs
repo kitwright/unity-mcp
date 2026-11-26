@@ -10,6 +10,7 @@ using KitWright.Editor.DI;
 using KitWright.Editor.MCP.Server;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
+using UnityEngine;
 
 namespace KitWright.Editor.Interop
 {
@@ -21,12 +22,20 @@ namespace KitWright.Editor.Interop
     [InitializeOnLoad]
     internal static class KitWrightEngine
     {
-        private const string EngineAssembly = "KitWright.HotReload.Editor";
-        private const string EngineType = "KitWright.HotReload.Editor.HotReloadEngine";
+        internal const string EngineAssembly = "KitWright.HotReload.Editor";
+        internal const string EngineType = "KitWright.HotReload.Editor.HotReloadEngine";
         private const string ActivityName = "Hot Reload";
+        private const string DisplayName = "KitWright patch engine";
 
         private static readonly ConcurrentQueue<(DateTime Time, string Verdict, string Text)> Pending =
             new ConcurrentQueue<(DateTime, string, string)>();
+
+        // The loaded assemblies change only with a domain reload, which resets this too.
+        private static readonly Lazy<Type> Engine = new Lazy<Type>(() =>
+            AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == EngineAssembly)?.GetType(EngineType, false));
+
+        // Test seam: the warning is logged once per domain, however often the engine is polled.
+        internal static bool FailureLogged;
 
         static KitWrightEngine()
         {
@@ -39,8 +48,9 @@ namespace KitWright.Editor.Interop
                 evt.AddEventHandler(null, new Action<string, string, string>(OnOutcome));
                 EditorApplication.update += Drain;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogFailureOnce("OutcomeRecorded", ex);
             }
         }
 
@@ -53,8 +63,9 @@ namespace KitWright.Editor.Interop
                     var enabled = FindEngine()?.GetProperty("Enabled", BindingFlags.Public | BindingFlags.Static);
                     return enabled?.GetValue(null) is true;
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
+                    LogFailureOnce("Enabled", ex);
                     return false;
                 }
             }
@@ -66,16 +77,24 @@ namespace KitWright.Editor.Interop
             try
             {
                 var json = FindEngine()?.GetMethod("Status", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null) as string;
-                if (json == null)
-                    return null;
-                var status = JObject.Parse(json);
-                status["plugin"] = "KitWright";
-                return status;
+                return json == null ? null : DescribeStatus(JObject.Parse(json));
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogFailureOnce("Status", ex);
                 return null;
             }
+        }
+
+        // The same keys as a SingularityGroup entry in get_code_patching_status; the engine is the one that is off or on.
+        internal static JObject DescribeStatus(JObject status)
+        {
+            status["id"] = "kitwright-engine";
+            status["display_name"] = DisplayName;
+            status["loaded"] = true;
+            status["suppresses_compilation"] = status.Value<string>("status") is string state && state != "off";
+            status["plugin"] = "KitWright";
+            return status;
         }
 
         internal enum PatchResult
@@ -99,29 +118,40 @@ namespace KitWright.Editor.Interop
         {
             try
             {
-                var json = FindEngine()?.GetMethod("OutcomesSince", BindingFlags.Public | BindingFlags.Static)
-                    ?.Invoke(null, new object[] { sinceUtc.ToString("O") }) as string;
-                return json == null ? null : JObject.Parse(json)["items"] as JArray;
+                return ParseOutcomes(FindEngine()?.GetMethod("OutcomesSince", BindingFlags.Public | BindingFlags.Static)
+                    ?.Invoke(null, new object[] { sinceUtc.ToString("O") }) as string);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogFailureOnce("OutcomesSince", ex);
                 return null;
             }
         }
+
+        // The engine writes {"items":[{verdict, details[], created_at, ...}]}.
+        internal static JArray ParseOutcomes(string json) => json == null ? null : JObject.Parse(json)["items"] as JArray;
+
+        internal static (List<string> Verdicts, List<string> Details) Summarize(JArray outcomes) => (
+            outcomes.Select(o => (string)o["verdict"]).ToList(),
+            outcomes.SelectMany(o => (o["details"] as JArray ?? new JArray()).Select(d => (string)d)).Take(20).ToList());
 
         /// <summary>False while the patch server builds baselines or compiles a batch of edits.</summary>
         internal static bool ServerIdle()
         {
             try
             {
-                var json = FindEngine()?.GetMethod("ServerState", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null) as string;
-                return json == null || (string)JObject.Parse(json)["state"] == "ready";
+                return IsIdle(FindEngine()?.GetMethod("ServerState", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, null) as string);
             }
-            catch (Exception)
+            catch (Exception ex)
             {
+                LogFailureOnce("ServerState", ex);
                 return true;
             }
         }
+
+        // The server rewrites its state file in place, so a read that meets the write sees it empty.
+        internal static bool IsIdle(string serverJson) =>
+            string.IsNullOrEmpty(serverJson) || (string)JObject.Parse(serverJson)["state"] == "ready";
 
         internal static MCPToolCallStatus StatusOf(string verdict)
         {
@@ -138,8 +168,18 @@ namespace KitWright.Editor.Interop
             }
         }
 
-        private static Type FindEngine() =>
-            AppDomain.CurrentDomain.GetAssemblies().FirstOrDefault(a => a.GetName().Name == EngineAssembly)?.GetType(EngineType, false);
+        private static Type FindEngine() => Engine.Value;
+
+        internal static void LogFailureOnce(string member, Exception ex)
+        {
+            if (FailureLogged)
+                return;
+
+            FailureLogged = true;
+            var cause = ex.InnerException ?? ex;
+            Debug.LogWarning($"[KitWright MCP] Calling the KitWright patch engine's {member} failed ({cause.GetType().Name}: {cause.Message}). " +
+                             "The core and the Pro package may be out of step; this is logged once.");
+        }
 
         // The engine may apply a patch from a background thread while the Editor sleeps, and the log is the main thread's.
         private static void OnOutcome(string verdict, string text, string createdAtUtc)

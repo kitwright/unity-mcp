@@ -26,14 +26,17 @@ namespace KitWright.Editor.Tools.Builtins
         {
             try
             {
-                var suppressed = HotReload.IsSuppressingCompilation;
+                var hotReload = HotReload.IsSuppressingCompilation;
                 var engine = KitWrightEngine.GetStatus();
+                var engineOn = engine?.Value<bool>("suppresses_compilation") == true;
                 var plugins = engine == null ? new object[] { HotReload.GetStatus() } : new object[] { HotReload.GetStatus(), engine };
                 return Response.Success(
-                    suppressed
+                    hotReload
                         ? "A code-patching plugin is active: it detours refresh/compile, so editor scripts cannot start a Unity compilation. Ordinary method-body edits are hot-patched; for a change it cannot patch (const values, signatures, new types, lambda closures, attributes, field initializers) it runs its own full recompile, so read the timeline below rather than assuming either outcome."
-                        : "No code-patching plugin is suppressing the Unity compile pipeline.",
-                    new { compile_pipeline_suppressed = suppressed, plugins });
+                        : engineOn
+                            ? "The KitWright patch engine is active: saved script edits are patched into the running code and the asset refresh after an edit is skipped, so Unity does not compile them. request_recompile answers the engine's verdict and, outside Play Mode, falls back to a full compile for a change it cannot patch."
+                            : "No code-patching plugin is suppressing the Unity compile pipeline.",
+                    new { compile_pipeline_suppressed = hotReload || engineOn, plugins });
             }
             catch (Exception ex)
             {
