@@ -45,6 +45,8 @@ EXPECTED = [
     r"does not run module initializers",
     r"Builds a Windows player",
     r"csc predates C# 10",
+    r"patch engine \(unity-mcp-pro\) is not installed",
+    r"patch engine skips the import on purpose",
 ]
 
 
